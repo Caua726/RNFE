@@ -1,0 +1,1 @@
+ mpv --hwdec=auto --gpu-context=x11 --demuxer-max-bytes=2000000KiB --ytdl-format='137+bestaudio' --ytdl-raw-options=sub-lang=en,write-sub=,write-auto-sub= https://www.youtube.com/watch?v=8XmxKPJDGU0 --profile=fast

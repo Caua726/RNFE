@@ -1,0 +1,7 @@
+[package]
+name = "RNFE"
+version = "0.0.1"
+authors = ["Caua <cauaalvarenganeves@gmail.com>"]
+description = "Rust Nintendo Famicon Emulator" 
+
+[dependencies]
