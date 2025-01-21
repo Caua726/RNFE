@@ -23,14 +23,15 @@ pub struct Olc6502 {
     stkp: u8,    // Stack Pointer (mostra os pontos do bus)
     pc: u16,     // Program Counter
     status: u8,  // Status Register
-    IMP: u8,    IMM: u8,
-    ZP0: u8,    ZPX: u8,
-    ZPY: u8,    REL: u8,
-    ABS: u16,    ABX: u16,
-    ABY: u16,    IND: u16,
-    IZX: u16,    IZY: u16
 }
 
+pub struct Instruction {
+    pub name: String,                                  // Nome da instrução
+    pub operate: fn(&mut Olc6502) -> u8,              // Ponteiro para a função de operação
+    pub addrmode: fn(&mut Olc6502) -> u8,             // Ponteiro para a função de modo de endereçamento
+    pub cycles: u8,                                   // Ciclos necessários para a instrução
+}
+//Vector<Instruction> lookup
 
 impl Olc6502 {
     pub fn new() -> Self {
@@ -70,5 +71,99 @@ impl Olc6502 {
 
     fn write(&mut self, addr: u16, data: u8) {
         self.bus.write(addr, data);
+    }
+    
+    // Tem algumas instrucoes que somente alguns
+    // Jogos ou nenhum usa, então nao irei emula-los
+    // Mas pode ser que com o tempo eu adicione-os
+    // Eu irei coloca-los como "???" então alguns
+    // Roms modificadas podem nao funcionar
+    pub fn instrucoes() -> Vec<Instruction> {
+        vec![
+            Instruction {
+                name: "BRK",
+                operate: Olc6502::BRK,
+                addrmode: Olc6502::IMP,
+                cycles: 7
+            },
+            Instruction {
+                name: "ORA",
+                operate: Olc6502::ORA,
+                addrmode: Olc6502::IZX,
+                cycles: 6
+            },
+            Instruction {
+                name: "???"
+            }
+        ]
+    }
+    // Modos de enderecamento
+    fn IMP() -> u8 {}   fn IMM() -> u8 {}
+    fn ZP0() -> u8 {}   fn ZPX() -> u8 {}
+    fn ZPY() -> u8 {}   fn REL() -> u8 {}
+    fn ABS() -> u8 {}   fn ABX() -> u8 {}
+    fn ABY() -> u8 {}   fn IND() -> u8 {}
+    fn IZX() -> u8 {}   fn IZY() -> u8 {}
+
+    // Opcodes
+    fn ADC() -> u8 {}   fn AND() -> u8 {}
+    fn ASL() -> u8 {}   fn BCC() -> u8 {}
+    fn BCS() -> u8 {}   fn BEQ() -> u8 {}
+    fn BIT() -> u8 {}   fn BMI() -> u8 {}
+    fn BNE() -> u8 {}   fn BPL() -> u8 {}
+    fn BRK() -> u8 {}   fn BVC() -> u8 {}
+    fn BVS() -> u8 {}   fn CLC() -> u8 {}
+    fn CLD() -> u8 {}   fn CLI() -> u8 {}
+    fn CLV() -> u8 {}   fn CMP() -> u8 {}
+    fn CPX() -> u8 {}   fn CPY() -> u8 {}
+    fn DEC() -> u8 {}   fn DEX() -> u8 {}
+    fn DEY() -> u8 {}   fn EOR() -> u8 {}
+    fn INC() -> u8 {}   fn INX() -> u8 {}
+    fn INY() -> u8 {}   fn JMP() -> u8 {}
+    fn JSR() -> u8 {}   fn LDA() -> u8 {}
+    fn LDX() -> u8 {}   fn LDY() -> u8 {}
+    fn LSR() -> u8 {}   fn NOP() -> u8 {}
+    fn XXX() -> u8 {}
+
+    // Clock
+    pub fn clock() {
+        
+    }
+    // Reset
+    pub fn reset() {
+
+    }
+    // Interruptiuon Request
+    pub fn irq() {
+    
+    }
+    // Non Maskable Interrupt
+    pub fn nmi() {
+    
+    }
+
+    // Fetch
+    pub fn fetch() -> u8 {
+        
+    }
+    // Fetched
+    pub fn fetched () -> u8 {
+        
+    }
+    // Addr Abs
+    pub fn addr_abs() -> u16 {
+        
+    }
+    // Addr Rel
+    pub fn addr_rel() -> u16 {
+        
+    }
+    // Opcode Var
+    pub fn opcode() -> u8 {
+        
+    }
+    //Cycles
+    pub fn cycles() -> u8 {
+        
     }
 }

@@ -3,5 +3,6 @@ name = "RNFE"
 version = "0.0.1"
 authors = ["Caua <cauaalvarenganeves@gmail.com>"]
 description = "Rust Nintendo Famicon Emulator" 
+repository = "https://github.com/Caua726/RNFE"
 
 [dependencies]
