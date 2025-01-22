@@ -26,7 +26,7 @@ pub struct Olc6502 {
 }
 
 pub struct Instruction {
-    pub name: String,                                  // Nome da instrução
+    pub name: &'static str,                                  // Nome da instrução
     pub operate: fn(&mut Olc6502) -> u8,              // Ponteiro para a função de operação
     pub addrmode: fn(&mut Olc6502) -> u8,             // Ponteiro para a função de modo de endereçamento
     pub cycles: u8,                                   // Ciclos necessários para a instrução
@@ -65,65 +65,45 @@ impl Olc6502 {
             self.status &= !(flag as u8);
         }
     }
-    fn read(&self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16) -> u8 {
         self.bus.read(addr, false)
     }
 
-    fn write(&mut self, addr: u16, data: u8) {
+    pub fn write(&mut self, addr: u16, data: u8) {
         self.bus.write(addr, data);
     }
-    
-    // Tem algumas instrucoes que somente alguns
-    // Jogos ou nenhum usa, então nao irei emula-los
-    // Mas pode ser que com o tempo eu adicione-os
-    // Eu irei coloca-los como "???" então alguns
-    // Roms modificadas podem nao funcionar
-    pub fn instrucoes() -> Vec<Instruction> {
-        vec![
-            Instruction {
-                name: "BRK",
-                operate: Olc6502::BRK,
-                addrmode: Olc6502::IMP,
-                cycles: 7
-            },
-            Instruction {
-                name: "ORA",
-                operate: Olc6502::ORA,
-                addrmode: Olc6502::IZX,
-                cycles: 6
-            },
-            Instruction {
-                name: "???"
-            }
-        ]
-    }
+    // ##############################
+    // ##       Inicialização      ##
+    // ##    de Algumas Coisas     ##
+    // ##############################
+
     // Modos de enderecamento
-    fn IMP() -> u8 {}   fn IMM() -> u8 {}
-    fn ZP0() -> u8 {}   fn ZPX() -> u8 {}
-    fn ZPY() -> u8 {}   fn REL() -> u8 {}
-    fn ABS() -> u8 {}   fn ABX() -> u8 {}
-    fn ABY() -> u8 {}   fn IND() -> u8 {}
-    fn IZX() -> u8 {}   fn IZY() -> u8 {}
+    pub fn IMP(&mut self) -> u8 {0}   pub fn IMM(&mut self) -> u8 {0}
+    pub fn ZP0(&mut self) -> u8 {0}   pub fn ZPX(&mut self) -> u8 {0}
+    pub fn ZPY(&mut self) -> u8 {0}   pub fn REL(&mut self) -> u8 {0}
+    pub fn ABS(&mut self) -> u8 {0}   pub fn ABX(&mut self) -> u8 {0}
+    pub fn ABY(&mut self) -> u8 {0}   pub fn IND(&mut self) -> u8 {0}
+    pub fn IZX(&mut self) -> u8 {0}   pub fn IZY(&mut self) -> u8 {0}
 
     // Opcodes
-    fn ADC() -> u8 {}   fn AND() -> u8 {}
-    fn ASL() -> u8 {}   fn BCC() -> u8 {}
-    fn BCS() -> u8 {}   fn BEQ() -> u8 {}
-    fn BIT() -> u8 {}   fn BMI() -> u8 {}
-    fn BNE() -> u8 {}   fn BPL() -> u8 {}
-    fn BRK() -> u8 {}   fn BVC() -> u8 {}
-    fn BVS() -> u8 {}   fn CLC() -> u8 {}
-    fn CLD() -> u8 {}   fn CLI() -> u8 {}
-    fn CLV() -> u8 {}   fn CMP() -> u8 {}
-    fn CPX() -> u8 {}   fn CPY() -> u8 {}
-    fn DEC() -> u8 {}   fn DEX() -> u8 {}
-    fn DEY() -> u8 {}   fn EOR() -> u8 {}
-    fn INC() -> u8 {}   fn INX() -> u8 {}
-    fn INY() -> u8 {}   fn JMP() -> u8 {}
-    fn JSR() -> u8 {}   fn LDA() -> u8 {}
-    fn LDX() -> u8 {}   fn LDY() -> u8 {}
-    fn LSR() -> u8 {}   fn NOP() -> u8 {}
-    fn XXX() -> u8 {}
+    pub fn ADC(&mut self) -> u8 {0}   pub fn AND(&mut self) -> u8 {0}
+    pub fn ASL(&mut self) -> u8 {0}   pub fn BCC(&mut self) -> u8 {0}
+    pub fn BCS(&mut self) -> u8 {0}   pub fn BEQ(&mut self) -> u8 {0}
+    pub fn BIT(&mut self) -> u8 {0}   pub fn BMI(&mut self) -> u8 {0}
+    pub fn BNE(&mut self) -> u8 {0}   pub fn BPL(&mut self) -> u8 {0}
+    pub fn BRK(&mut self) -> u8 {0}   pub fn BVC(&mut self) -> u8 {0}
+    pub fn BVS(&mut self) -> u8 {0}   pub fn CLC(&mut self) -> u8 {0}
+    pub fn CLD(&mut self) -> u8 {0}   pub fn CLI(&mut self) -> u8 {0}
+    pub fn CLV(&mut self) -> u8 {0}   pub fn CMP(&mut self) -> u8 {0}
+    pub fn CPX(&mut self) -> u8 {0}   pub fn CPY(&mut self) -> u8 {0}
+    pub fn DEC(&mut self) -> u8 {0}   pub fn DEX(&mut self) -> u8 {0}
+    pub fn DEY(&mut self) -> u8 {0}   pub fn EOR(&mut self) -> u8 {0}
+    pub fn INC(&mut self) -> u8 {0}   pub fn INX(&mut self) -> u8 {0}
+    pub fn INY(&mut self) -> u8 {0}   pub fn JMP(&mut self) -> u8 {0}
+    pub fn JSR(&mut self) -> u8 {0}   pub fn LDA(&mut self) -> u8 {0}
+    pub fn LDX(&mut self) -> u8 {0}   pub fn LDY(&mut self) -> u8 {0}
+    pub fn LSR(&mut self) -> u8 {0}   pub fn NOP(&mut self) -> u8 {0}
+    pub fn XXX(&mut self) -> u8 {0}   // Nao Implementado
 
     // Clock
     pub fn clock() {
@@ -165,5 +145,304 @@ impl Olc6502 {
     //Cycles
     pub fn cycles() -> u8 {
         
+    }
+
+    // Tem algumas instrucoes que somente alguns
+    // Jogos ou nenhum usa, então nao irei emula-los
+    // Mas pode ser que com o tempo eu adicione-os
+    // Eu irei coloca-los como "???"
+    // Ou, quando for realmente em branco, mas alguns
+    // Roms modificadas podem nao funcionar
+    pub fn instrucoes() -> Vec<Instruction> {
+        vec![
+            // 0x00
+            Instruction { name: "BRK", operate: Olc6502::BRK, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "ASL", operate: Olc6502::ASL, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "PHP", operate: Olc6502::PHP, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "ASL", operate: Olc6502::ASL, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "ASL", operate: Olc6502::ASL, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0x10
+            Instruction { name: "BPL", operate: Olc6502::BPL, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "ASL", operate: Olc6502::ASL, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "CLC", operate: Olc6502::CLC, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ORA", operate: Olc6502::ORA, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "ASL", operate: Olc6502::ASL, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+    
+            // 0x20
+            Instruction { name: "JSR", operate: Olc6502::JSR, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "BIT", operate: Olc6502::BIT, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "ROL", operate: Olc6502::ROL, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "PLP", operate: Olc6502::PLP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "ROL", operate: Olc6502::ROL, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "BIT", operate: Olc6502::BIT, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "ROL", operate: Olc6502::ROL, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0x30
+            Instruction { name: "BMI", operate: Olc6502::BMI, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "ROL", operate: Olc6502::ROL, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "SEC", operate: Olc6502::SEC, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "AND", operate: Olc6502::AND, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "ROL", operate: Olc6502::ROL, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+    
+            // 0x40
+            Instruction { name: "RTI", operate: Olc6502::RTI, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "LSR", operate: Olc6502::LSR, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "PHA", operate: Olc6502::PHA, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "LSR", operate: Olc6502::LSR, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "JMP", operate: Olc6502::JMP, addrmode: Olc6502::ABS, cycles: 3 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "LSR", operate: Olc6502::LSR, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0x50
+            Instruction { name: "BVC", operate: Olc6502::BVC, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "LSR", operate: Olc6502::LSR, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "CLI", operate: Olc6502::CLI, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "EOR", operate: Olc6502::EOR, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "LSR", operate: Olc6502::LSR, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+    
+            // 0x60
+            Instruction { name: "RTS", operate: Olc6502::RTS, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "ROR", operate: Olc6502::ROR, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "PLA", operate: Olc6502::PLA, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "ROR", operate: Olc6502::ROR, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "JMP", operate: Olc6502::JMP, addrmode: Olc6502::IND, cycles: 5 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "ROR", operate: Olc6502::ROR, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0x70
+            Instruction { name: "BVS", operate: Olc6502::BVS, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "ROR", operate: Olc6502::ROR, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "SEI", operate: Olc6502::SEI, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "ADC", operate: Olc6502::ADC, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "ROR", operate: Olc6502::ROR, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+    
+            // 0x80
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "STY", operate: Olc6502::STY, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "STX", operate: Olc6502::STX, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "DEY", operate: Olc6502::DEY, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "TXA", operate: Olc6502::TXA, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "STY", operate: Olc6502::STY, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "STX", operate: Olc6502::STX, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+    
+            // 0x90
+            Instruction { name: "BCC", operate: Olc6502::BCC, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::IZY, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "STY", operate: Olc6502::STY, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "STX", operate: Olc6502::STX, addrmode: Olc6502::ZPY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "TYA", operate: Olc6502::TYA, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::ABY, cycles: 5 },
+            Instruction { name: "TXS", operate: Olc6502::TXS, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "STA", operate: Olc6502::STA, addrmode: Olc6502::ABX, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+    
+            // 0xA0
+            Instruction { name: "LDY", operate: Olc6502::LDY, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "LDX", operate: Olc6502::LDX, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "LDY", operate: Olc6502::LDY, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "LDX", operate: Olc6502::LDX, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 3 },
+            Instruction { name: "TAY", operate: Olc6502::TAY, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "TAX", operate: Olc6502::TAX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "LDY", operate: Olc6502::LDY, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "LDX", operate: Olc6502::LDX, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+    
+            // 0xB0
+            Instruction { name: "BCS", operate: Olc6502::BCS, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "LDY", operate: Olc6502::LDY, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "LDX", operate: Olc6502::LDX, addrmode: Olc6502::ZPY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "CLV", operate: Olc6502::CLV, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "TSX", operate: Olc6502::TSX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "LDY", operate: Olc6502::LDY, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "LDA", operate: Olc6502::LDA, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "LDX", operate: Olc6502::LDX, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 4 },
+    
+            // 0xC0
+            Instruction { name: "CPY", operate: Olc6502::CPY, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "CPY", operate: Olc6502::CPY, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "DEC", operate: Olc6502::DEC, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "INY", operate: Olc6502::INY, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "DEX", operate: Olc6502::DEX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "CPY", operate: Olc6502::CPY, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "DEC", operate: Olc6502::DEC, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0xD0
+            Instruction { name: "BNE", operate: Olc6502::BNE, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "DEC", operate: Olc6502::DEC, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "CLD", operate: Olc6502::CLD, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "NOP", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "CMP", operate: Olc6502::CMP, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "DEC", operate: Olc6502::DEC, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+    
+            // 0xE0
+            Instruction { name: "CPX", operate: Olc6502::CPX, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::IZX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "CPX", operate: Olc6502::CPX, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::ZP0, cycles: 3 },
+            Instruction { name: "INC", operate: Olc6502::INC, addrmode: Olc6502::ZP0, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 5 },
+            Instruction { name: "INX", operate: Olc6502::INX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::IMM, cycles: 2 },
+            Instruction { name: "NOP", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::SBC, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "CPX", operate: Olc6502::CPX, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::ABS, cycles: 4 },
+            Instruction { name: "INC", operate: Olc6502::INC, addrmode: Olc6502::ABS, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+    
+            // 0xF0
+            Instruction { name: "BEQ", operate: Olc6502::BEQ, addrmode: Olc6502::REL, cycles: 2 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::IZY, cycles: 5 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 8 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::ZPX, cycles: 4 },
+            Instruction { name: "INC", operate: Olc6502::INC, addrmode: Olc6502::ZPX, cycles: 6 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 6 },
+            Instruction { name: "SED", operate: Olc6502::SED, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::ABY, cycles: 4 },
+            Instruction { name: "NOP", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 2 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::NOP, addrmode: Olc6502::IMP, cycles: 4 },
+            Instruction { name: "SBC", operate: Olc6502::SBC, addrmode: Olc6502::ABX, cycles: 4 },
+            Instruction { name: "INC", operate: Olc6502::INC, addrmode: Olc6502::ABX, cycles: 7 },
+            Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
+        ]
+    }    
     }
 }
