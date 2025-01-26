@@ -1,4 +1,3 @@
-mod olc6502;
 use olc6502::Olc6502;
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -1,4 +1,3 @@
-mod bus;
 use bus::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,12 +16,18 @@ pub enum FLAGS6502{
 
 pub struct Olc6502 {
     bus: Option<Rc<RefCell<Bus>>>,
-    a: u8,  // Acccumulator Register
-    x: u8,  // X Register
-    y: u8,  // Y Register
-    stkp: u8,    // Stack Pointer (mostra os pontos do bus)
-    pc: u16,     // Program Counter
-    status: u8,  // Status Register
+    a: u8,          // Acccumulator Register
+    x: u8,          // X Register
+    y: u8,          // Y Register
+    stkp: u8,       // Stack Pointer (mostra os pontos do bus)
+    pc: u16,        // Program Counter
+    status: u8,     // Status Register
+    fetched: u8,    // Nao sei, depois vejo
+    addr_abs: u16,  // Endereco Absoluto
+    addr_rel: u16,  // Endereço Relativo
+    opcode: u8,     // Variavel Opcode
+    cycles: u8,      // Ciclo de clock
+    lookup: Vec<Instruction>,
 }
 
 pub struct Instruction {
@@ -36,13 +41,19 @@ pub struct Instruction {
 impl Olc6502 {
     pub fn new() -> Self {
         Olc6502 { 
-            bus: None,
-            a:0x00,
-            x:0x00,
-            y:0x00,
-            stkp:0x00,
-            pc:0x0000,
-            status:0x00
+            bus: None,      // Barramento
+            a:0x00,         // Accumulator
+            x:0x00,         // X Register
+            y:0x00,         // Y Register
+            stkp:0x00,      // Stack Pointer
+            pc:0x0000,      // Program Counter
+            status:0x00,    // Status Register
+            fetched:0x00,   // Nao sei depois eu vejo
+            addr_abs:0x0000, // Todo o endereço de memoria acaba aqui
+            addr_rel:0x0000, // O endereço absoluto da atual instrução
+            opcode:0x00,     // Byte de instrução
+            cycles:0,        // Contagem do numero de ciclo de clocks
+            lookup: Olc6502::instrucoes(), // Lookup table para uinstrucoes da cpu
         }
     }
 
@@ -50,6 +61,7 @@ impl Olc6502 {
     //  pub fn connectBus(&mut self, bus: Bus) {
     //           self.bus = Rc::new(RefCell::new(bus));
     //   }
+
 
     pub fn connect_bus(&mut self, bus: Rc<RefCell<Bus>>) {
         self.bus = Some(bus);
@@ -66,25 +78,159 @@ impl Olc6502 {
         }
     }
     pub fn read(&self, addr: u16) -> u8 {
-        self.bus.read(addr, false)
+        self.bus
+            .as_ref()
+            .expect("Bus nao conectado")
+            .borrow()
+            .read(addr, false)
+        // self.bus.read(addr, false)
     }
 
     pub fn write(&mut self, addr: u16, data: u8) {
-        self.bus.write(addr, data);
+        self.bus
+            .as_ref()
+            .expect("Bus nao conectado")
+            .borrow_mut()
+            .write(addr, data);
     }
-    // ##############################
-    // ##       Inicialização      ##
-    // ##    de Algumas Coisas     ##
-    // ##############################
+    //==========================
+    //# Modos de enderecamento #
+    //==========================
 
-    // Modos de enderecamento
-    pub fn IMP(&mut self) -> u8 {0}   pub fn IMM(&mut self) -> u8 {0}
-    pub fn ZP0(&mut self) -> u8 {0}   pub fn ZPX(&mut self) -> u8 {0}
-    pub fn ZPY(&mut self) -> u8 {0}   pub fn REL(&mut self) -> u8 {0}
-    pub fn ABS(&mut self) -> u8 {0}   pub fn ABX(&mut self) -> u8 {0}
-    pub fn ABY(&mut self) -> u8 {0}   pub fn IND(&mut self) -> u8 {0}
-    pub fn IZX(&mut self) -> u8 {0}   pub fn IZY(&mut self) -> u8 {0}
+    // IMP: Implied
+    // Nao tem muita coisa pra falar dele
+    // Ele Faz uma coisa muito simples, como, mudar o estado
+    // De Bits, de qualquer jeito, o objetivo dele é
+    // O Acumulador, para instrucoes como PHA
+    pub fn IMP(&mut self) -> u8 {
+        self.fetched = self.a;
+        return 0;
+    } 
 
+    // IMM: Imediato
+    // A instrução espera até o proximo bit para ser usado
+    // Como valor, o endereco de leitura deve apontar ao
+    // Proximo valor
+    pub fn IMM(&mut self) -> u8 {
+        self.addr_abs = self.pc + 1;
+        return 0;
+    }
+
+    // ZP0: Zero Paging Adress / Modo de paginamento zero
+    // Isso é usado para economizar recursos, permitindo
+    // Que você salve o local nos primeiros 0xFF bytes
+    // De um endereço de memoria, e por isso, isto só
+    // Requer um byte de memoria ao invez de 2
+    pub fn ZP0(&mut self) -> u8 {
+        self.addr_abs = self.read(self.pc) as u16;
+        self.pc += 1;
+        self.addr_abs &= 0x00FF;
+        return 0;
+    }
+    pub fn ZPX(&mut self) -> u8 {
+        self.addr_abs = (self.read(self.pc) + self.x) as u16;
+        self.pc += 1;
+        self.addr_abs &= 0x00FF;
+        return 0;
+    }
+    pub fn ZPY(&mut self) -> u8 {
+        self.addr_abs = (self.read(self.pc) + self.y) as u16;
+        self.pc += 1;
+        self.addr_abs &= 0x00FF;
+        return 0; 
+    }   
+    pub fn ABS(&mut self) -> u8 {
+        let lo: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let hi: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+
+        self.addr_abs = (hi << 8) | lo;
+
+        return 0
+    }   
+    pub fn ABX(&mut self) -> u8 {
+        let lo: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let hi: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+
+        self.addr_abs = (hi << 8) | lo;
+        self.addr_abs += self.x as u16;
+
+        if (self.addr_abs & 0xFF00) != (hi << 8) {
+            return 1;
+        } else {
+            return 0;
+        }
+
+    }
+    pub fn ABY(&mut self) -> u8 {
+        let lo: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let hi: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+
+        self.addr_abs = (hi << 8) | lo;
+        self.addr_abs += self.y  as u16;
+
+        if (self.addr_abs & 0xFF00) != (hi << 8) {
+            return 1;
+        } else {
+            return 0;
+        }
+
+    }
+    pub fn IND(&mut self) -> u8 {
+        let ptr_lo: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let ptr_hi: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+
+        let ptr: u16 = (ptr_hi << 8) | ptr_lo;
+
+        if ptr_lo == 0x00FF {
+            self.addr_abs = (self.read(ptr & 0xFF00) << 8) as u16 | self.read(ptr + 0) as u16;
+        } else {
+            self.addr_abs = (self.read(ptr + 1) << 8) as u16 | self.read(ptr + 0) as u16;
+        }
+        return 0;
+    }
+    pub fn IZX(&mut self) -> u8 {
+        let t: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let lo: u16 = self.read((t + (self.x  as u16)) & 0x00FF) as u16;
+        let hi: u16 = self.read((t + (self.x as u16) + 1) & 0x00FF) as u16;
+
+        self.addr_abs = (hi << 8 | lo);
+
+        return 0;
+    } 
+    pub fn IZY(&mut self) -> u8 {
+        let t: u16 = self.read(self.pc) as u16;
+        self.pc += 1;
+        let lo: u16 = self.read(t & 0x00FF) as u16;
+        let hi: u16 = self.read((t + 1) & 0x00FF) as u16;
+
+        self.addr_abs = (hi << 8 | lo);
+        self.addr_abs += self.y as u16;
+
+        if (self.addr_abs & 0xFF00) != (hi << 8) {
+            return 1;
+        } else {
+            return 0;
+        }
+
+        return 0;
+    }   
+    pub fn REL(&mut self) -> u8 {
+        self.addr_rel = self.read(self.pc) as u16;
+        self.pc += 1;
+        if (self.addr_rel & 0x80) != 0 {
+            self.addr_rel |= 0xFF00;
+        }
+        return 0;
+    }
     // Opcodes
     pub fn ADC(&mut self) -> u8 {0}   pub fn AND(&mut self) -> u8 {0}
     pub fn ASL(&mut self) -> u8 {0}   pub fn BCC(&mut self) -> u8 {0}
@@ -103,49 +249,46 @@ impl Olc6502 {
     pub fn JSR(&mut self) -> u8 {0}   pub fn LDA(&mut self) -> u8 {0}
     pub fn LDX(&mut self) -> u8 {0}   pub fn LDY(&mut self) -> u8 {0}
     pub fn LSR(&mut self) -> u8 {0}   pub fn NOP(&mut self) -> u8 {0}
+    pub fn ORA(&mut self) -> u8 {0}   pub fn PHP(&mut self) -> u8 {0}
+    pub fn ROL(&mut self) -> u8 {0}   pub fn PLP(&mut self) -> u8 {0}
+    pub fn SEC(&mut self) -> u8 {0}   pub fn RTI(&mut self) -> u8 {0}
+    pub fn PHA(&mut self) -> u8 {0}   pub fn RTS(&mut self) -> u8 {0}
+    pub fn SEI(&mut self) -> u8 {0}   pub fn ROR(&mut self) -> u8 {0} 
+    pub fn PLA(&mut self) -> u8 {0}   pub fn STA(&mut self) -> u8 {0} 
+    pub fn STY(&mut self) -> u8 {0}   pub fn STX(&mut self) -> u8 {0} 
+    pub fn TXS(&mut self) -> u8 {0}   pub fn TAY(&mut self) -> u8 {0} 
+    pub fn TAX(&mut self) -> u8 {0}   pub fn SBC(&mut self) -> u8 {0}
+    pub fn TXA(&mut self) -> u8 {0}   pub fn TYA(&mut self) -> u8 {0}
+    pub fn TSX(&mut self) -> u8 {0}   pub fn SED(&mut self) -> u8 {0}
     pub fn XXX(&mut self) -> u8 {0}   // Nao Implementado
 
     // Clock
-    pub fn clock() {
-        
+    pub fn clock(&mut self) {
+        if self.cycles == 0 {
+            self.opcode = self.read(self.pc);
+            self.pc += 1;
+
+            self.cycles = self.lookup[self.opcode as usize].cycles;
+            let add_cycle0 = self.lookup[self.opcode as usize].addrmode;
+            let add_cycle1 = self.lookup[self.opcode as usize].operate;
+            
+            self.cycles += (add_cycle0 & add_cycle1);
+        }
+        self.cycles -= 1;
     }
     // Reset
     pub fn reset() {
 
     }
     // Interruptiuon Request
-    pub fn irq() {
-    
-    }
+    pub fn irq() {}
     // Non Maskable Interrupt
-    pub fn nmi() {
-    
-    }
+    pub fn nmi() {}
+    // Temporary
+    pub fn temp() -> u16 { 0x0000 } // Uma variavel pra usar pra qualquer coisa temporariamente
 
     // Fetch
-    pub fn fetch() -> u8 {
-        
-    }
-    // Fetched
-    pub fn fetched () -> u8 {
-        
-    }
-    // Addr Abs
-    pub fn addr_abs() -> u16 {
-        
-    }
-    // Addr Rel
-    pub fn addr_rel() -> u16 {
-        
-    }
-    // Opcode Var
-    pub fn opcode() -> u8 {
-        
-    }
-    //Cycles
-    pub fn cycles() -> u8 {
-        
-    }
+    pub fn fetch() -> u8 {0}
 
     // Tem algumas instrucoes que somente alguns
     // Jogos ou nenhum usa, então nao irei emula-los
@@ -443,6 +586,5 @@ impl Olc6502 {
             Instruction { name: "INC", operate: Olc6502::INC, addrmode: Olc6502::ABX, cycles: 7 },
             Instruction { name: "???", operate: Olc6502::XXX, addrmode: Olc6502::IMP, cycles: 7 },
         ]
-    }    
     }
 }
