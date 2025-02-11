@@ -1,4 +1,4 @@
-use bus::Bus;
+use crate::bus::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -127,18 +127,32 @@ impl Olc6502 {
         self.addr_abs &= 0x00FF;
         return 0;
     }
+    // ZPX: Zero Paging X
+    // O valor do X é adicionado ao valor lido
+    // No endereço de memoria, e o resultado é
+    // O endereço de memoria que o valor lido Apontava
+    // Isso é util para interagir com areas da memória
+    // Como um array em C
     pub fn ZPX(&mut self) -> u8 {
         self.addr_abs = (self.read(self.pc) + self.x) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
         return 0;
     }
+    // ZPY: Zero Paging Y
+    // O Mesmo do ZPX mas com Y
     pub fn ZPY(&mut self) -> u8 {
         self.addr_abs = (self.read(self.pc) + self.y) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
         return 0; 
     }   
+    // ABS: Absolute
+    // O endereço absoluto é formado
+    // Por dois bytes, o primeiro
+    // Serve para o banco de memoória
+    // O segundo para o endereço na
+    // Memória para formar um endreço de 16 bits
     pub fn ABS(&mut self) -> u8 {
         let lo: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -149,6 +163,10 @@ impl Olc6502 {
 
         return 0
     }   
+    // ABX: Absolute X
+    // Endereço absoluto com valor X
+    // Isto calcula o mesmo que o
+    // ABS, mas adiciona o endereço X
     pub fn ABX(&mut self) -> u8 {
         let lo: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -165,6 +183,9 @@ impl Olc6502 {
         }
 
     }
+    // ABY: Absolute Y
+    // O mesmo que o ABX, mas
+    // Adiciona o valor Y ao endereço
     pub fn ABY(&mut self) -> u8 {
         let lo: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -181,6 +202,13 @@ impl Olc6502 {
         }
 
     }
+    // IND: Indirect Adressing
+    // Normalmente é reconhecido como um
+    // Bug, mas para funcionar correctamente
+    // É preciso ser emulador também, o que ele
+    // Faz, é, apontar para o endereço 0xFF e ler
+    // O byte mais alto, ele precisa atravesar
+    // A page boudnary
     pub fn IND(&mut self) -> u8 {
         let ptr_lo: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -190,12 +218,16 @@ impl Olc6502 {
         let ptr: u16 = (ptr_hi << 8) | ptr_lo;
 
         if ptr_lo == 0x00FF {
-            self.addr_abs = (self.read(ptr & 0xFF00) << 8) as u16 | self.read(ptr + 0) as u16;
+            self.addr_abs = ((self.read(ptr & 0xFF00) as u16) << 8) | self.read(ptr) as u16;
         } else {
-            self.addr_abs = (self.read(ptr + 1) << 8) as u16 | self.read(ptr + 0) as u16;
+            self.addr_abs = ((self.read(ptr + 1) as u16) << 8) | self.read(ptr) as u16;
         }
-        return 0;
+        0
     }
+    // IZX: Indirect Adressing Zero Page X
+    // Ele referencia um endereço na memória pagina
+    // Zero a partir do offset X para ler o endereço
+    // De 16 bits que precisamos para a instrução
     pub fn IZX(&mut self) -> u8 {
         let t: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -206,6 +238,11 @@ impl Olc6502 {
 
         return 0;
     } 
+    // IZY: Indirect Adressing Zero Page Y
+    // Diferentemente dos outros, onde X == Y, nesse
+    // O X !== Y, neste caso ele lê um ponteiro de 16 bits
+    // Da pagina zero e usa o offset Y para formar um
+    // Endereço final.
     pub fn IZY(&mut self) -> u8 {
         let t: u16 = self.read(self.pc) as u16;
         self.pc += 1;
@@ -223,6 +260,16 @@ impl Olc6502 {
 
         return 0;
     }   
+    // REL: Relative.
+    // Modo de Endereçamento Relativo, usado para
+    // Instruções de branch, ele lê um byte
+    // De memoria e o interpreta como deslocamento
+    // Assinado de 8 bits
+    // As intrucoes de branch não conseguem acessar qualquer
+    // Localização da no adress range, eles so conseguem
+    // Acessar um endereço relativo ao endereço atual
+    // Num range de 127 localizações, pois é um endereço
+    // Relativo, diferente dos demais
     pub fn REL(&mut self) -> u8 {
         self.addr_rel = self.read(self.pc) as u16;
         self.pc += 1;
@@ -231,8 +278,31 @@ impl Olc6502 {
         }
         return 0;
     }
-    // Opcodes
-    pub fn ADC(&mut self) -> u8 {0}   pub fn AND(&mut self) -> u8 {0}
+    //==========================//
+    //#      Instruções        #//
+    //==========================//
+
+    // Fetch
+    pub fn fetch(&mut self) -> u8 {
+        if self.lookup[self.opcode as usize].addrmode == Olc6502::IMP {
+            self.fetched = self.read(self.addr_abs);
+        }
+        self.fetched
+    }
+
+    pub fn AND(&mut self) -> u8 {
+        self.fetch();
+        self.a = self.a & self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        
+        1
+    }
+
+    //==========================//
+    //#         Opcodes        //#
+    //==========================//
+    pub fn ADC(&mut self) -> u8 {0}
     pub fn ASL(&mut self) -> u8 {0}   pub fn BCC(&mut self) -> u8 {0}
     pub fn BCS(&mut self) -> u8 {0}   pub fn BEQ(&mut self) -> u8 {0}
     pub fn BIT(&mut self) -> u8 {0}   pub fn BMI(&mut self) -> u8 {0}
@@ -272,7 +342,7 @@ impl Olc6502 {
             let add_cycle0 = self.lookup[self.opcode as usize].addrmode;
             let add_cycle1 = self.lookup[self.opcode as usize].operate;
             
-            self.cycles += (add_cycle0 & add_cycle1);
+            self.cycles += add_cycle0 & add_cycle1;
         }
         self.cycles -= 1;
     }
@@ -287,8 +357,6 @@ impl Olc6502 {
     // Temporary
     pub fn temp() -> u16 { 0x0000 } // Uma variavel pra usar pra qualquer coisa temporariamente
 
-    // Fetch
-    pub fn fetch() -> u8 {0}
 
     // Tem algumas instrucoes que somente alguns
     // Jogos ou nenhum usa, então nao irei emula-los

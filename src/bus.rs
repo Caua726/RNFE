@@ -1,4 +1,4 @@
-use olc6502::Olc6502;
+use crate::olc6502::Olc6502;
 use std::cell::RefCell;
 use std::rc::Rc;
 
