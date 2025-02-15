@@ -31,7 +31,7 @@ pub struct Olc6502 {
 }
 
 pub struct Instruction {
-    pub name: &'static str,                                  // Nome da instrução
+    pub name: &'static str,                           // Nome da instrução
     pub operate: fn(&mut Olc6502) -> u8,              // Ponteiro para a função de operação
     pub addrmode: fn(&mut Olc6502) -> u8,             // Ponteiro para a função de modo de endereçamento
     pub cycles: u8,                                   // Ciclos necessários para a instrução
@@ -41,27 +41,21 @@ pub struct Instruction {
 impl Olc6502 {
     pub fn new() -> Self {
         Olc6502 { 
-            bus: None,      // Barramento
-            a:0x00,         // Accumulator
-            x:0x00,         // X Register
-            y:0x00,         // Y Register
-            stkp:0x00,      // Stack Pointer
-            pc:0x0000,      // Program Counter
-            status:0x00,    // Status Register
-            fetched:0x00,   // Nao sei depois eu vejo
-            addr_abs:0x0000, // Todo o endereço de memoria acaba aqui
-            addr_rel:0x0000, // O endereço absoluto da atual instrução
-            opcode:0x00,     // Byte de instrução
-            cycles:0,        // Contagem do numero de ciclo de clocks
-            lookup: Olc6502::instrucoes(), // Lookup table para uinstrucoes da cpu
+            bus: None,                      // Barramento
+            a:0x00,                         // Accumulator
+            x:0x00,                         // X Register
+            y:0x00,                         // Y Register
+            stkp:0x00,                      // Stack Pointer
+            pc:0x0000,                      // Program Counter
+            status:0x00,                    // Status Register
+            fetched:0x00,                   // Nao sei depois eu vejo
+            addr_abs:0x0000,                // Todo o endereço de memoria acaba aqui
+            addr_rel:0x0000,                // O endereço absoluto da atual instrução
+            opcode:0x00,                    // Byte de instrução
+            cycles:0,                       // Contagem do numero de ciclo de clocks
+            lookup: Olc6502::instrucoes(),  // Lookup table para uinstrucoes da cpu
         }
     }
-
-    // Testing Refcell, so, i will disable this
-    //  pub fn connectBus(&mut self, bus: Bus) {
-    //           self.bus = Rc::new(RefCell::new(bus));
-    //   }
-
 
     pub fn connect_bus(&mut self, bus: Rc<RefCell<Bus>>) {
         self.bus = Some(bus);
@@ -104,7 +98,7 @@ impl Olc6502 {
     // O Acumulador, para instrucoes como PHA
     pub fn IMP(&mut self) -> u8 {
         self.fetched = self.a;
-        return 0;
+        0
     } 
 
     // IMM: Imediato
@@ -113,7 +107,7 @@ impl Olc6502 {
     // Proximo valor
     pub fn IMM(&mut self) -> u8 {
         self.addr_abs = self.pc + 1;
-        return 0;
+        0
     }
 
     // ZP0: Zero Paging Adress / Modo de paginamento zero
@@ -125,7 +119,7 @@ impl Olc6502 {
         self.addr_abs = self.read(self.pc) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
-        return 0;
+        0
     }
     // ZPX: Zero Paging X
     // O valor do X é adicionado ao valor lido
@@ -137,7 +131,7 @@ impl Olc6502 {
         self.addr_abs = (self.read(self.pc) + self.x) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
-        return 0;
+        0
     }
     // ZPY: Zero Paging Y
     // O Mesmo do ZPX mas com Y
@@ -145,7 +139,7 @@ impl Olc6502 {
         self.addr_abs = (self.read(self.pc) + self.y) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
-        return 0; 
+        0
     }   
     // ABS: Absolute
     // O endereço absoluto é formado
@@ -161,7 +155,7 @@ impl Olc6502 {
 
         self.addr_abs = (hi << 8) | lo;
 
-        return 0
+        0
     }   
     // ABX: Absolute X
     // Endereço absoluto com valor X
@@ -177,9 +171,9 @@ impl Olc6502 {
         self.addr_abs += self.x as u16;
 
         if (self.addr_abs & 0xFF00) != (hi << 8) {
-            return 1;
+            1
         } else {
-            return 0;
+            0
         }
 
     }
@@ -196,9 +190,9 @@ impl Olc6502 {
         self.addr_abs += self.y  as u16;
 
         if (self.addr_abs & 0xFF00) != (hi << 8) {
-            return 1;
+            1
         } else {
-            return 0;
+            0
         }
 
     }
@@ -236,7 +230,7 @@ impl Olc6502 {
 
         self.addr_abs = (hi << 8 | lo);
 
-        return 0;
+        0
     } 
     // IZY: Indirect Adressing Zero Page Y
     // Diferentemente dos outros, onde X == Y, nesse
@@ -255,10 +249,10 @@ impl Olc6502 {
         if (self.addr_abs & 0xFF00) != (hi << 8) {
             return 1;
         } else {
-            return 0;
+            return 
         }
 
-        return 0;
+        0
     }   
     // REL: Relative.
     // Modo de Endereçamento Relativo, usado para
@@ -276,7 +270,7 @@ impl Olc6502 {
         if (self.addr_rel & 0x80) != 0 {
             self.addr_rel |= 0xFF00;
         }
-        return 0;
+        0
     }
     //==========================//
     //#      Instruções        #//
@@ -290,14 +284,199 @@ impl Olc6502 {
         self.fetched
     }
 
+    // AND: And
     pub fn AND(&mut self) -> u8 {
         self.fetch();
         self.a = self.a & self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         
+        return 1;
+    }
+
+    // BCS: Branch Carry Set
+    pub fn BCS(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::C) == 1 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+    
+    // BCC: Branch Carry Clear
+    pub fn BCC(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::C) == 0 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BEQ: Branch Equal
+    pub fn BEQ(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::Z) == 1 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BMI: Branch Minus
+    pub fn BMI(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::N) == 1 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BME: Branch Not Equal
+    pub fn BNE(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::Z) == 0 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BPL: Branch Plus
+    pub fn BPL(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::N) == 0 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BVC: Branch Overflow
+    pub fn BVC(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::V) == 0 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // BVS: Branch Not Overflow
+    pub fn BVS(&mut self) -> u8 {
+        if self.getFlag(FLAGS6502::V) == 1 {
+            self.cycles += 1;
+            self.addr_abs = self.pc + self.addr_rel;
+            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
+                self.cycles += 1;
+            }
+            self.pc = self.addr_abs;
+        }
+        return 0;
+    }
+
+    // CLC: Clear Carry Bit
+    pub fn CLC(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::C, false);
+        return 0;
+    }
+    // CLD: Clear Decimal Mode
+    // Function: D = 0
+    pub fn CLD(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::D, false);
+        0
+    }
+
+    // CLI: Clear Interrupt Disable
+    // Function: I = 0
+    pub fn CLI(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::I, false);
+        0
+    }
+
+    // CLV: Clear Overflow Flag
+    // Function: V = 0
+    pub fn CLV(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::V, false);
+        0
+    }
+
+    // CMP: Compare Accumulator
+    // Function: Compare A with fetched value
+    // Flags Out: C, Z, N
+    pub fn CMP(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.a as u16).wrapping_sub(self.fetched as u16);
+        self.setFlag(FLAGS6502::C, self.a >= self.fetched);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
         1
     }
+
+    // CPX: Compare X Register
+    // Function: Compare X with fetched value
+    // Flags Out: C, Z, N
+    pub fn CPX(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.x as u16).wrapping_sub(self.fetched as u16);
+        self.setFlag(FLAGS6502::C, self.x >= self.fetched);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
+        0
+    }
+
+    // CPY: Compare Y Register
+    // Function: Compare Y with fetched value
+    // Flags Out: C, Z, N
+    pub fn CPY(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.y as u16).wrapping_sub(self.fetched as u16);
+        self.setFlag(FLAGS6502::C, self.y >= self.fetched);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
+        0
+    }
+
+    // ADC: Add with Carry
+    // Function: Add memory value to accumulator with carry
+    // Flags Out: C, Z, V, N
+    pub fn ADC(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.a as u16).wrapping_add(self.fetched as u16);
+        if self.getFlag(FLAGS6502::C) {
+            self.temp = self.temp.wrapping_add(1);
+        }
+        self.setFlag(FLAGS6502::C, self.temp > 0x00FF);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
+        self.a = (self.temp & 0x00FF) as u8;
+        1
+    }
+
 
     //==========================//
     //#         Opcodes        //#
@@ -342,7 +521,6 @@ impl Olc6502 {
             let add_cycle0 = self.lookup[self.opcode as usize].addrmode;
             let add_cycle1 = self.lookup[self.opcode as usize].operate;
             
-            self.cycles += add_cycle0 & add_cycle1;
         }
         self.cycles -= 1;
     }
