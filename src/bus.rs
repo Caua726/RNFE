@@ -6,6 +6,7 @@ pub struct Bus {
     // cpu: Olc6502, // Talvez seria melhor sem, ou colocar o refcell
     ram: [u8; 64 * 1024], // FAKE RAM Temporally `_1`
 }
+
 impl Bus {
     pub fn new() -> Bus {
         Bus {

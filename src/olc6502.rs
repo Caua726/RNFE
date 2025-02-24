@@ -405,21 +405,18 @@ impl Olc6502 {
         return 0;
     }
     // CLD: Clear Decimal Mode
-    // Function: D = 0
     pub fn CLD(&mut self) -> u8 {
         self.setFlag(FLAGS6502::D, false);
         0
     }
 
     // CLI: Clear Interrupt Disable
-    // Function: I = 0
     pub fn CLI(&mut self) -> u8 {
         self.setFlag(FLAGS6502::I, false);
         0
     }
 
     // CLV: Clear Overflow Flag
-    // Function: V = 0
     pub fn CLV(&mut self) -> u8 {
         self.setFlag(FLAGS6502::V, false);
         0
@@ -466,7 +463,8 @@ impl Olc6502 {
     // Flags Out: C, Z, V, N
     pub fn ADC(&mut self) -> u8 {
         self.fetch();
-        self.temp = (self.a as u16).wrapping_add(self.fetched as u16);
+        self.temp as u16 = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
+/*        self.temp = (self.a as u16).wrapping_add(self.fetched as u16); 
         if self.getFlag(FLAGS6502::C) {
             self.temp = self.temp.wrapping_add(1);
         }
@@ -474,6 +472,8 @@ impl Olc6502 {
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
         self.a = (self.temp & 0x00FF) as u8;
+i dont remenber what i doed(o fuck i murdered english) in that, so i will comment and do again
+*/
         1
     }
 
