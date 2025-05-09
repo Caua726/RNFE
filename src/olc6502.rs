@@ -464,7 +464,12 @@ impl Olc6502 {
     pub fn ADC(&mut self) -> u8 {
         self.fetch();
         self.temp as u16 = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
-/*        self.temp = (self.a as u16).wrapping_add(self.fetched as u16); 
+        self.setFlag(FLAGS6502::C, self.temp > 255);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
+        self.setFlag(FLAGS6502::V, ((self.a ^ self.fetched) & 0x80 != 0) && ((self.a ^ self.temp) & 0x80 != 0));
+        self.a = (self.temp & 0x00FF) as u8;
+        /*        self.temp = (self.a as u16).wrapping_add(self.fetched as u16); 
         if self.getFlag(FLAGS6502::C) {
             self.temp = self.temp.wrapping_add(1);
         }
@@ -472,12 +477,63 @@ impl Olc6502 {
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
         self.a = (self.temp & 0x00FF) as u8;
-i dont remenber what i doed(o fuck i murdered english) in that, so i will comment and do again
+i dont remenber what i did (o fuck i murdered english) in that, so i will comment and do again
 */
         1
     }
 
+    // SBC: Subtract with Carry
+    // Subtrai um valor da memoria com o acumulador
+    // Flags Out: C, Z, V, N
+    pub fn SBC(&mut self) -> u8 {
+        self.fetch();
+        let value = (self.fetched as u16) ^ 0x00FF;
+        let temp = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
 
+        self.setFlag(FLAGS6502::C, temp > 0xFF);
+        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::V, ((temp ^ (self.a as u16)) & (temp ^ value) & 0x80) != 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
+
+        self.a = (temp & 0x00FF) as u8;
+        1
+    }
+    // PHA: Push Accumulator
+    // Funcão: Coloca o valor do acumulador no stack
+    pub fn PHA(&mut self) -> u8 {
+        self.write(0x100 + self.stkp, self.a);
+        self.stkp -= 1;
+        0
+    }
+
+    // PLA: Pull Accumulator
+    // Funcão: Pega o valor do stack e coloca no acumulador
+    pub fn PLA(&mut self) -> u8 {
+        self.stkp += 1;
+        self.a = self.read(0x100 + self.stkp);
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
+        0
+    }
+    
+    // RTI: Return from Interrupt
+    pub fn RTI(&mut self) -> u8 {
+        self.stkp += 1;
+        self.status = self.read(0x0100 + self.stkp as u16);
+        self.status &= !(FLAGS6502::B as u8);
+        self.status &= !(FLAGS6502::U as u8);
+        
+        self.stkp += 1;
+        let lo = self.read(0x0100 + self.stkp as u16);
+        
+        self.stkp += 1;
+        let hi = self.read(0x0100 + self.stkp as u16);
+        
+        // Combine low and high bytes to form 16-bit program counter
+        self.pc = ((hi as u16) << 8) | (lo as u16);
+        
+        0
+    }
     //==========================//
     //#         Opcodes        //#
     //==========================//
@@ -525,13 +581,61 @@ i dont remenber what i doed(o fuck i murdered english) in that, so i will commen
         self.cycles -= 1;
     }
     // Reset
-    pub fn reset() {
+    pub fn reset(&mut self) {
+        self.a = 0;
+        self.x = 0;
+        self.y = 0;
+        self.stkp = 0xFD;
+        self.status = 0x00 | FLAGS6502::U as u8;
+        
+        self.addr_abs = 0xFFFC;
+        let lo = self.read(self.addr_abs + 0);
+        let hi = self.read(self.addr_abs + 1);
 
+        self.pc = ((hi as u16) << 8) | (lo as u16);
+
+        self.addr_rel = 0x0000;
+        self.addr_abs = 0x0000;
+        self.fetched = 0x00;
+
+        self.cycles = 8;
     }
     // Interruptiuon Request
-    pub fn irq() {}
+    pub fn irq() {
+        if self.getFlag(FLAGS6502::I) == 0 {
+            self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
+            self.stkp -= 1;
+            self.write(0x0100 + self.stkp, self.pc as u8);
+            self.stkp -= 1;
+
+            self.addr_abs = 0xFFFE;
+            let lo = self.read(self.addr_abs + 0);
+            let hi = self.read(self.addr_abs + 1);
+
+            self.pc = ((hi as u16) << 8) | (lo as u16);
+            self.cycles = 7;
+        }
+    }
     // Non Maskable Interrupt
-    pub fn nmi() {}
+    pub fn nmi(&mut self) {
+        self.write(0x0100 + self.stkp as u16, (self.pc >> 8) & 0x00FF);
+        self.stkp -= 1;
+        self.write(0x0100 + self.stkp as u16, self.pc & 0x00FF);
+        self.stkp -= 1;
+
+        self.setFlag(FLAGS6502::B, false);
+        self.setFlag(FLAGS6502::U, true);
+        self.setFlag(FLAGS6502::I, true);
+        self.write(0x0100 + self.stkp as u16, self.status);
+        self.stkp -= 1;
+
+        self.addr_abs = 0xFFFA;
+        let lo = self.read(self.addr_abs + 0);
+        let hi = self.read(self.addr_abs + 1);
+        self.pc = ((hi as u16) << 8) | (lo as u16);
+
+        self.cycles = 8;
+    }
     // Temporary
     pub fn temp() -> u16 { 0x0000 } // Uma variavel pra usar pra qualquer coisa temporariamente
 
