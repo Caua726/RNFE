@@ -10,3 +10,5 @@ repository = "https://github.com/Caua726/RNFE"
 
 
 [dependencies]
+pixels = "0.15.0"
+winit = { version = "0.30.12", features = ["x11", "wayland"] }
