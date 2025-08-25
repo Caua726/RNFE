@@ -23,6 +23,7 @@ pub struct Cpu6502 {
     pc: u16,        // Program Counter
     status: u8,     // Status Register
     fetched: u8,    // Nao sei, depois vejo
+    temp: u16,      // Variavel temporaria
     addr_abs: u16,  // Endereco Absoluto
     addr_rel: u16,  // Endereço Relativo
     opcode: u8,     // Variavel Opcode
@@ -49,6 +50,7 @@ impl Cpu6502 {
             pc:0x0000,                      // Program Counter
             status:0x00,                    // Status Register
             fetched:0x00,                   // Nao sei depois eu vejo
+            temp:0x0000,                    // Variavel temporaria
             addr_abs:0x0000,                // Todo o endereço de memoria acaba aqui
             addr_rel:0x0000,                // O endereço absoluto da atual instrução
             opcode:0x00,                    // Byte de instrução
@@ -62,7 +64,11 @@ impl Cpu6502 {
     }
 
     pub fn getFlag(&self, flag: FLAGS6502) -> u8 {
-        self.status & flag as u8
+        if self.status & flag as u8 != 0 {
+            1
+        } else {
+            0
+        }
     }
     pub fn setFlag(&mut self, flag: FLAGS6502, value: bool) {
         if value {
@@ -97,7 +103,6 @@ impl Cpu6502 {
     // De Bits, de qualquer jeito, o objetivo dele é
     // O Acumulador, para instrucoes como PHA
     pub fn IMP(&mut self) -> u8 {
-        self.fetched = self.a;
         0
     } 
 
@@ -129,7 +134,7 @@ impl Cpu6502 {
     // Isso é util para interagir com areas da memória
     // Como um array em C
     pub fn ZPX(&mut self) -> u8 {
-        self.addr_abs = (self.read(self.pc) + self.x) as u16;
+        let base = self.read(self.pc) as u8;
         self.pc += 1;
         self.addr_abs = base.wrapping_add(self.x) as u16;
         0
@@ -137,9 +142,9 @@ impl Cpu6502 {
     // ZPY: Zero Paging Y
     // O Mesmo do ZPX mas com Y
     pub fn ZPY(&mut self) -> u8 {
-        self.addr_abs = (self.read(self.pc) + self.y) as u16;
+        let base = self.read(self.pc) as u8;
         self.pc += 1;
-        self.addr_abs &= 0x00FF;
+        self.addr_abs = base.wrapping_add(self.y) as u16;
         0
     }   
     // ABS: Absolute
@@ -244,16 +249,14 @@ impl Cpu6502 {
         let lo: u16 = self.read(t & 0x00FF) as u16;
         let hi: u16 = self.read((t + 1) & 0x00FF) as u16;
 
-        self.addr_abs = (hi << 8 | lo);
-        self.addr_abs += self.y as u16;
+        let base = ((hi << 8) | lo) as u16;
+        self.addr_abs = base.wrapping_add(self.y as u16);
 
-        if (self.addr_abs & 0xFF00) != (hi << 8) {
-            return 1;
+        if (self.addr_abs & 0xFF00) != (base & 0xFF00) {
+            1
         } else {
-            return 
+            0
         }
-
-        0
     }   
     // REL: Relative.
     // Modo de Endereçamento Relativo, usado para
@@ -275,7 +278,6 @@ impl Cpu6502 {
     }
 
     pub fn ACC(&mut self) -> u8 {
-        self.addr_abs = self.pc;
         0
     }
     //==========================//
@@ -284,11 +286,17 @@ impl Cpu6502 {
 
     // Fetch
     pub fn fetch(&mut self) -> u8 {
-        if self.lookup[self.opcode as usize].addrmode == Cpu6502::IMP {
+        let idx = self.opcode as usize;
+        let am = self.lookup[idx].addrmode as usize;
+    
+        if am == Cpu6502::ACC as usize {
+            self.fetched = self.a;
+        } else if am != Cpu6502::IMP as usize {
             self.fetched = self.read(self.addr_abs);
         }
         self.fetched
     }
+    
 
     // AND: And
     pub fn AND(&mut self) -> u8 {
@@ -469,24 +477,24 @@ impl Cpu6502 {
     // Flags Out: C, Z, V, N
     pub fn ADC(&mut self) -> u8 {
         self.fetch();
-        self.temp as u16 = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
-        self.setFlag(FLAGS6502::C, self.temp > 255);
-        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
-        self.setFlag(FLAGS6502::V, ((self.a ^ self.fetched) & 0x80 != 0) && ((self.a ^ self.temp) & 0x80 != 0));
-        self.a = (self.temp & 0x00FF) as u8;
-        /*        self.temp = (self.a as u16).wrapping_add(self.fetched as u16); 
-        if self.getFlag(FLAGS6502::C) {
-            self.temp = self.temp.wrapping_add(1);
-        }
+        self.temp = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
+    
         self.setFlag(FLAGS6502::C, self.temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
-        self.a = (self.temp & 0x00FF) as u8;
-i dont remenber what i did (o fuck i murdered english) in that, so i will comment and do again
-*/
+    
+        let r = (self.temp & 0x00FF) as u8; // resultado de 8 bits
+        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
+    
+        // V: (~(A^M) & (A^R) & 0x80) != 0
+        self.setFlag(
+            FLAGS6502::V,
+            (((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0)
+        );
+    
+        self.a = r;
         1
     }
+    
 
     // SBC: Subtract with Carry
     // Subtrai um valor da memoria com o acumulador
@@ -495,19 +503,27 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
         self.fetch();
         let value = (self.fetched as u16) ^ 0x00FF;
         let temp = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
-
-        self.setFlag(FLAGS6502::C, temp > 0xFF);
-        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::V, ((temp ^ (self.a as u16)) & (temp ^ value) & 0x80) != 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
-
-        self.a = (temp & 0x00FF) as u8;
+    
+        let r = (temp & 0x00FF) as u8;
+    
+        self.setFlag(FLAGS6502::C, (temp & 0xFF00) != 0);
+        self.setFlag(FLAGS6502::Z, r == 0);
+        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
+    
+        // V (SBC): ((A^R) & (A^M) & 0x80) != 0
+        self.setFlag(
+            FLAGS6502::V,
+            (((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0)
+        );
+    
+        self.a = r;
         1
     }
+    
     // PHA: Push Accumulator
     // Funcão: Coloca o valor do acumulador no stack
     pub fn PHA(&mut self) -> u8 {
-        self.write(0x100 + self.stkp, self.a);
+        self.write(0x100 + self.stkp as u16, self.a);
         self.stkp -= 1;
         0
     }
@@ -516,7 +532,7 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
     // Funcão: Pega o valor do stack e coloca no acumulador
     pub fn PLA(&mut self) -> u8 {
         self.stkp += 1;
-        self.a = self.read(0x100 + self.stkp);
+        self.a = self.read(0x100 + self.stkp as u16);
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
         0
@@ -524,22 +540,20 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
     
     // RTI: Return from Interrupt
     pub fn RTI(&mut self) -> u8 {
-        self.stkp += 1;
+        self.stkp = self.stkp.wrapping_add(1);
         self.status = self.read(0x0100 + self.stkp as u16);
         self.status &= !(FLAGS6502::B as u8);
-        self.status &= !(FLAGS6502::U as u8);
-        
-        self.stkp += 1;
-        let lo = self.read(0x0100 + self.stkp as u16);
-        
-        self.stkp += 1;
-        let hi = self.read(0x0100 + self.stkp as u16);
-        
-        // Combine low and high bytes to form 16-bit program counter
-        self.pc = ((hi as u16) << 8) | (lo as u16);
-        
+        self.status |=  (FLAGS6502::U as u8);
+    
+        self.stkp = self.stkp.wrapping_add(1);
+        let lo = self.read(0x0100 + self.stkp as u16) as u16;
+        self.stkp = self.stkp.wrapping_add(1);
+        let hi = self.read(0x0100 + self.stkp as u16) as u16;
+    
+        self.pc = (hi << 8) | lo;
         0
     }
+    
     //===========================================//
     //#         Opcodes Nao Implementados       #//
     //===========================================//
@@ -584,15 +598,22 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
     pub fn clock(&mut self) {
         if self.cycles == 0 {
             self.opcode = self.read(self.pc);
-            self.pc += 1;
-
-            self.cycles = self.lookup[self.opcode as usize].cycles;
-            let add_cycle0 = self.lookup[self.opcode as usize].addrmode;
-            let add_cycle1 = self.lookup[self.opcode as usize].operate;
-            
+            self.pc = self.pc.wrapping_add(1); // só +1
+    
+            let (addrmode, operate, base_cycles) = {
+                let ins = &self.lookup[self.opcode as usize];
+                (ins.addrmode, ins.operate, ins.cycles)
+            };
+    
+            self.cycles = base_cycles;
+            let cycle0 = addrmode(self);
+            let cycle1 = operate(self);
+            self.cycles = self.cycles.wrapping_add((cycle0 & cycle1) as u8);
         }
-        self.cycles -= 1;
+        self.cycles = self.cycles.wrapping_sub(1);
     }
+    
+    
     // Reset
     pub fn reset(&mut self) {
         self.a = 0;
@@ -616,42 +637,46 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
     // Interruptiuon Request
     pub fn irq(&mut self) {
         if self.getFlag(FLAGS6502::I) == 0 {
-            self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF);
-            self.stkp -= 1;
-            self.write(0x0100 + self.stkp, self.pc as u8);
-            self.stkp -= 1;
-
-            self.addr_abs = 0xFFFE;
-            let lo = self.read(self.addr_abs + 0);
-            let hi = self.read(self.addr_abs + 1);
-
-            self.pc = ((hi as u16) << 8) | (lo as u16);
+            // push PC
+            self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+            self.stkp = self.stkp.wrapping_sub(1);
+            self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+            self.stkp = self.stkp.wrapping_sub(1);
+    
+            // push status (B=0, U=1) e seta I
+            self.setFlag(FLAGS6502::B, false);
+            self.setFlag(FLAGS6502::U, true);
+            self.setFlag(FLAGS6502::I, true);
+            self.write(0x0100 + self.stkp as u16, self.status);
+            self.stkp = self.stkp.wrapping_sub(1);
+    
+            // vetor IRQ
+            let lo = self.read(0xFFFE) as u16;
+            let hi = self.read(0xFFFF) as u16;
+            self.pc = (hi << 8) | lo;
+    
             self.cycles = 7;
         }
     }
-    // Non Maskable Interrupt
+    
     pub fn nmi(&mut self) {
-        self.write(0x0100 + self.stkp as u16, (self.pc >> 8) & 0x00FF);
-        self.stkp -= 1;
-        self.write(0x0100 + self.stkp as u16, self.pc & 0x00FF);
-        self.stkp -= 1;
-
+        self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+    
         self.setFlag(FLAGS6502::B, false);
         self.setFlag(FLAGS6502::U, true);
         self.setFlag(FLAGS6502::I, true);
         self.write(0x0100 + self.stkp as u16, self.status);
-        self.stkp -= 1;
-
-        self.addr_abs = 0xFFFA;
-        let lo = self.read(self.addr_abs + 0);
-        let hi = self.read(self.addr_abs + 1);
-        self.pc = ((hi as u16) << 8) | (lo as u16);
-
+        self.stkp = self.stkp.wrapping_sub(1);
+    
+        let lo = self.read(0xFFFA) as u16;
+        let hi = self.read(0xFFFB) as u16;
+        self.pc = (hi << 8) | lo;
+    
         self.cycles = 8;
     }
-    // Temporary
-    pub fn temp() -> u16 { 0x0000 } // Uma variavel pra usar pra qualquer coisa temporariamente
-
 
     // Tem algumas instrucoes que somente alguns
     // Jogos ou nenhum usa, então nao irei emula-los
@@ -672,7 +697,7 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
             Instruction { name: "PHP", operate: Cpu6502::PHP, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::IMP, cycles: 2 },
+            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ACC, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABS, cycles: 4 },
@@ -708,7 +733,7 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
             Instruction { name: "PLP", operate: Cpu6502::PLP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::IMP, cycles: 2 },
+            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ACC, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "BIT", operate: Cpu6502::BIT, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABS, cycles: 4 },
@@ -744,7 +769,7 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
             Instruction { name: "PHA", operate: Cpu6502::PHA, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::IMP, cycles: 2 },
+            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ACC, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::ABS, cycles: 3 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABS, cycles: 4 },
@@ -780,7 +805,7 @@ i dont remenber what i did (o fuck i murdered english) in that, so i will commen
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
             Instruction { name: "PLA", operate: Cpu6502::PLA, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::IMP, cycles: 2 },
+            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ACC, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::IND, cycles: 5 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABS, cycles: 4 },
