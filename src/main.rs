@@ -1,6 +1,6 @@
-mod olc6502;
+mod cpu6502;
 mod bus;
-use olc6502::Olc6502;
+use cpu6502::Cpu6502;
 use bus::Bus;
 
 fn main() {

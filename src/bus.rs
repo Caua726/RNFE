@@ -1,16 +1,16 @@
-use crate::olc6502::Olc6502;
+use crate::cpu6502::Cpu6502;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct Bus {
-    // cpu: Olc6502, // Talvez seria melhor sem, ou colocar o refcell
+    // cpu: Cpu6502, // Talvez seria melhor sem, ou colocar o refcell
     ram: [u8; 64 * 1024], // FAKE RAM Temporally `_1`
 }
 
 impl Bus {
     pub fn new() -> Bus {
         Bus {
-            // cpu: Olc6502::new(), // olhar linha 5
+            // cpu: Cpu6502::new(), // olhar linha 5
             ram: [0; 64 * 1024]
         }
     }
@@ -43,6 +43,6 @@ fn main() {
     }
 
     // Conecta a CPU ao barramento
-    let mut cpu = Olc6502::new();
+    let mut cpu = Cpu6502::new();
     cpu.connect_bus(Rc::new(RefCell::new(bus)));
 }
