@@ -557,41 +557,260 @@ impl Cpu6502 {
     //===========================================//
     //#         Opcodes Nao Implementados       #//
     //===========================================//
-    pub fn ASL(&mut self) -> u8 {0}
-    pub fn BIT(&mut self) -> u8 {0}
-    pub fn BRK(&mut self) -> u8 {0}
-    pub fn DEC(&mut self) -> u8 {0}
-    pub fn DEX(&mut self) -> u8 {0}
-    pub fn DEY(&mut self) -> u8 {0}
-    pub fn EOR(&mut self) -> u8 {0}
-    pub fn INC(&mut self) -> u8 {0}
-    pub fn INX(&mut self) -> u8 {0}
-    pub fn INY(&mut self) -> u8 {0}
-    pub fn JMP(&mut self) -> u8 {0}
-    pub fn JSR(&mut self) -> u8 {0}
-    pub fn LDA(&mut self) -> u8 {0}
-    pub fn LDX(&mut self) -> u8 {0}
-    pub fn LDY(&mut self) -> u8 {0}
-    pub fn LSR(&mut self) -> u8 {0}
-    pub fn NOP(&mut self) -> u8 {0}
-    pub fn ORA(&mut self) -> u8 {0}
-    pub fn PHP(&mut self) -> u8 {0}
-    pub fn ROL(&mut self) -> u8 {0}
-    pub fn PLP(&mut self) -> u8 {0}
-    pub fn SEC(&mut self) -> u8 {0}
-    pub fn RTS(&mut self) -> u8 {0}
-    pub fn SEI(&mut self) -> u8 {0}
-    pub fn ROR(&mut self) -> u8 {0}
-    pub fn STA(&mut self) -> u8 {0}
-    pub fn STY(&mut self) -> u8 {0}
-    pub fn STX(&mut self) -> u8 {0}
-    pub fn TXS(&mut self) -> u8 {0}
-    pub fn TAY(&mut self) -> u8 {0}
-    pub fn TAX(&mut self) -> u8 {0}
-    pub fn TXA(&mut self) -> u8 {0}
-    pub fn TYA(&mut self) -> u8 {0}
-    pub fn TSX(&mut self) -> u8 {0}
-    pub fn SED(&mut self) -> u8 {0}
+    pub fn ASL(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.fetched as u16) << 1;
+        self.setFlag(FLAGS6502::C, (self.temp & 0xFF00) > 0);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x0000);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+            self.a = (self.temp & 0x00FF) as u8;
+        } else {
+            self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        }
+        0
+    }
+    pub fn BIT(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.a as u16) & (self.fetched as u16);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x00);
+        self.setFlag(FLAGS6502::N, (self.fetched & (1 << 7)) != 0);
+        self.setFlag(FLAGS6502::V, (self.fetched & (1 << 6)) != 0);
+        0
+    }
+    pub fn BRK(&mut self) -> u8 {
+        self.pc = self.pc.wrapping_add(1);
+        self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+
+        self.setFlag(FLAGS6502::B, true);
+        self.write(0x0100 + self.stkp as u16, self.status);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.setFlag(FLAGS6502::B, false);
+
+        self.setFlag(FLAGS6502::I, true);
+
+        let lo = self.read(0xFFFE) as u16;
+        let hi = self.read(0xFFFF) as u16;
+        self.pc = (hi << 8) | lo;
+        0
+    }
+    pub fn DEC(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.fetched as u16).wrapping_sub(1);
+        self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x0000);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        0
+    }
+    pub fn DEX(&mut self) -> u8 {
+        self.x = self.x.wrapping_sub(1);
+        self.setFlag(FLAGS6502::Z, self.x == 0x00);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+    pub fn DEY(&mut self) -> u8 {
+        self.y = self.y.wrapping_sub(1);
+        self.setFlag(FLAGS6502::Z, self.y == 0x00);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+    pub fn EOR(&mut self) -> u8 {
+        self.fetch();
+        self.a = self.a ^ self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+    pub fn INC(&mut self) -> u8 {
+        self.fetch();
+        self.temp = (self.fetched as u16).wrapping_add(1);
+        self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x0000);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        0
+    }
+    pub fn INX(&mut self) -> u8 {
+        self.x = self.x.wrapping_add(1);
+        self.setFlag(FLAGS6502::Z, self.x == 0x00);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+    pub fn INY(&mut self) -> u8 {
+        self.y = self.y.wrapping_add(1);
+        self.setFlag(FLAGS6502::Z, self.y == 0x00);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+    pub fn JMP(&mut self) -> u8 {
+        self.pc = self.addr_abs;
+        0
+    }
+    pub fn JSR(&mut self) -> u8 {
+        self.pc = self.pc.wrapping_sub(1);
+        self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.pc = self.addr_abs;
+        0
+    }
+    pub fn LDA(&mut self) -> u8 {
+        self.fetch();
+        self.a = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+    pub fn LDX(&mut self) -> u8 {
+        self.fetch();
+        self.x = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.x == 0x00);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        1
+    }
+    pub fn LDY(&mut self) -> u8 {
+        self.fetch();
+        self.y = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.y == 0x00);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        1
+    }
+    pub fn LSR(&mut self) -> u8 {
+        self.fetch();
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x0001) != 0);
+        self.temp = (self.fetched >> 1) as u16;
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x0000);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+            self.a = (self.temp & 0x00FF) as u8;
+        } else {
+            self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        }
+        0
+    }
+    pub fn NOP(&mut self) -> u8 {
+        match self.opcode {
+            0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => 1,
+            _ => 0
+        }
+    }
+    pub fn ORA(&mut self) -> u8 {
+        self.fetch();
+        self.a = self.a | self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+    pub fn PHP(&mut self) -> u8 {
+        self.write(0x0100 + self.stkp as u16, self.status | FLAGS6502::B as u8 | FLAGS6502::U as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.setFlag(FLAGS6502::B, false);
+        self.setFlag(FLAGS6502::U, false);
+        0
+    }
+    pub fn ROL(&mut self) -> u8 {
+        self.fetch();
+        self.temp = ((self.fetched as u16) << 1) | self.getFlag(FLAGS6502::C) as u16;
+        self.setFlag(FLAGS6502::C, (self.temp & 0xFF00) != 0);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x0000);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+            self.a = (self.temp & 0x00FF) as u8;
+        } else {
+            self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        }
+        0
+    }
+    pub fn PLP(&mut self) -> u8 {
+        self.stkp = self.stkp.wrapping_add(1);
+        self.status = self.read(0x0100 + self.stkp as u16);
+        self.setFlag(FLAGS6502::U, true);
+        self.setFlag(FLAGS6502::B, false);
+        0
+    }
+    pub fn SEC(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::C, true);
+        0
+    }
+    pub fn RTS(&mut self) -> u8 {
+        self.stkp = self.stkp.wrapping_add(1);
+        let lo = self.read(0x0100 + self.stkp as u16) as u16;
+        self.stkp = self.stkp.wrapping_add(1);
+        let hi = self.read(0x0100 + self.stkp as u16) as u16;
+        self.pc = ((hi << 8) | lo);
+        self.pc = self.pc.wrapping_add(1);
+        0
+    }
+    pub fn SEI(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::I, true);
+        0
+    }
+    pub fn ROR(&mut self) -> u8 {
+        self.fetch();
+        self.temp = ((self.getFlag(FLAGS6502::C) as u16) << 7) | ((self.fetched >> 1) as u16);
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
+        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0x00);
+        self.setFlag(FLAGS6502::N, (self.temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+            self.a = (self.temp & 0x00FF) as u8;
+        } else {
+            self.write(self.addr_abs, (self.temp & 0x00FF) as u8);
+        }
+        0
+    }
+    pub fn STA(&mut self) -> u8 {
+        self.write(self.addr_abs, self.a);
+        0
+    }
+    pub fn STY(&mut self) -> u8 {
+        self.write(self.addr_abs, self.y);
+        0
+    }
+    pub fn STX(&mut self) -> u8 {
+        self.write(self.addr_abs, self.x);
+        0
+    }
+    pub fn TXS(&mut self) -> u8 {
+        self.stkp = self.x;
+        0
+    }
+    pub fn TAY(&mut self) -> u8 {
+        self.y = self.a;
+        self.setFlag(FLAGS6502::Z, self.y == 0x00);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+    pub fn TAX(&mut self) -> u8 {
+        self.x = self.a;
+        self.setFlag(FLAGS6502::Z, self.x == 0x00);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+    pub fn TXA(&mut self) -> u8 {
+        self.a = self.x;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+    pub fn TYA(&mut self) -> u8 {
+        self.a = self.y;
+        self.setFlag(FLAGS6502::Z, self.a == 0x00);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+    pub fn TSX(&mut self) -> u8 {
+        self.x = self.stkp;
+        self.setFlag(FLAGS6502::Z, self.x == 0x00);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+    pub fn SED(&mut self) -> u8 {
+        self.setFlag(FLAGS6502::D, true);
+        0
+    }
     pub fn XXX(&mut self) -> u8 {0}   // Nao Implementado
 
     // Clock
@@ -976,3 +1195,10 @@ impl Cpu6502 {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bus::Bus;
+    use std::rc::Rc;
+    use std::cell::RefCell;
