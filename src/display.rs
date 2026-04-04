@@ -63,6 +63,7 @@ struct GpuState {
     scale_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    overlay_pipeline: wgpu::RenderPipeline,
     // Menu rendering (resolução da janela, sem scaling)
     menu_texture: wgpu::Texture,
     menu_bind_group: wgpu::BindGroup,
@@ -200,6 +201,35 @@ impl GpuState {
             cache: None,
         });
 
+        // Pipeline com alpha blending pra overlays
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("overlay"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), buffers: &[], compilation_options: Default::default() },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent::OVER,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         // Menu texture (resolução da janela)
         let menu_w = size.width.max(1);
         let menu_h = size.height.max(1);
@@ -208,7 +238,7 @@ impl GpuState {
 
         GpuState {
             surface, device, queue, config, pipeline, bind_group, texture,
-            scale_buffer, bind_group_layout, sampler,
+            scale_buffer, bind_group_layout, sampler, overlay_pipeline,
             menu_texture, menu_bind_group, menu_scale_buffer, menu_w, menu_h,
         }
     }
@@ -354,6 +384,46 @@ impl GpuState {
                 ..Default::default()
             });
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.menu_bind_group, &[]);
+            pass.draw(0..6, 0..1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+    }
+
+    // Renderiza overlay com alpha blending por cima do frame atual
+    fn render_overlay(&mut self, pixels: &[u8]) {
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.menu_texture, mip_level: 0,
+                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.menu_w * 4),
+                rows_per_image: Some(self.menu_h),
+            },
+            wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
+        );
+
+        let frame = match self.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => { self.surface.configure(&self.device, &self.config); return; }
+        };
+        let view = frame.texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.overlay_pipeline);
             pass.set_bind_group(0, &self.menu_bind_group, &[]);
             pass.draw(0..6, 0..1);
         }
@@ -545,35 +615,40 @@ impl App {
                 self.framebuffer[fb_idx + 3] = 255;
             }
 
-            // Debug overlay (F3)
+            gpu.render(&self.framebuffer);
+
+            // Debug overlay na resolução da janela (F3)
             if self.debug_overlay {
-                let w = NES_WIDTH;
-                let h = NES_HEIGHT;
-                let sz = 10.0f32;
-                let color = [0u8, 255, 0, 255];
-                let shadow = [0u8, 0, 0, 200];
+                let mw = gpu.menu_w;
+                let mh = gpu.menu_h;
+                let size = (mw * mh * 4) as usize;
+                self.menu_fb.resize(size, 0);
+                self.menu_fb.fill(0);
+
+                let bg = [0u8, 0, 0, 160];
+                let sz = 14.0f32;
+                let green = [0u8, 255, 80, 255];
+                let gray = [200u8, 200, 200, 255];
+
+                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, 4, 4, 360, 70, bg);
 
                 let fps_text = format!("FPS: {}", self.fps_display);
                 let cpu_text = format!(
-                    "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X}",
+                    "PC:{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  SP:{:02X}  P:{:02X}",
                     nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status
                 );
                 let ppu_text = format!(
-                    "SL:{} CYC:{} C:{:02X} M:{:02X} S:{:02X}",
+                    "SL:{}  CYC:{}  CTRL:{:02X}  MASK:{:02X}  STAT:{:02X}",
                     nes.bus.ppu.scanline, nes.bus.ppu.cycle,
                     nes.bus.ppu.control, nes.bus.ppu.mask, nes.bus.ppu.status
                 );
 
-                // Shadow primeiro, depois texto
-                self.ui.draw_text(&mut self.framebuffer, w, h, &fps_text, sz, 3, 3, shadow);
-                self.ui.draw_text(&mut self.framebuffer, w, h, &fps_text, sz, 2, 2, color);
-                self.ui.draw_text(&mut self.framebuffer, w, h, &cpu_text, sz, 3, 15, shadow);
-                self.ui.draw_text(&mut self.framebuffer, w, h, &cpu_text, sz, 2, 14, color);
-                self.ui.draw_text(&mut self.framebuffer, w, h, &ppu_text, sz, 3, 27, shadow);
-                self.ui.draw_text(&mut self.framebuffer, w, h, &ppu_text, sz, 2, 26, color);
-            }
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &fps_text, sz, 12, 10, green);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &cpu_text, sz, 12, 28, gray);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &ppu_text, sz, 12, 46, gray);
 
-            gpu.render(&self.framebuffer);
+                gpu.render_overlay(&self.menu_fb);
+            }
             return;
         } else {
             // Tela inicial na resolução da janela

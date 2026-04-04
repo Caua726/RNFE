@@ -130,6 +130,10 @@ impl Ui {
         (cx - bw / 2, cy - bh / 2, bw, bh)
     }
 
+    pub fn fill_rect_pub(&self, fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+        self.fill_rect(fb, w, h, rx, ry, rw, rh, color);
+    }
+
     fn fill_rect(&self, fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
         let w_i = w as i32;
         let h_i = h as i32;
