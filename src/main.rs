@@ -1,6 +1,7 @@
 mod cpu6502;
 mod bus;
 mod ppu;
+mod apu;
 mod cartridge;
 mod display;
 mod font;

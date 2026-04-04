@@ -26,6 +26,8 @@ impl Nes {
         self.bus.ppu.clock();
 
         if self.system_clock_counter % 3 == 0 {
+            // APU roda na mesma velocidade da CPU
+            self.bus.apu.clock();
             if self.bus.dma_transfer {
                 if self.bus.dma_dummy {
                     if self.system_clock_counter % 2 == 1 {

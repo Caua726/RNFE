@@ -47,6 +47,9 @@ pub struct Ppu {
     // NMI
     nmi: bool,
 
+    // Frame par/ímpar
+    odd_frame: bool,
+
     // Mirroring
     pub mirror_horizontal: bool,
 }
@@ -94,6 +97,7 @@ impl Ppu {
             cycle: 0,
             frame_complete: false,
             nmi: false,
+            odd_frame: false,
             mirror_horizontal: false,
         }
     }
@@ -299,7 +303,7 @@ impl Ppu {
     pub fn clock(&mut self) {
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
-            if self.scanline == 0 && self.cycle == 0 {
+            if self.scanline == 0 && self.cycle == 0 && self.odd_frame && (self.mask & 0x18) != 0 {
                 self.cycle = 1;
             }
 
@@ -345,7 +349,6 @@ impl Ppu {
             }
 
             if self.cycle == 257 {
-                self.load_background_shifters();
                 self.transfer_address_x();
             }
 
@@ -420,11 +423,11 @@ impl Ppu {
                             if (self.scanline - self.sprites_scanline[i].y as i16) < 8 {
                                 sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
                                     | (((self.sprites_scanline[i].id as u16 & 0xFE) + 1) << 4)
-                                    | (7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16;
+                                    | ((7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16 & 0x07);
                             } else {
                                 sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
                                     | ((self.sprites_scanline[i].id as u16 & 0xFE) << 4)
-                                    | (7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16;
+                                    | ((7 - ((self.scanline - self.sprites_scanline[i].y as i16) & 0x07)) as u16);
                             }
                         }
                     }
@@ -529,7 +532,8 @@ impl Ppu {
 
             if self.sprite_zero_hit_possible && self.sprite_zero_being_rendered {
                 if (self.mask & 0x08) != 0 && (self.mask & 0x10) != 0 {
-                    if !((self.mask & 0x02) != 0 || (self.mask & 0x04) != 0) {
+                    if (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0 {
+                        // Left column clipping ativo, hit só a partir do pixel 8
                         if self.cycle >= 9 && self.cycle < 258 {
                             self.status |= 0x40;
                         }
@@ -570,6 +574,7 @@ impl Ppu {
             if self.scanline >= 261 {
                 self.scanline = -1;
                 self.frame_complete = true;
+                self.odd_frame = !self.odd_frame;
             }
         }
     }

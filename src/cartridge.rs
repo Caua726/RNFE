@@ -9,6 +9,17 @@ pub struct Cartridge {
     chr_banks: u8,
     mirror: Mirror,
     
+    // MMC1 state
+    mmc1_shift: u8,
+    mmc1_shift_count: u8,
+    mmc1_control: u8,
+    mmc1_chr_bank0: u8,
+    mmc1_chr_bank1: u8,
+    mmc1_prg_bank: u8,
+
+    // UxROM (mapper 2) state
+    uxrom_bank: u8,
+
     // MMC3 state
     mmc3_bank_select: u8,
     mmc3_prg_banks: [u8; 4],
@@ -84,7 +95,18 @@ impl Cartridge {
             chr_banks,
             mirror,
             
-            // Initialize MMC3 state
+            // MMC1
+            mmc1_shift: 0x10,
+            mmc1_shift_count: 0,
+            mmc1_control: 0x0C, // PRG 16KB mode, fix last bank
+            mmc1_chr_bank0: 0,
+            mmc1_chr_bank1: 0,
+            mmc1_prg_bank: 0,
+
+            // UxROM
+            uxrom_bank: 0,
+
+            // MMC3
             mmc3_bank_select: 0,
             mmc3_prg_banks: [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)],
             mmc3_chr_banks: [0, 1, 2, 3, 4, 5, 6, 7],
@@ -94,32 +116,44 @@ impl Cartridge {
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
         match self.mapper_id {
             0 => self.mapper_000_cpu_read(addr),
+            1 => self.mapper_001_cpu_read(addr),
+            2 => self.mapper_002_cpu_read(addr),
             4 => self.mapper_004_cpu_read(addr),
-            _ => {
-                println!("Unsupported mapper: {}", self.mapper_id);
-                None
-            }
+            _ => None,
         }
     }
-    
+
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         match self.mapper_id {
             0 => self.mapper_000_cpu_write(addr, data),
+            1 => self.mapper_001_cpu_write(addr, data),
+            2 => self.mapper_002_cpu_write(addr, data),
             4 => self.mapper_004_cpu_write(addr, data),
             _ => false,
         }
     }
-    
+
     pub fn ppu_read(&self, addr: u16) -> Option<u8> {
         match self.mapper_id {
             0 => self.mapper_000_ppu_read(addr),
+            1 => self.mapper_001_ppu_read(addr),
+            2 => self.mapper_002_ppu_read(addr),
             _ => None,
         }
     }
-    
+
     pub fn ppu_write(&mut self, addr: u16, data: u8) -> bool {
         match self.mapper_id {
             0 => self.mapper_000_ppu_write(addr, data),
+            1 | 2 => {
+                // CHR RAM
+                if addr <= 0x1FFF && self.chr_banks == 0 {
+                    self.chr_memory[addr as usize] = data;
+                    true
+                } else {
+                    false
+                }
+            },
             _ => false,
         }
     }
@@ -172,9 +206,159 @@ impl Cartridge {
         }
     }
     
+    // Mapper 001 (MMC1)
+    fn mapper_001_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let prg_mode = (self.mmc1_control >> 2) & 0x03;
+            let bank = match prg_mode {
+                0 | 1 => {
+                    // 32KB mode
+                    let b = (self.mmc1_prg_bank & 0x0E) as usize;
+                    b * 0x4000 + (addr as usize - 0x8000)
+                },
+                2 => {
+                    // Fix first, switch second
+                    if addr < 0xC000 {
+                        addr as usize - 0x8000
+                    } else {
+                        (self.mmc1_prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0xC000)
+                    }
+                },
+                3 | _ => {
+                    // Switch first, fix last
+                    if addr < 0xC000 {
+                        (self.mmc1_prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0x8000)
+                    } else {
+                        (self.prg_banks as usize - 1) * 0x4000 + (addr as usize - 0xC000)
+                    }
+                },
+            };
+            if bank < self.prg_memory.len() {
+                Some(self.prg_memory[bank])
+            } else {
+                Some(0)
+            }
+        } else if addr >= 0x6000 {
+            // PRG RAM (not implemented, return 0)
+            Some(0)
+        } else {
+            None
+        }
+    }
+
+    fn mapper_001_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            if data & 0x80 != 0 {
+                // Reset shift register
+                self.mmc1_shift = 0x10;
+                self.mmc1_shift_count = 0;
+                self.mmc1_control |= 0x0C;
+            } else {
+                self.mmc1_shift >>= 1;
+                self.mmc1_shift |= (data & 0x01) << 4;
+                self.mmc1_shift_count += 1;
+
+                if self.mmc1_shift_count == 5 {
+                    let value = self.mmc1_shift;
+                    match addr {
+                        0x8000..=0x9FFF => {
+                            self.mmc1_control = value;
+                            self.mirror = match value & 0x03 {
+                                0 => Mirror::OneScreenLo,
+                                1 => Mirror::OneScreenHi,
+                                2 => Mirror::Vertical,
+                                3 => Mirror::Horizontal,
+                                _ => self.mirror,
+                            };
+                        },
+                        0xA000..=0xBFFF => self.mmc1_chr_bank0 = value,
+                        0xC000..=0xDFFF => self.mmc1_chr_bank1 = value,
+                        0xE000..=0xFFFF => self.mmc1_prg_bank = value & 0x0F,
+                        _ => {}
+                    }
+                    self.mmc1_shift = 0x10;
+                    self.mmc1_shift_count = 0;
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mapper_001_ppu_read(&self, addr: u16) -> Option<u8> {
+        if addr <= 0x1FFF {
+            if self.chr_banks == 0 {
+                // CHR RAM
+                Some(self.chr_memory[addr as usize])
+            } else {
+                let chr_mode = (self.mmc1_control >> 4) & 0x01;
+                let bank_addr = if chr_mode == 0 {
+                    // 8KB mode
+                    let b = (self.mmc1_chr_bank0 & 0x1E) as usize;
+                    b * 0x1000 + addr as usize
+                } else {
+                    // 4KB mode
+                    if addr < 0x1000 {
+                        self.mmc1_chr_bank0 as usize * 0x1000 + addr as usize
+                    } else {
+                        self.mmc1_chr_bank1 as usize * 0x1000 + (addr as usize - 0x1000)
+                    }
+                };
+                if bank_addr < self.chr_memory.len() {
+                    Some(self.chr_memory[bank_addr])
+                } else {
+                    Some(0)
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    // Mapper 002 (UxROM)
+    fn mapper_002_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0xC000 {
+            // Last bank fixed
+            let offset = (self.prg_banks as usize - 1) * 0x4000 + (addr as usize - 0xC000);
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else if addr >= 0x8000 {
+            // Switchable bank
+            let offset = self.uxrom_bank as usize * 0x4000 + (addr as usize - 0x8000);
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_002_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.uxrom_bank = data & 0x0F;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mapper_002_ppu_read(&self, addr: u16) -> Option<u8> {
+        if addr <= 0x1FFF {
+            Some(self.chr_memory[addr as usize])
+        } else {
+            None
+        }
+    }
+
     pub fn reset(&mut self) {
-        // Reset any mapper-specific state
-        if self.mapper_id == 4 {
+        if self.mapper_id == 1 {
+            self.mmc1_shift = 0x10;
+            self.mmc1_shift_count = 0;
+            self.mmc1_control = 0x0C;
+            self.mmc1_chr_bank0 = 0;
+            self.mmc1_chr_bank1 = 0;
+            self.mmc1_prg_bank = 0;
+        } else if self.mapper_id == 2 {
+            self.uxrom_bank = 0;
+        } else if self.mapper_id == 4 {
             self.mmc3_bank_select = 0;
             self.mmc3_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.mmc3_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];

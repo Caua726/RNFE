@@ -1,8 +1,10 @@
 use crate::ppu::Ppu;
+use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 
 pub struct Bus {
     pub ppu: Ppu,
+    pub apu: Apu,
     pub cartridge: Option<Cartridge>,
     pub ram: [u8; 2048],
     pub dma_page: u8,
@@ -21,6 +23,7 @@ impl Bus {
     pub fn new() -> Bus {
         Bus {
             ppu: Ppu::new(),
+            apu: Apu::new(),
             cartridge: None,
             ram: [0; 2048],
             dma_page: 0x00,
@@ -54,7 +57,9 @@ impl Bus {
             0x2000..=0x3FFF => {
                 self.ppu.cpu_write(addr & 0x0007, data);
             },
-            0x4000..=0x4013 | 0x4015 => {},
+            0x4000..=0x4013 | 0x4015 => {
+                self.apu.cpu_write(addr, data);
+            },
             0x4014 => {
                 self.dma_page = data;
                 self.dma_addr = 0x00;
@@ -71,6 +76,9 @@ impl Bus {
                     }
                     self.controller_strobe = false;
                 }
+            },
+            0x4017 => {
+                self.apu.cpu_write(addr, data);
             },
             _ => {}
         }
@@ -90,7 +98,7 @@ impl Bus {
             0x2000..=0x3FFF => {
                 self.ppu.cpu_read(addr & 0x0007, _read_only)
             },
-            0x4000..=0x4013 | 0x4015 => 0x00,
+            0x4000..=0x4013 | 0x4015 => self.apu.cpu_read(addr),
             0x4016 => {
                 if self.controller_strobe {
                     // Durante strobe, retorna estado do botão A
@@ -129,6 +137,7 @@ impl Bus {
         self.dma_data = 0x00;
         self.dma_transfer = false;
         self.dma_dummy = true;
+        self.apu.reset();
         self.controller = [0; 2];
         self.controller_state = [0; 2];
         self.controller_strobe = false;
