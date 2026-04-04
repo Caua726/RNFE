@@ -28,6 +28,17 @@ impl Nes {
     pub fn clock(&mut self) {
         self.bus.ppu.clock();
 
+        // MMC3 scanline IRQ
+        if self.bus.ppu.scanline_trigger {
+            self.bus.ppu.scanline_trigger = false;
+            if let Some(ref mut cart) = self.bus.cartridge {
+                cart.clock_scanline();
+                if cart.mapper_irq() {
+                    self.cpu.irq(&mut self.bus);
+                }
+            }
+        }
+
         if self.system_clock_counter % 3 == 0 {
             self.bus.apu.clock();
             if let Some(addr) = self.bus.apu.dmc_read_addr.take() {

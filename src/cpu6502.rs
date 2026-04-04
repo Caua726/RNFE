@@ -863,6 +863,128 @@ impl Cpu6502 {
         0
     }
 
+    //===========================================//
+    //#     Illegal/Undocumented Opcodes          #//
+    //===========================================//
+
+    // LAX: Load A and X (LDA + LDX combined)
+    pub fn LAX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.a = self.fetched;
+        self.x = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+
+    // SAX: Store A AND X
+    pub fn SAX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let data = self.a & self.x;
+        self.write(bus, self.addr_abs, data);
+        0
+    }
+
+    // DCP: Decrement Memory then Compare with A
+    pub fn DCP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // DEC
+        self.fetch(bus);
+        let temp = self.fetched.wrapping_sub(1);
+        self.write(bus, self.addr_abs, temp);
+        // CMP
+        let result = (self.a as u16).wrapping_sub(temp as u16);
+        self.setFlag(FLAGS6502::C, self.a >= temp);
+        self.setFlag(FLAGS6502::Z, (result & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, (result & 0x0080) != 0);
+        0
+    }
+
+    // ISB/ISC: Increment Memory then SBC
+    pub fn ISB(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // INC
+        self.fetch(bus);
+        let temp = self.fetched.wrapping_add(1);
+        self.write(bus, self.addr_abs, temp);
+        // SBC
+        let value = (temp as u16) ^ 0x00FF;
+        let result = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
+        let r = (result & 0x00FF) as u8;
+        self.setFlag(FLAGS6502::C, (result & 0xFF00) != 0);
+        self.setFlag(FLAGS6502::Z, r == 0);
+        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
+        self.setFlag(
+            FLAGS6502::V,
+            (((self.a ^ r) & (self.a ^ temp) & 0x80) != 0)
+        );
+        self.a = r;
+        0
+    }
+
+    // SLO: Shift Left then OR with A
+    pub fn SLO(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // ASL
+        self.fetch(bus);
+        let temp = (self.fetched as u16) << 1;
+        self.setFlag(FLAGS6502::C, temp > 0x00FF);
+        let shifted = (temp & 0x00FF) as u8;
+        self.write(bus, self.addr_abs, shifted);
+        // ORA
+        self.a = self.a | shifted;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+
+    // RLA: Rotate Left then AND with A
+    pub fn RLA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // ROL
+        self.fetch(bus);
+        let temp = ((self.fetched as u16) << 1) | (self.getFlag(FLAGS6502::C) as u16);
+        self.setFlag(FLAGS6502::C, temp > 0x00FF);
+        let rotated = (temp & 0x00FF) as u8;
+        self.write(bus, self.addr_abs, rotated);
+        // AND
+        self.a = self.a & rotated;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+
+    // SRE: Shift Right then EOR with A
+    pub fn SRE(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // LSR
+        self.fetch(bus);
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
+        let shifted = self.fetched >> 1;
+        self.write(bus, self.addr_abs, shifted);
+        // EOR
+        self.a = self.a ^ shifted;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+
+    // RRA: Rotate Right then ADC
+    pub fn RRA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        // ROR
+        self.fetch(bus);
+        let temp = ((self.getFlag(FLAGS6502::C) as u16) << 7) | (self.fetched as u16 >> 1);
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
+        let rotated = (temp & 0x00FF) as u8;
+        self.write(bus, self.addr_abs, rotated);
+        // ADC
+        let result = (self.a as u16) + (rotated as u16) + (self.getFlag(FLAGS6502::C) as u16);
+        self.setFlag(FLAGS6502::C, result > 0x00FF);
+        let r = (result & 0x00FF) as u8;
+        self.setFlag(FLAGS6502::Z, r == 0);
+        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
+        self.setFlag(
+            FLAGS6502::V,
+            (((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0)
+        );
+        self.a = r;
+        0
+    }
+
     // XXX: Illegal Opcode
     pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {0}
 
@@ -966,11 +1088,11 @@ impl Cpu6502 {
             Instruction { name: "BRK", operate: Cpu6502::BRK, addrmode: Cpu6502::IMP, cycles: 7 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "PHP", operate: Cpu6502::PHP, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ACC, cycles: 2 },
@@ -978,35 +1100,35 @@ impl Cpu6502 {
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0x10
             Instruction { name: "BPL", operate: Cpu6502::BPL, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "CLC", operate: Cpu6502::CLC, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABX, cycles: 7 },
     
             // 0x20
             Instruction { name: "JSR", operate: Cpu6502::JSR, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "BIT", operate: Cpu6502::BIT, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "PLP", operate: Cpu6502::PLP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ACC, cycles: 2 },
@@ -1014,35 +1136,35 @@ impl Cpu6502 {
             Instruction { name: "BIT", operate: Cpu6502::BIT, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0x30
             Instruction { name: "BMI", operate: Cpu6502::BMI, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "SEC", operate: Cpu6502::SEC, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABX, cycles: 7 },
     
             // 0x40
             Instruction { name: "RTI", operate: Cpu6502::RTI, addrmode: Cpu6502::IMP, cycles: 6 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "PHA", operate: Cpu6502::PHA, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ACC, cycles: 2 },
@@ -1050,35 +1172,35 @@ impl Cpu6502 {
             Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::ABS, cycles: 3 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0x50
             Instruction { name: "BVC", operate: Cpu6502::BVC, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "CLI", operate: Cpu6502::CLI, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABX, cycles: 7 },
     
             // 0x60
             Instruction { name: "RTS", operate: Cpu6502::RTS, addrmode: Cpu6502::IMP, cycles: 6 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "PLA", operate: Cpu6502::PLA, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ACC, cycles: 2 },
@@ -1086,35 +1208,35 @@ impl Cpu6502 {
             Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::IND, cycles: 5 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0x70
             Instruction { name: "BVS", operate: Cpu6502::BVS, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "SEI", operate: Cpu6502::SEI, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABX, cycles: 7 },
     
             // 0x80
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 3 },
+            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "DEY", operate: Cpu6502::DEY, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "TXA", operate: Cpu6502::TXA, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1122,8 +1244,8 @@ impl Cpu6502 {
             Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
-    
+            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ABS, cycles: 4 },
+
             // 0x90
             Instruction { name: "BCC", operate: Cpu6502::BCC, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZY, cycles: 6 },
@@ -1132,7 +1254,7 @@ impl Cpu6502 {
             Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ZPY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
+            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ZPY, cycles: 3 },
             Instruction { name: "TYA", operate: Cpu6502::TYA, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABY, cycles: 5 },
             Instruction { name: "TXS", operate: Cpu6502::TXS, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1146,11 +1268,11 @@ impl Cpu6502 {
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 3 },
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "TAY", operate: Cpu6502::TAY, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "TAX", operate: Cpu6502::TAX, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1158,17 +1280,17 @@ impl Cpu6502 {
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
-    
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABS, cycles: 4 },
+
             // 0xB0
             Instruction { name: "BCS", operate: Cpu6502::BCS, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ZPY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ZPY, cycles: 3 },
             Instruction { name: "CLV", operate: Cpu6502::CLV, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "TSX", operate: Cpu6502::TSX, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1176,17 +1298,17 @@ impl Cpu6502 {
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
-    
+            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABY, cycles: 4 },
+
             // 0xC0
             Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "INY", operate: Cpu6502::INY, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "DEX", operate: Cpu6502::DEX, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1194,35 +1316,35 @@ impl Cpu6502 {
             Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0xD0
             Instruction { name: "BNE", operate: Cpu6502::BNE, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "CLD", operate: Cpu6502::CLD, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABX, cycles: 7 },
     
             // 0xE0
             Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZX, cycles: 6 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::IZX, cycles: 8 },
             Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ZP0, cycles: 3 },
             Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ZP0, cycles: 5 },
             Instruction { name: "INX", operate: Cpu6502::INX, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
@@ -1230,25 +1352,25 @@ impl Cpu6502 {
             Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-    
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABS, cycles: 6 },
+
             // 0xF0
             Instruction { name: "BEQ", operate: Cpu6502::BEQ, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZY, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 8 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::IZY, cycles: 8 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ZPX, cycles: 4 },
             Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ZPX, cycles: 6 },
             Instruction { name: "SED", operate: Cpu6502::SED, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABY, cycles: 7 },
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 7 },
+            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABX, cycles: 7 },
         ]
     }
 }

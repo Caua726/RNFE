@@ -47,6 +47,9 @@ pub struct Ppu {
     // NMI
     nmi: bool,
 
+    // Scanline callback (pra MMC3 IRQ)
+    pub scanline_trigger: bool,
+
     // Frame par/ímpar
     odd_frame: bool,
 
@@ -97,6 +100,7 @@ impl Ppu {
             cycle: 0,
             frame_complete: false,
             nmi: false,
+            scanline_trigger: false,
             odd_frame: false,
             mirror_mode: 0,
         }
@@ -261,7 +265,7 @@ impl Ppu {
         }
     }
     
-    pub fn ppu_read(&self, addr: u16, read_only: bool, cartridge: Option<&crate::cartridge::Cartridge>) -> u8 {
+    pub fn ppu_read(&self, addr: u16, read_only: bool, cartridge: Option<&mut crate::cartridge::Cartridge>) -> u8 {
         let addr = addr & 0x3FFF;
         
         if addr >= 0x0000 && addr <= 0x1FFF {
@@ -354,6 +358,11 @@ impl Ppu {
 
             if self.cycle == 256 {
                 self.increment_scroll_y();
+            }
+
+            // MMC3 scanline counter trigger (A12 rising edge)
+            if self.cycle == 260 && (self.mask & 0x18) != 0 {
+                self.scanline_trigger = true;
             }
 
             if self.cycle == 257 {
