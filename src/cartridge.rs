@@ -59,6 +59,9 @@ pub struct Cartridge {
     fme7_prg_banks: [u8; 4],
     fme7_chr_banks: [u8; 8],
 
+    // Mapper 227 (multicart) state
+    m227_reg: u16,
+
     // DxROM (mapper 206) state
     dxrom_bank_select: u8,
     dxrom_prg_banks: [u8; 4],
@@ -122,7 +125,7 @@ impl Cartridge {
             vec![0; 8192]
         };
         
-        let supported = matches!(mapper_id, 0 | 1 | 2 | 3 | 4 | 7 | 9 | 11 | 34 | 66 | 69 | 71 | 206);
+        let supported = matches!(mapper_id, 0 | 1 | 2 | 3 | 4 | 7 | 9 | 11 | 34 | 66 | 69 | 71 | 206 | 227);
         println!("Cartridge loaded: PRG banks: {}, CHR banks: {}, Mapper: {}, Mirror: {:?}",
                  prg_banks, chr_banks, mapper_id, mirror);
         println!("PRG ROM size: {} bytes, CHR ROM size: {} bytes", prg_size, chr_size);
@@ -188,6 +191,9 @@ impl Cartridge {
             fme7_prg_banks: [0; 4],
             fme7_chr_banks: [0; 8],
 
+            // Mapper 227
+            m227_reg: 0,
+
             // DxROM
             dxrom_bank_select: 0,
             dxrom_prg_banks: [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)],
@@ -210,6 +216,7 @@ impl Cartridge {
             69 => self.mapper_069_cpu_read(addr),
             71 => self.mapper_071_cpu_read(addr),
             206 => self.mapper_206_cpu_read(addr),
+            227 => self.mapper_227_cpu_read(addr),
             _ => None,
         }
     }
@@ -229,6 +236,7 @@ impl Cartridge {
             69 => self.mapper_069_cpu_write(addr, data),
             71 => self.mapper_071_cpu_write(addr, data),
             206 => self.mapper_206_cpu_write(addr, data),
+            227 => self.mapper_227_cpu_write(addr, data),
             _ => false,
         }
     }
@@ -242,7 +250,7 @@ impl Cartridge {
             4 => self.mapper_004_ppu_read(addr),
             11 | 66 => self.mapper_066_ppu_read(addr),
             9 => self.mapper_009_ppu_read(addr),
-            34 | 71 => self.mapper_002_ppu_read(addr), // CHR RAM
+            34 | 71 | 227 => self.mapper_002_ppu_read(addr), // CHR RAM
             69 => self.mapper_069_ppu_read(addr),
             206 => self.mapper_206_ppu_read(addr),
             _ => None,
@@ -269,7 +277,7 @@ impl Cartridge {
                     false
                 }
             },
-            34 | 71 => {
+            34 | 71 | 227 => {
                 if addr <= 0x1FFF && self.chr_banks == 0 {
                     self.chr_memory[addr as usize] = data;
                     true
@@ -527,6 +535,38 @@ impl Cartridge {
         }
     }
 
+    // Mapper 227 (multicart chinês)
+    fn mapper_227_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let reg = self.m227_reg;
+            let prg_bank = ((reg >> 2) & 0x1F) as usize;
+            let prg_mode = (reg >> 7) & 1; // 0=32KB, 1=16KB
+
+            let offset = if prg_mode == 0 {
+                // 32KB mode
+                (prg_bank >> 1) * 0x8000 + (addr as usize - 0x8000)
+            } else {
+                // 16KB mirrored
+                prg_bank * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
+            };
+
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_227_cpu_write(&mut self, addr: u16, _data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.m227_reg = addr;
+            // Bit 3: mirroring
+            self.mirror = if addr & 0x08 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn reset(&mut self) {
         if self.mapper_id == 1 {
             self.mmc1_shift = 0x10;
@@ -571,6 +611,8 @@ impl Cartridge {
             self.dxrom_bank_select = 0;
             self.dxrom_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.dxrom_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
+        } else if self.mapper_id == 227 {
+            self.m227_reg = 0;
         }
     }
     

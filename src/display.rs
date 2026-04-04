@@ -496,7 +496,12 @@ impl App {
                 } else if let Some(ref old_nes) = self.nes {
                     new_nes.bus.apu.set_sample_rate(old_nes.bus.apu.sample_rate);
                 }
+                // Preservar estado do debugger
+                if let Some(ref old_nes) = self.nes {
+                    new_nes.debugger.trace_enabled = old_nes.debugger.trace_enabled;
+                }
                 self.nes = Some(new_nes);
+                self.paused = false;
                 if let Ok(mut buf) = self.audio_buffer.lock() {
                     buf.clear();
                 }
