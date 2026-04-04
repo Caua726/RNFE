@@ -26,6 +26,14 @@ pub struct Cartridge {
     // AxROM (mapper 7) state
     axrom_prg_bank: u8,
 
+    // GxROM (mapper 66) state
+    gxrom_prg_bank: u8,
+    gxrom_chr_bank: u8,
+
+    // Color Dreams (mapper 11) state
+    colordreams_prg_bank: u8,
+    colordreams_chr_bank: u8,
+
     // MMC3 state
     mmc3_bank_select: u8,
     mmc3_prg_banks: [u8; 4],
@@ -118,6 +126,14 @@ impl Cartridge {
             // AxROM
             axrom_prg_bank: 0,
 
+            // GxROM
+            gxrom_prg_bank: 0,
+            gxrom_chr_bank: 0,
+
+            // Color Dreams
+            colordreams_prg_bank: 0,
+            colordreams_chr_bank: 0,
+
             // MMC3
             mmc3_bank_select: 0,
             mmc3_prg_banks: [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)],
@@ -133,6 +149,8 @@ impl Cartridge {
             3 => self.mapper_003_cpu_read(addr),
             4 => self.mapper_004_cpu_read(addr),
             7 => self.mapper_007_cpu_read(addr),
+            11 => self.mapper_011_cpu_read(addr),
+            66 => self.mapper_066_cpu_read(addr),
             _ => None,
         }
     }
@@ -145,6 +163,8 @@ impl Cartridge {
             3 => self.mapper_003_cpu_write(addr, data),
             4 => self.mapper_004_cpu_write(addr, data),
             7 => self.mapper_007_cpu_write(addr, data),
+            11 => self.mapper_011_cpu_write(addr, data),
+            66 => self.mapper_066_cpu_write(addr, data),
             _ => false,
         }
     }
@@ -155,6 +175,7 @@ impl Cartridge {
             1 => self.mapper_001_ppu_read(addr),
             2 | 7 => self.mapper_002_ppu_read(addr), // CHR RAM simples
             3 => self.mapper_003_ppu_read(addr),
+            11 | 66 => self.mapper_066_ppu_read(addr),
             _ => None,
         }
     }
@@ -170,7 +191,7 @@ impl Cartridge {
                     false
                 }
             },
-            3 => false, // CNROM é CHR ROM, read-only
+            3 | 11 | 66 => false, // CHR ROM, read-only
             _ => false,
         }
     }
@@ -427,6 +448,12 @@ impl Cartridge {
             self.cnrom_chr_bank = 0;
         } else if self.mapper_id == 7 {
             self.axrom_prg_bank = 0;
+        } else if self.mapper_id == 66 {
+            self.gxrom_prg_bank = 0;
+            self.gxrom_chr_bank = 0;
+        } else if self.mapper_id == 11 {
+            self.colordreams_prg_bank = 0;
+            self.colordreams_chr_bank = 0;
         } else if self.mapper_id == 4 {
             self.mmc3_bank_select = 0;
             self.mmc3_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
@@ -493,6 +520,58 @@ impl Cartridge {
                 true
             },
             _ => false
+        }
+    }
+
+    // Mapper 066 (GxROM) - 32KB PRG + 8KB CHR switching
+    // Bits 4-5 = PRG bank, bits 0-1 = CHR bank
+    fn mapper_066_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let offset = self.gxrom_prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_066_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.gxrom_prg_bank = (data >> 4) & 0x03;
+            self.gxrom_chr_bank = data & 0x03;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mapper_066_ppu_read(&self, addr: u16) -> Option<u8> {
+        if addr <= 0x1FFF {
+            let bank = if self.mapper_id == 11 { self.colordreams_chr_bank } else { self.gxrom_chr_bank };
+            let offset = bank as usize * 0x2000 + addr as usize;
+            Some(self.chr_memory[offset % self.chr_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    // Mapper 011 (Color Dreams) - same as GxROM but bits reversed
+    // Bits 0-1 = PRG bank, bits 4-5 = CHR bank
+    fn mapper_011_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let offset = self.colordreams_prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_011_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.colordreams_prg_bank = data & 0x03;
+            self.colordreams_chr_bank = (data >> 4) & 0x03;
+            true
+        } else {
+            false
         }
     }
 }

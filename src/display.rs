@@ -6,7 +6,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 use wgpu::util::DeviceExt;
 
 use crate::{font, nes::Nes, ui::Ui};
@@ -375,6 +375,11 @@ pub struct App {
     cursor_pos: (f64, f64),
     ui: Ui,
     menu_fb: Vec<u8>,
+    paused: bool,
+    debug_overlay: bool,
+    fps_counter: u32,
+    fps_timer: Instant,
+    fps_display: u32,
 }
 
 impl App {
@@ -388,6 +393,11 @@ impl App {
             cursor_pos: (0.0, 0.0),
             ui: Ui::new(),
             menu_fb: Vec::new(),
+            paused: false,
+            debug_overlay: false,
+            fps_counter: 0,
+            fps_timer: Instant::now(),
+            fps_display: 0,
         }
     }
 
@@ -403,6 +413,11 @@ impl App {
             cursor_pos: (0.0, 0.0),
             ui: Ui::new(),
             menu_fb: Vec::new(),
+            paused: false,
+            debug_overlay: false,
+            fps_counter: 0,
+            fps_timer: Instant::now(),
+            fps_display: 0,
         }
     }
 
@@ -456,7 +471,34 @@ impl App {
         let Some(gpu) = self.gpu.as_mut() else { return };
 
         if let Some(ref mut nes) = self.nes {
-            // Frame timing - esperar até o proximo frame NTSC
+            if self.paused {
+                // Tela de pausa com menu
+                let mw = gpu.menu_w;
+                let mh = gpu.menu_h;
+                let size = (mw * mh * 4) as usize;
+                self.menu_fb.resize(size, 0);
+
+                for i in 0..(mw * mh) as usize {
+                    let idx = i * 4;
+                    self.menu_fb[idx] = 8;
+                    self.menu_fb[idx + 1] = 8;
+                    self.menu_fb[idx + 2] = 14;
+                    self.menu_fb[idx + 3] = 255;
+                }
+
+                let mx = self.cursor_pos.0 as i32;
+                let my = self.cursor_pos.1 as i32;
+
+                self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "PAUSED", 36.0, (mh as f32 * 0.35) as i32, [200, 200, 200, 255]);
+                self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "ESC to resume", 14.0, (mh as f32 * 0.35) as i32 + 48, [70, 70, 70, 255]);
+
+                self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
+
+                gpu.render_menu(&self.menu_fb);
+                return;
+            }
+
+            // Frame timing
             let elapsed = self.last_frame.elapsed();
             if elapsed < FRAME_DURATION {
                 std::thread::sleep(FRAME_DURATION - elapsed);
@@ -485,6 +527,14 @@ impl App {
                 nes.bus.apu.sample_buffer.clear();
             }
 
+            // FPS counter
+            self.fps_counter += 1;
+            if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+                self.fps_display = self.fps_counter;
+                self.fps_counter = 0;
+                self.fps_timer = Instant::now();
+            }
+
             // PPU screen (RGB) -> framebuffer (RGBA)
             for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
                 let color = nes.bus.ppu.screen[i];
@@ -494,14 +544,44 @@ impl App {
                 self.framebuffer[fb_idx + 2] = color[2];
                 self.framebuffer[fb_idx + 3] = 255;
             }
+
+            // Debug overlay (F3)
+            if self.debug_overlay {
+                let w = NES_WIDTH;
+                let h = NES_HEIGHT;
+                let sz = 10.0f32;
+                let color = [0u8, 255, 0, 255];
+                let shadow = [0u8, 0, 0, 200];
+
+                let fps_text = format!("FPS: {}", self.fps_display);
+                let cpu_text = format!(
+                    "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X}",
+                    nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status
+                );
+                let ppu_text = format!(
+                    "SL:{} CYC:{} C:{:02X} M:{:02X} S:{:02X}",
+                    nes.bus.ppu.scanline, nes.bus.ppu.cycle,
+                    nes.bus.ppu.control, nes.bus.ppu.mask, nes.bus.ppu.status
+                );
+
+                // Shadow primeiro, depois texto
+                self.ui.draw_text(&mut self.framebuffer, w, h, &fps_text, sz, 3, 3, shadow);
+                self.ui.draw_text(&mut self.framebuffer, w, h, &fps_text, sz, 2, 2, color);
+                self.ui.draw_text(&mut self.framebuffer, w, h, &cpu_text, sz, 3, 15, shadow);
+                self.ui.draw_text(&mut self.framebuffer, w, h, &cpu_text, sz, 2, 14, color);
+                self.ui.draw_text(&mut self.framebuffer, w, h, &ppu_text, sz, 3, 27, shadow);
+                self.ui.draw_text(&mut self.framebuffer, w, h, &ppu_text, sz, 2, 26, color);
+            }
+
+            gpu.render(&self.framebuffer);
+            return;
         } else {
-            // Menu na resolução da janela
+            // Tela inicial na resolução da janela
             let mw = gpu.menu_w;
             let mh = gpu.menu_h;
             let size = (mw * mh * 4) as usize;
             self.menu_fb.resize(size, 0);
 
-            // Fundo escuro
             for i in 0..(mw * mh) as usize {
                 let idx = i * 4;
                 self.menu_fb[idx] = 12;
@@ -510,14 +590,14 @@ impl App {
                 self.menu_fb[idx + 3] = 255;
             }
 
-            let mx = self.cursor_pos.0 as i32;
-            let my = self.cursor_pos.1 as i32;
-
             let cx = mw as i32 / 2;
             let title_y = (mh as f32 * 0.30) as i32;
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 56.0, title_y, [220, 220, 220, 255]);
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 16.0, title_y + 65, [80, 80, 80, 255]);
+
+            let mx = self.cursor_pos.0 as i32;
+            let my = self.cursor_pos.1 as i32;
 
             let btn_y = (mh as f32 * 0.58) as i32;
             let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
@@ -533,14 +613,10 @@ impl App {
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
-            // Menu bar no topo
             self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
             gpu.render_menu(&self.menu_fb);
-            return;
         }
-
-        gpu.render(&self.framebuffer);
     }
 }
 
@@ -574,11 +650,10 @@ impl ApplicationHandler for App {
                 let mx = self.cursor_pos.0 as i32;
                 let my = self.cursor_pos.1 as i32;
 
-                if self.nes.is_none() {
-                    // Processar menu bar primeiro
+                if self.nes.is_none() || self.paused {
                     let mut action = self.ui.handle_click(mx, my);
-                    // Depois botão central
-                    if action == crate::ui::MenuAction::None {
+                    // Botão central só na tela inicial
+                    if action == crate::ui::MenuAction::None && self.nes.is_none() {
                         let win_size = w.inner_size();
                         let cx = win_size.width as i32 / 2;
                         let btn_y = (win_size.height as f32 * 0.58) as i32;
@@ -588,9 +663,10 @@ impl ApplicationHandler for App {
                         }
                     }
                     match action {
-                        crate::ui::MenuAction::OpenRom => self.open_rom(),
+                        crate::ui::MenuAction::OpenRom => { self.paused = false; self.open_rom(); },
                         crate::ui::MenuAction::Reset => {
                             if let Some(ref mut nes) = self.nes { nes.reset(); }
+                            self.paused = false;
                         },
                         crate::ui::MenuAction::Quit => el.exit(),
                         crate::ui::MenuAction::None => {},
@@ -616,9 +692,17 @@ impl ApplicationHandler for App {
                     }
                     if pressed {
                         match event.physical_key {
-                            PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+                            PhysicalKey::Code(KeyCode::Escape) => { self.paused = !self.paused; },
                             PhysicalKey::Code(KeyCode::KeyR) => { nes.reset(); println!("NES Reset!"); }
                             PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
+                            PhysicalKey::Code(KeyCode::F3) => { self.debug_overlay = !self.debug_overlay; }
+                            PhysicalKey::Code(KeyCode::F11) => {
+                                if w.fullscreen().is_some() {
+                                    w.set_fullscreen(None);
+                                } else {
+                                    w.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -626,6 +710,13 @@ impl ApplicationHandler for App {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Escape) => el.exit(),
                         PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
+                        PhysicalKey::Code(KeyCode::F11) => {
+                            if w.fullscreen().is_some() {
+                                w.set_fullscreen(None);
+                            } else {
+                                w.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                            }
+                        }
                         _ => {}
                     }
                 }

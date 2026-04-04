@@ -332,9 +332,14 @@ pub struct Apu {
     pub sample_rate: f32,
     sample_clock: f64,
 
-    // Filtro high-pass pra remover DC offset
-    hp_prev_in: f32,
-    hp_prev_out: f32,
+    // Filtros high-pass (NES tem dois: 90Hz e 440Hz)
+    hp1_prev_in: f32,
+    hp1_prev_out: f32,
+    hp2_prev_in: f32,
+    hp2_prev_out: f32,
+
+    // DMC precisa ler da memória da CPU
+    pub dmc_read_addr: Option<u16>,
 }
 
 impl Apu {
@@ -352,8 +357,11 @@ impl Apu {
             sample_buffer: Vec::with_capacity(1024),
             sample_rate: 44100.0,
             sample_clock: 0.0,
-            hp_prev_in: 0.0,
-            hp_prev_out: 0.0,
+            hp1_prev_in: 0.0,
+            hp1_prev_out: 0.0,
+            hp2_prev_in: 0.0,
+            hp2_prev_out: 0.0,
+            dmc_read_addr: None,
         }
     }
 
@@ -562,9 +570,8 @@ impl Apu {
                         3729 => self.clock_quarter_frame(),
                         7457 => { self.clock_quarter_frame(); self.clock_half_frame(); },
                         11186 => self.clock_quarter_frame(),
+                        14915 => { self.clock_quarter_frame(); self.clock_half_frame(); },
                         18641 => {
-                            self.clock_quarter_frame();
-                            self.clock_half_frame();
                             self.frame_clock = 0;
                         },
                         _ => {}
@@ -574,17 +581,28 @@ impl Apu {
             }
         }
 
+        // DMC precisa ler sample da CPU
+        if self.dmc.sample_buffer_empty && self.dmc.bytes_remaining > 0 {
+            self.dmc_read_addr = Some(self.dmc.current_addr);
+            // O bus vai chamar dmc_feed_sample() com o byte lido
+        }
+
         // Gerar sample na taxa certa
         self.sample_clock += self.sample_rate as f64 / 1789773.0;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
             let raw = self.mix();
-            // High-pass filter (remove DC offset / ruido de fundo)
-            let alpha = 0.996;
-            let filtered = alpha * self.hp_prev_out + raw - self.hp_prev_in;
-            self.hp_prev_in = raw;
-            self.hp_prev_out = filtered;
-            self.sample_buffer.push(filtered * 0.8); // volume
+            // High-pass filter 1 (~90Hz, alpha ~0.999835)
+            let alpha1: f32 = 0.999835;
+            let hp1 = alpha1 * self.hp1_prev_out + raw - self.hp1_prev_in;
+            self.hp1_prev_in = raw;
+            self.hp1_prev_out = hp1;
+            // High-pass filter 2 (~440Hz, alpha ~0.996)
+            let alpha2: f32 = 0.996;
+            let hp2 = alpha2 * self.hp2_prev_out + hp1 - self.hp2_prev_in;
+            self.hp2_prev_in = hp1;
+            self.hp2_prev_out = hp2;
+            self.sample_buffer.push(hp2 * 0.8); // volume
         }
 
         self.cpu_clock += 1;
@@ -613,6 +631,17 @@ impl Apu {
         pulse_out + tnd_out
     }
 
+    pub fn dmc_feed_sample(&mut self, data: u8) {
+        self.dmc.sample_buffer = data;
+        self.dmc.sample_buffer_empty = false;
+        self.dmc.current_addr = self.dmc.current_addr.wrapping_add(1) | 0x8000;
+        self.dmc.bytes_remaining -= 1;
+        if self.dmc.bytes_remaining == 0 && self.dmc.loop_flag {
+            self.dmc.current_addr = self.dmc.sample_addr;
+            self.dmc.bytes_remaining = self.dmc.sample_length;
+        }
+    }
+
     pub fn reset(&mut self) {
         self.pulse1 = Pulse::new(0);
         self.pulse2 = Pulse::new(1);
@@ -624,7 +653,10 @@ impl Apu {
         self.cpu_clock = 0;
         self.sample_buffer.clear();
         self.sample_clock = 0.0;
-        self.hp_prev_in = 0.0;
-        self.hp_prev_out = 0.0;
+        self.hp1_prev_in = 0.0;
+        self.hp1_prev_out = 0.0;
+        self.hp2_prev_in = 0.0;
+        self.hp2_prev_out = 0.0;
+        self.dmc_read_addr = None;
     }
 }

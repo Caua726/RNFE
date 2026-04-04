@@ -28,6 +28,11 @@ impl Nes {
         if self.system_clock_counter % 3 == 0 {
             // APU roda na mesma velocidade da CPU
             self.bus.apu.clock();
+            // DMC sample read
+            if let Some(addr) = self.bus.apu.dmc_read_addr.take() {
+                let data = self.bus.cpu_read(addr, false);
+                self.bus.apu.dmc_feed_sample(data);
+            }
             if self.bus.dma_transfer {
                 if self.bus.dma_dummy {
                     if self.system_clock_counter % 2 == 1 {
