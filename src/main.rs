@@ -38,17 +38,13 @@ pub fn pick_rom() -> Option<String> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    let rom_path = if args.len() >= 2 {
-        Some(args[1].clone())
+    if args.len() >= 2 {
+        match load_rom(&args[1]) {
+            Some(nes) => display::run_with_nes(nes)?,
+            None => display::run()?,
+        }
     } else {
-        pick_rom()
-    };
-
-    let nes = rom_path.and_then(|p| load_rom(&p));
-
-    match nes {
-        Some(nes) => display::run_with_nes(nes)?,
-        None => display::run()?,
+        display::run()?;
     }
 
     Ok(())
