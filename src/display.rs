@@ -533,6 +533,9 @@ impl App {
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
+            // Sidebar esquerda
+            self.ui.draw_sidebar(&mut self.menu_fb, mw, mh, mx, my);
+
             // Menu bar no topo (por cima de tudo)
             self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
@@ -575,24 +578,29 @@ impl ApplicationHandler for App {
                 let my = self.cursor_pos.1 as i32;
 
                 if self.nes.is_none() {
-                    // Processar menu bar
-                    let action = self.ui.handle_click(mx, my);
+                    // Processar menu bar primeiro
+                    let mut action = self.ui.handle_click(mx, my);
+                    // Depois sidebar
+                    if action == crate::ui::MenuAction::None {
+                        action = self.ui.handle_sidebar_click(mx, my);
+                    }
+                    // Depois botão central
+                    if action == crate::ui::MenuAction::None {
+                        let win_size = w.inner_size();
+                        let cx = win_size.width as i32 / 2;
+                        let btn_y = (win_size.height as f32 * 0.58) as i32;
+                        let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
+                        if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
+                            action = crate::ui::MenuAction::OpenRom;
+                        }
+                    }
                     match action {
                         crate::ui::MenuAction::OpenRom => self.open_rom(),
                         crate::ui::MenuAction::Reset => {
                             if let Some(ref mut nes) = self.nes { nes.reset(); }
                         },
                         crate::ui::MenuAction::Quit => el.exit(),
-                        crate::ui::MenuAction::None => {
-                            // Check botão central "Open ROM"
-                            let win_size = w.inner_size();
-                            let cx = win_size.width as i32 / 2;
-                            let btn_y = (win_size.height as f32 * 0.58) as i32;
-                            let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
-                            if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
-                                self.open_rom();
-                            }
-                        },
+                        crate::ui::MenuAction::None => {},
                     }
                 }
             }

@@ -3,10 +3,14 @@ use fontdue::Font;
 const FONT_DATA: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
 pub const MENUBAR_HEIGHT: i32 = 28;
+pub const SIDEBAR_WIDTH: i32 = 180;
 const MENU_FONT_SIZE: f32 = 14.0;
 const MENU_PAD_X: i32 = 12;
 const DROPDOWN_ITEM_H: i32 = 26;
 const DROPDOWN_PAD_X: i32 = 16;
+const SIDEBAR_ITEM_H: i32 = 36;
+const SIDEBAR_PAD_X: i32 = 18;
+const SIDEBAR_FONT_SIZE: f32 = 14.0;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MenuAction {
@@ -253,6 +257,86 @@ impl Ui {
 
             // Clicou fora, fechar
             self.open_menu = None;
+        }
+
+        MenuAction::None
+    }
+
+    pub fn draw_sidebar(&self, fb: &mut [u8], w: u32, h: u32, mx: i32, my: i32) {
+        let sh = h as i32;
+
+        // Fundo da sidebar
+        self.fill_rect(fb, w, h, 0, MENUBAR_HEIGHT, SIDEBAR_WIDTH, sh - MENUBAR_HEIGHT, [18, 18, 24, 255]);
+        // Borda direita
+        self.fill_rect(fb, w, h, SIDEBAR_WIDTH - 1, MENUBAR_HEIGHT, 1, sh - MENUBAR_HEIGHT, [40, 40, 50, 255]);
+
+        let items: &[(&str, &str, MenuAction)] = &[
+            (">>",  "Open ROM",  MenuAction::OpenRom),
+            ("↺",  "Reset",     MenuAction::Reset),
+            ("×",  "Quit",      MenuAction::Quit),
+        ];
+
+        let mut y = MENUBAR_HEIGHT + 12;
+
+        // Seção "File"
+        self.draw_text(fb, w, h, "FILE", 11.0, SIDEBAR_PAD_X, y, [70, 70, 80, 255]);
+        y += 22;
+
+        for (icon, label, _) in items {
+            let hover = mx >= 0 && mx < SIDEBAR_WIDTH && my >= y && my < y + SIDEBAR_ITEM_H;
+
+            if hover {
+                self.fill_rect(fb, w, h, 1, y, SIDEBAR_WIDTH - 2, SIDEBAR_ITEM_H, [35, 35, 50, 255]);
+            }
+
+            let color = if hover { [240, 240, 240, 255] } else { [160, 160, 160, 255] };
+            let icon_color = if hover { [100, 160, 255, 255] } else { [80, 80, 100, 255] };
+
+            self.draw_text(fb, w, h, icon, SIDEBAR_FONT_SIZE, SIDEBAR_PAD_X, y + 10, icon_color);
+            self.draw_text(fb, w, h, label, SIDEBAR_FONT_SIZE, SIDEBAR_PAD_X + 28, y + 10, color);
+
+            y += SIDEBAR_ITEM_H;
+        }
+
+        // Separador
+        y += 6;
+        self.fill_rect(fb, w, h, SIDEBAR_PAD_X, y, SIDEBAR_WIDTH - SIDEBAR_PAD_X * 2, 1, [40, 40, 50, 255]);
+        y += 12;
+
+        // Seção "Controls"
+        self.draw_text(fb, w, h, "CONTROLS", 11.0, SIDEBAR_PAD_X, y, [70, 70, 80, 255]);
+        y += 22;
+
+        let controls = [
+            ("Z", "A"),
+            ("X", "B"),
+            ("Tab", "Select"),
+            ("Enter", "Start"),
+            ("Arrows", "D-Pad"),
+        ];
+
+        for (key, action) in &controls {
+            self.draw_text(fb, w, h, key, 12.0, SIDEBAR_PAD_X + 4, y + 4, [100, 160, 255, 255]);
+            self.draw_text(fb, w, h, action, 12.0, SIDEBAR_PAD_X + 60, y + 4, [120, 120, 120, 255]);
+            y += 22;
+        }
+    }
+
+    pub fn handle_sidebar_click(&mut self, mx: i32, my: i32) -> MenuAction {
+        if mx < 0 || mx >= SIDEBAR_WIDTH { return MenuAction::None; }
+
+        let items: &[MenuAction] = &[
+            MenuAction::OpenRom,
+            MenuAction::Reset,
+            MenuAction::Quit,
+        ];
+
+        let mut y = MENUBAR_HEIGHT + 12 + 22; // skip seção header
+        for action in items {
+            if my >= y && my < y + SIDEBAR_ITEM_H {
+                return *action;
+            }
+            y += SIDEBAR_ITEM_H;
         }
 
         MenuAction::None
