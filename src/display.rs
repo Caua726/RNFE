@@ -533,10 +533,7 @@ impl App {
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
-            // Sidebar esquerda
-            self.ui.draw_sidebar(&mut self.menu_fb, mw, mh, mx, my);
-
-            // Menu bar no topo (por cima de tudo)
+            // Menu bar no topo
             self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
             gpu.render_menu(&self.menu_fb);
@@ -580,10 +577,6 @@ impl ApplicationHandler for App {
                 if self.nes.is_none() {
                     // Processar menu bar primeiro
                     let mut action = self.ui.handle_click(mx, my);
-                    // Depois sidebar
-                    if action == crate::ui::MenuAction::None {
-                        action = self.ui.handle_sidebar_click(mx, my);
-                    }
                     // Depois botão central
                     if action == crate::ui::MenuAction::None {
                         let win_size = w.inner_size();
