@@ -603,17 +603,28 @@ impl Cartridge {
     }
 
     // Mapper 227 (multicart chinês)
+    // Mapper 227 (multicart chinês)
+    // Registro = endereço escrito em $8000+
+    // A0: mirroring (0=vert, 1=horiz)
+    // A1: "last bank" flag - se 1, $C000-$FFFF mapeia o ultimo 16KB
+    // A2-A6: PRG bank number (5 bits)
+    // A7: mode (0=32KB, 1=16KB)
     fn mapper_227_cpu_read(&self, addr: u16) -> Option<u8> {
         if addr >= 0x8000 {
             let reg = self.m227_reg;
             let prg_bank = ((reg >> 2) & 0x1F) as usize;
-            let prg_mode = (reg >> 7) & 1; // 0=32KB, 1=16KB
+            let mode_16k = (reg >> 7) & 1;
+            let last_flag = (reg >> 1) & 1;
 
-            let offset = if prg_mode == 0 {
-                // 32KB mode
-                (prg_bank >> 1) * 0x8000 + (addr as usize - 0x8000)
+            let offset = if addr >= 0xC000 && last_flag != 0 {
+                // $C000-$FFFF = ultimo 16KB banco
+                let last = self.prg_memory.len() - 0x4000;
+                last + (addr as usize - 0xC000)
+            } else if mode_16k == 0 {
+                // 32KB mode: bank seleciona 32KB
+                prg_bank * 0x4000 + (addr as usize - 0x8000)
             } else {
-                // 16KB mirrored
+                // 16KB mode: bank seleciona 16KB, mirrored em $8000 e $C000
                 prg_bank * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
             };
 
@@ -626,8 +637,7 @@ impl Cartridge {
     fn mapper_227_cpu_write(&mut self, addr: u16, _data: u8) -> bool {
         if addr >= 0x8000 {
             self.m227_reg = addr;
-            // Bit 3: mirroring
-            self.mirror = if addr & 0x08 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
+            self.mirror = if addr & 0x01 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
             true
         } else {
             false
@@ -679,9 +689,8 @@ impl Cartridge {
             self.dxrom_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.dxrom_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
         } else if self.mapper_id == 227 {
-            // Iniciar com ultimo banco mapeado (reset vector fica la)
-            let last_bank = (self.prg_banks as u16 / 2).saturating_sub(1);
-            self.m227_reg = (last_bank << 2) & 0x7C;
+            // Bit 1 = last bank flag, mapeando ultimo 16KB em $C000
+            self.m227_reg = 0x02;
         }
     }
     
