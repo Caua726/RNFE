@@ -517,8 +517,18 @@ impl App {
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 16.0, title_y + 65, [80, 80, 80, 255]);
 
             let btn_y = (mh as f32 * 0.55) as i32;
-            self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
-                [180, 180, 180, 255], [80, 80, 80, 255]);
+            let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
+            let mx = self.cursor_pos.0 as i32;
+            let my = self.cursor_pos.1 as i32;
+            let hover = mx >= bx && mx < bx + bw && my >= by && my < by + bh;
+
+            if hover {
+                self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
+                    [255, 255, 255, 255], [150, 150, 150, 255]);
+            } else {
+                self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
+                    [180, 180, 180, 255], [80, 80, 80, 255]);
+            }
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
