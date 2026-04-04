@@ -180,7 +180,6 @@ impl Ppu {
                 let old_nmi = self.control & 0x80;
                 self.control = data;
                 self.tram_addr = (self.tram_addr & 0xF3FF) | ((data as u16 & 0x03) << 10);
-                // Se NMI foi habilitado e vblank tá ativo, disparar NMI
                 if old_nmi == 0 && (data & 0x80) != 0 && (self.status & 0x80) != 0 {
                     self.nmi = true;
                 }

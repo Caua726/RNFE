@@ -28,11 +28,10 @@ impl Nes {
     pub fn clock(&mut self) {
         self.bus.ppu.clock();
 
-        // Atualizar CHR banks e mirroring do cartridge
-        if self.bus.ppu.scanline == 0 && self.bus.ppu.cycle == 1 {
+        // Atualizar CHR banks e mirroring a cada scanline
+        if self.bus.ppu.cycle == 0 {
             if let Some(ref mut cart) = self.bus.cartridge {
                 self.bus.ppu.update_chr_from_cartridge(cart);
-                // Atualizar mirroring (mappers podem mudar dinamicamente)
                 self.bus.ppu.mirror_mode = match cart.get_mirror() {
                     crate::cartridge::Mirror::Vertical => 0,
                     crate::cartridge::Mirror::Horizontal => 1,
