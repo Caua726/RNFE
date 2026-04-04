@@ -547,6 +547,15 @@ impl App {
 
                 self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
+                if Instant::now() < self.toast_until {
+                    let tw = self.ui.text_width(&self.toast_msg, 16.0);
+                    let tx = (mw as i32 - tw) / 2;
+                    let ty = mh as i32 - 50;
+                    self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                    let msg = self.toast_msg.clone();
+                    self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
+                }
+
                 gpu.render_menu(&self.menu_fb);
                 return;
             }
@@ -724,6 +733,16 @@ impl App {
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
             self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
+
+            // Toast na tela do menu
+            if Instant::now() < self.toast_until {
+                let tw = self.ui.text_width(&self.toast_msg, 16.0);
+                let tx = (mw as i32 - tw) / 2;
+                let ty = mh as i32 - 50;
+                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                let msg = self.toast_msg.clone();
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
+            }
 
             gpu.render_menu(&self.menu_fb);
         }
