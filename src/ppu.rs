@@ -2,6 +2,7 @@ pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
     pub pattern_table: [[u8; 4096]; 2],
+    cart_ptr: Option<*mut crate::cartridge::Cartridge>,
     
     // Status registers
     pub status: u8,
@@ -71,6 +72,7 @@ impl Ppu {
             nametable: [[0; 1024]; 2],
             palette_table: [0; 32],
             pattern_table: [[0; 4096]; 2],
+            cart_ptr: None,
             status: 0,
             mask: 0,
             control: 0,
@@ -254,10 +256,17 @@ impl Ppu {
         }
     }
 
-    fn ppu_read_internal(&self, addr: u16) -> u8 {
+    fn ppu_read_internal(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
 
         if addr <= 0x1FFF {
+            // Read CHR through cartridge mapper if available (supports bank switching)
+            if let Some(cart_ptr) = self.cart_ptr {
+                let cart = unsafe { &mut *cart_ptr };
+                if let Some(data) = cart.ppu_read(addr) {
+                    return data;
+                }
+            }
             self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize]
         } else if addr >= 0x2000 && addr <= 0x3EFF {
             let (nt, offset) = self.mirror_nametable(addr);
@@ -275,7 +284,7 @@ impl Ppu {
         }
     }
     
-    pub fn ppu_read(&self, addr: u16, read_only: bool, cartridge: Option<&mut crate::cartridge::Cartridge>) -> u8 {
+    pub fn ppu_read(&mut self, addr: u16, read_only: bool, cartridge: Option<&mut crate::cartridge::Cartridge>) -> u8 {
         let addr = addr & 0x3FFF;
         
         if addr >= 0x0000 && addr <= 0x1FFF {
@@ -322,7 +331,8 @@ impl Ppu {
         self.ppu_write_internal(addr, data);
     }
 
-    pub fn clock(&mut self) {
+    pub fn clock(&mut self, cartridge: Option<&mut crate::cartridge::Cartridge>) {
+        self.cart_ptr = cartridge.map(|c| c as *mut _);
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
             if self.scanline == 0 && self.cycle == 0 && self.odd_frame && (self.mask & 0x18) != 0 {
@@ -594,6 +604,8 @@ impl Ppu {
             }
         }
 
+        self.cart_ptr = None;
+
         self.cycle += 1;
         if self.cycle >= 341 {
             self.cycle = 0;
@@ -677,8 +689,13 @@ impl Ppu {
             return self.get_nes_color(color_index);
         }
         
-        let addr = 0x3F00 + (palette as u16 * 4) + pixel as u16;
-        let color_index = self.ppu_read_internal(addr) & 0x3F;
+        let addr = (palette as u16 * 4 + pixel as u16) & 0x001F;
+        let addr = if addr == 0x0010 { 0x0000 }
+                  else if addr == 0x0014 { 0x0004 }
+                  else if addr == 0x0018 { 0x0008 }
+                  else if addr == 0x001C { 0x000C }
+                  else { addr };
+        let color_index = self.palette_table[addr as usize] & 0x3F;
         self.get_nes_color(color_index)
     }
     
