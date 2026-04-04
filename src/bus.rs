@@ -21,11 +21,18 @@ pub struct Bus {
 
 impl Bus {
     pub fn new() -> Bus {
+        // RAM não-inicializada (NES real tem lixo)
+        // Preencher $07F0-$07FF com padrão warm boot pra multicarts
+        let mut ram = [0u8; 2048];
+        for i in 0xF0..=0xFFu8 {
+            ram[0x0700 + i as usize] = i;
+        }
+
         Bus {
             ppu: Ppu::new(),
             apu: Apu::new(),
             cartridge: None,
-            ram: [0; 2048],
+            ram,
             dma_page: 0x00,
             dma_addr: 0x00,
             dma_data: 0x00,
