@@ -616,16 +616,28 @@ impl Cartridge {
             let mode_16k = (reg >> 7) & 1;
             let last_flag = (reg >> 1) & 1;
 
-            let offset = if addr >= 0xC000 && last_flag != 0 {
-                // $C000-$FFFF = ultimo 16KB banco
-                let last = self.prg_memory.len() - 0x4000;
-                last + (addr as usize - 0xC000)
-            } else if mode_16k == 0 {
-                // 32KB mode: bank seleciona 32KB
-                prg_bank * 0x4000 + (addr as usize - 0x8000)
+            let offset = if mode_16k != 0 {
+                if addr >= 0xC000 {
+                    // 16KB mode: $C000 = last bank
+                    let last = self.prg_memory.len() - 0x4000;
+                    last + (addr as usize - 0xC000)
+                } else {
+                    // $8000 = selected bank
+                    prg_bank * 0x4000 + (addr as usize - 0x8000)
+                }
             } else {
-                // 16KB mode: bank seleciona 16KB, mirrored em $8000 e $C000
-                prg_bank * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
+                // 32KB mode
+                if addr >= 0xC000 && last_flag != 0 {
+                    // last flag: $C000 = selected bank (next 16KB after $8000 bank)
+                    (prg_bank | 1) * 0x4000 + (addr as usize - 0xC000)
+                } else if addr >= 0xC000 {
+                    // $C000 = always last 16KB bank (trampoline)
+                    let last = self.prg_memory.len() - 0x4000;
+                    last + (addr as usize - 0xC000)
+                } else {
+                    // $8000 = selected bank
+                    prg_bank * 0x4000 + (addr as usize - 0x8000)
+                }
             };
 
             Some(self.prg_memory[offset % self.prg_memory.len()])
