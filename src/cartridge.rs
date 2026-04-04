@@ -626,16 +626,11 @@ impl Cartridge {
                     prg_bank * 0x4000 + (addr as usize - 0x8000)
                 }
             } else {
-                // 32KB mode
-                if addr >= 0xC000 && last_flag != 0 {
-                    // last flag: $C000 = selected bank (next 16KB after $8000 bank)
-                    (prg_bank | 1) * 0x4000 + (addr as usize - 0xC000)
-                } else if addr >= 0xC000 {
-                    // $C000 = always last 16KB bank (trampoline)
+                // 32KB mode: $8000 = selected 16KB bank, $C000 = last 16KB (trampoline)
+                if addr >= 0xC000 {
                     let last = self.prg_memory.len() - 0x4000;
                     last + (addr as usize - 0xC000)
                 } else {
-                    // $8000 = selected bank
                     prg_bank * 0x4000 + (addr as usize - 0x8000)
                 }
             };
