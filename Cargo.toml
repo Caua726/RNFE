@@ -16,3 +16,4 @@ pollster = "0.4"
 cpal = "0.17.3"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 rfd = "0.17.2"
+fontdue = "0.9"

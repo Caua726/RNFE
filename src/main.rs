@@ -5,6 +5,7 @@ mod apu;
 mod cartridge;
 mod display;
 mod font;
+mod ui;
 mod nes;
 
 use nes::Nes;

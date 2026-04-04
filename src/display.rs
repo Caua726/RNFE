@@ -9,7 +9,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use wgpu::util::DeviceExt;
 
-use crate::{font, nes::Nes};
+use crate::{font, nes::Nes, ui::Ui};
 
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
@@ -193,7 +193,10 @@ impl GpuState {
             cache: None,
         });
 
-        GpuState { surface, device, queue, config, pipeline, bind_group, texture, scale_buffer, bind_group_layout, sampler }
+        GpuState {
+            surface, device, queue, config, pipeline, bind_group, texture,
+            scale_buffer, bind_group_layout, sampler,
+        }
     }
 
     fn calc_scale(win_w: u32, win_h: u32) -> [f32; 2] {
@@ -263,6 +266,7 @@ impl GpuState {
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
     }
+
 }
 
 const FRAME_DURATION: Duration = Duration::from_nanos(16_639_267); // ~60.0988 Hz (NTSC)
@@ -276,6 +280,7 @@ pub struct App {
     _audio_stream: Option<cpal::Stream>,
     last_frame: Instant,
     cursor_pos: (f64, f64),
+    ui: Ui,
 }
 
 impl App {
@@ -287,6 +292,7 @@ impl App {
             _audio_stream: None,
             last_frame: Instant::now(),
             cursor_pos: (0.0, 0.0),
+            ui: Ui::new(),
         }
     }
 
@@ -300,6 +306,7 @@ impl App {
             _audio_stream: stream,
             last_frame: Instant::now(),
             cursor_pos: (0.0, 0.0),
+            ui: Ui::new(),
         }
     }
 
@@ -330,15 +337,6 @@ impl App {
 
         stream.play().ok()?;
         Some(stream)
-    }
-
-    fn open_button_rect() -> (i32, i32, i32, i32) {
-        // (x, y, w, h) em pixels NES (256x240)
-        let bw = 70;
-        let bh = 16;
-        let bx = (NES_WIDTH as i32 - bw) / 2;
-        let by = 130;
-        (bx, by, bw, bh)
     }
 
     fn open_rom(&mut self) {
@@ -401,25 +399,33 @@ impl App {
                 self.framebuffer[fb_idx + 3] = 255;
             }
         } else {
-            // Tela inicial
-            self.framebuffer.fill(0);
+            // Tela inicial com fontdue
+            // Fundo escuro
             for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
-                self.framebuffer[i * 4 + 3] = 255;
+                let idx = i * 4;
+                self.framebuffer[idx] = 20;
+                self.framebuffer[idx + 1] = 20;
+                self.framebuffer[idx + 2] = 30;
+                self.framebuffer[idx + 3] = 255;
             }
 
-            // Titulo
-            font::draw_str_at(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT,
-                "RNFE", (NES_WIDTH as i32 - font::text_width("RNFE", 3)) / 2, 60, 3, [255,255,255,255]);
+            let w = NES_WIDTH;
+            let h = NES_HEIGHT;
 
-            // Botão "OPEN ROM"
-            let (bx, by, bw, bh) = Self::open_button_rect();
-            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, bw, bh, [60,60,60,255]);
-            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, bw, 1, [100,100,100,255]);
-            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, 1, bh, [100,100,100,255]);
-            let text = "OPEN ROM";
-            let tw = font::text_width(text, 1);
-            font::draw_str_at(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT,
-                text, bx + (bw - tw) / 2, by + (bh - 7) / 2, 1, [255,255,255,255]);
+            // Titulo
+            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "RNFE", 28.0, 55, [255, 255, 255, 255]);
+
+            // Subtítulo
+            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "NES Emulator", 10.0, 88, [140, 140, 140, 255]);
+
+            // Botão
+            let cx = w as i32 / 2;
+            let cy = 140;
+            self.ui.draw_button(&mut self.framebuffer, w, h, "Open ROM", 12.0, cx, cy,
+                [255, 255, 255, 255], [60, 100, 180, 255]);
+
+            // Hint
+            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "or press O", 8.0, 165, [100, 100, 100, 255]);
         }
 
         gpu.render(&self.framebuffer);
@@ -459,25 +465,20 @@ impl ApplicationHandler for App {
                     let win_w = win_size.width as f64;
                     let win_h = win_size.height as f64;
                     let win_aspect = win_w / win_h;
-
-                    let (scale_x, scale_y) = if win_aspect > NES_ASPECT as f64 {
+                    let (sx, sy) = if win_aspect > NES_ASPECT as f64 {
                         (NES_ASPECT as f64 / win_aspect, 1.0)
                     } else {
                         (1.0, win_aspect / NES_ASPECT as f64)
                     };
+                    let rw = win_w * sx;
+                    let rh = win_h * sy;
+                    let ox = (win_w - rw) / 2.0;
+                    let oy = (win_h - rh) / 2.0;
+                    let nx = ((self.cursor_pos.0 - ox) / rw * NES_WIDTH as f64) as i32;
+                    let ny = ((self.cursor_pos.1 - oy) / rh * NES_HEIGHT as f64) as i32;
 
-                    // Area renderizada na janela
-                    let render_w = win_w * scale_x;
-                    let render_h = win_h * scale_y;
-                    let offset_x = (win_w - render_w) / 2.0;
-                    let offset_y = (win_h - render_h) / 2.0;
-
-                    // Posição em coordenadas NES
-                    let nes_x = ((self.cursor_pos.0 - offset_x) / render_w * NES_WIDTH as f64) as i32;
-                    let nes_y = ((self.cursor_pos.1 - offset_y) / render_h * NES_HEIGHT as f64) as i32;
-
-                    let (bx, by, bw, bh) = Self::open_button_rect();
-                    if nes_x >= bx && nes_x < bx + bw && nes_y >= by && nes_y < by + bh {
+                    let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 12.0, NES_WIDTH as i32 / 2, 140);
+                    if nx >= bx && nx < bx + bw && ny >= by && ny < by + bh {
                         self.open_rom();
                     }
                 }
