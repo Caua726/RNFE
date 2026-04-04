@@ -329,6 +329,23 @@ impl App {
         Some(stream)
     }
 
+    fn open_rom(&mut self) {
+        if let Some(path) = crate::pick_rom() {
+            if let Some(mut new_nes) = crate::load_rom(&path) {
+                // Configurar audio
+                if self._audio_stream.is_none() {
+                    self._audio_stream = Self::init_audio(self.audio_buffer.clone(), &mut new_nes);
+                } else if let Some(ref old_nes) = self.nes {
+                    new_nes.bus.apu.set_sample_rate(old_nes.bus.apu.sample_rate);
+                }
+                self.nes = Some(new_nes);
+                if let Ok(mut buf) = self.audio_buffer.lock() {
+                    buf.clear();
+                }
+            }
+        }
+    }
+
     fn draw(&mut self) {
         let Some(gpu) = self.gpu.as_mut() else { return };
 
@@ -378,7 +395,7 @@ impl App {
             for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
                 self.framebuffer[i * 4 + 3] = 255;
             }
-            font::draw_str(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, "HELLO WORLD", 2, [255,255,255,255]);
+            font::draw_str(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, "RNFE", 2, [255,255,255,255]);
         }
 
         gpu.render(&self.framebuffer);
@@ -429,19 +446,22 @@ impl ApplicationHandler for App {
                         match event.physical_key {
                             PhysicalKey::Code(KeyCode::Escape) => el.exit(),
                             PhysicalKey::Code(KeyCode::KeyR) => { nes.reset(); println!("NES Reset!"); }
+                            PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
                             _ => {}
                         }
                     }
                 } else if event.state == ElementState::Pressed {
-                    if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key { el.exit(); }
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+                        PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
+                        _ => {}
+                    }
                 }
             },
             _ => {}
         }
 
-        if self.nes.is_some() {
-            w.request_redraw();
-        }
+        w.request_redraw();
     }
 }
 

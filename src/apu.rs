@@ -329,7 +329,7 @@ pub struct Apu {
 
     // Buffer de audio
     pub sample_buffer: Vec<f32>,
-    sample_rate: f32,
+    pub sample_rate: f32,
     sample_clock: f64,
 
     // Filtro high-pass pra remover DC offset

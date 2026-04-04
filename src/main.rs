@@ -11,30 +11,44 @@ use nes::Nes;
 use cartridge::Cartridge;
 use std::env;
 
+fn load_rom(path: &str) -> Option<Box<Nes>> {
+    match Cartridge::new(path) {
+        Ok(cartridge) => {
+            println!("ROM carregada: {}", path);
+            let mut nes = Box::new(Nes::new());
+            nes.insert_cartridge(cartridge);
+            nes.reset();
+            Some(nes)
+        },
+        Err(e) => {
+            eprintln!("Erro ao carregar ROM '{}': {}", path, e);
+            None
+        }
+    }
+}
+
+pub fn pick_rom() -> Option<String> {
+    let file = rfd::FileDialog::new()
+        .add_filter("NES ROM", &["nes"])
+        .set_title("Abrir ROM")
+        .pick_file()?;
+    Some(file.to_string_lossy().to_string())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        println!("Nenhuma ROM passada, abrindo janela...");
-        display::run()?;
-        return Ok(());
-    }
+    let rom_path = if args.len() >= 2 {
+        Some(args[1].clone())
+    } else {
+        pick_rom()
+    };
 
-    let rom_path = &args[1];
+    let nes = rom_path.and_then(|p| load_rom(&p));
 
-    let mut nes = Box::new(Nes::new());
-
-    match Cartridge::new(rom_path) {
-        Ok(cartridge) => {
-            println!("ROM carregada: {}", rom_path);
-            nes.insert_cartridge(cartridge);
-            nes.reset();
-            display::run_with_nes(nes)?
-        },
-        Err(e) => {
-            eprintln!("Erro ao carregar ROM '{}': {}", rom_path, e);
-            display::run()?
-        }
+    match nes {
+        Some(nes) => display::run_with_nes(nes)?,
+        None => display::run()?,
     }
 
     Ok(())
