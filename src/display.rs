@@ -1,4 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent, ElementState};
@@ -227,7 +228,7 @@ pub struct App {
     gpu: Option<GpuState>,
     nes: Option<Box<Nes>>,
     framebuffer: Vec<u8>,
-    audio_buffer: Arc<Mutex<Vec<f32>>>,
+    audio_buffer: Arc<Mutex<VecDeque<f32>>>,
     _audio_stream: Option<cpal::Stream>,
 }
 
@@ -236,13 +237,13 @@ impl App {
         Self {
             win: None, gpu: None, nes: None,
             framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
-            audio_buffer: Arc::new(Mutex::new(Vec::new())),
+            audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _audio_stream: None,
         }
     }
 
     pub fn new_with_nes(mut nes: Box<Nes>) -> Self {
-        let audio_buffer = Arc::new(Mutex::new(Vec::with_capacity(4096)));
+        let audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
         let stream = Self::init_audio(audio_buffer.clone(), &mut nes);
         Self {
             win: None, gpu: None, nes: Some(nes),
@@ -252,7 +253,7 @@ impl App {
         }
     }
 
-    fn init_audio(buffer: Arc<Mutex<Vec<f32>>>, nes: &mut Nes) -> Option<cpal::Stream> {
+    fn init_audio(buffer: Arc<Mutex<VecDeque<f32>>>, nes: &mut Nes) -> Option<cpal::Stream> {
         let host = cpal::default_host();
         let device = host.default_output_device()?;
         let config = device.default_output_config().ok()?;
@@ -264,8 +265,7 @@ impl App {
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut buf = buffer.lock().unwrap();
                 for sample in data.iter_mut() {
-                    *sample = buf.first().copied().unwrap_or(0.0);
-                    if !buf.is_empty() { buf.remove(0); }
+                    *sample = buf.pop_front().unwrap_or(0.0);
                 }
             },
             |err| eprintln!("Audio error: {}", err),
@@ -291,11 +291,12 @@ impl App {
             // Enviar samples de audio
             if !nes.bus.apu.sample_buffer.is_empty() {
                 if let Ok(mut buf) = self.audio_buffer.lock() {
-                    buf.extend_from_slice(&nes.bus.apu.sample_buffer);
-                    // Limitar buffer pra não acumular
-                    if buf.len() > 8192 {
-                        let excess = buf.len() - 4096;
-                        buf.drain(0..excess);
+                    for &s in &nes.bus.apu.sample_buffer {
+                        buf.push_back(s);
+                    }
+                    // Limitar buffer pra não acumular latência
+                    while buf.len() > 4096 {
+                        buf.pop_front();
                     }
                 }
                 nes.bus.apu.sample_buffer.clear();

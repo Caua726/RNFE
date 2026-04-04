@@ -504,7 +504,9 @@ impl Apu {
             0.0
         };
 
-        (pulse_out + tnd_out) * 2.0 - 1.0
+        // Output 0.0 a ~1.0, centralizar e escalar
+        let out = pulse_out + tnd_out;
+        (out - 0.5).clamp(-1.0, 1.0)
     }
 
     pub fn reset(&mut self) {
