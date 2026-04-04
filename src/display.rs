@@ -93,16 +93,45 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => self.draw(el),
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => el.exit(),
-                        PhysicalKey::Code(KeyCode::KeyR) => {
-                            if let Some(ref mut nes) = self.nes {
+                if let Some(ref mut nes) = self.nes {
+                    let pressed = event.state == ElementState::Pressed;
+
+                    // NES controller: A B Select Start Up Down Left Right
+                    // Mapeamento: Z=A, X=B, Tab=Select, Enter=Start, Setas=D-Pad
+                    let bit = match event.physical_key {
+                        PhysicalKey::Code(KeyCode::KeyZ)      => Some(0x80), // A
+                        PhysicalKey::Code(KeyCode::KeyX)      => Some(0x40), // B
+                        PhysicalKey::Code(KeyCode::Tab)       => Some(0x20), // Select
+                        PhysicalKey::Code(KeyCode::Enter)     => Some(0x10), // Start
+                        PhysicalKey::Code(KeyCode::ArrowUp)   => Some(0x08), // Up
+                        PhysicalKey::Code(KeyCode::ArrowDown) => Some(0x04), // Down
+                        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(0x02), // Left
+                        PhysicalKey::Code(KeyCode::ArrowRight)=> Some(0x01), // Right
+                        _ => None,
+                    };
+
+                    if let Some(b) = bit {
+                        if pressed {
+                            nes.bus.controller[0] |= b;
+                        } else {
+                            nes.bus.controller[0] &= !b;
+                        }
+                    }
+
+                    // Atalhos
+                    if pressed {
+                        match event.physical_key {
+                            PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+                            PhysicalKey::Code(KeyCode::KeyR) => {
                                 nes.reset();
                                 println!("NES Reset!");
                             }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+                } else if event.state == ElementState::Pressed {
+                    if let PhysicalKey::Code(KeyCode::Escape) = event.physical_key {
+                        el.exit();
                     }
                 }
             },

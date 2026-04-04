@@ -10,6 +10,10 @@ pub struct Bus {
     pub dma_data: u8,
     pub dma_transfer: bool,
     pub dma_dummy: bool,
+    // Controllers
+    // Bits: A B Select Start Up Down Left Right
+    pub controller: [u8; 2],
+    controller_state: [u8; 2],
 }
 
 impl Bus {
@@ -23,6 +27,8 @@ impl Bus {
             dma_data: 0x00,
             dma_transfer: false,
             dma_dummy: true,
+            controller: [0; 2],
+            controller_state: [0; 2],
         }
     }
 
@@ -52,7 +58,11 @@ impl Bus {
                 self.dma_addr = 0x00;
                 self.dma_transfer = true;
             },
-            0x4016 | 0x4017 => {},
+            0x4016 => {
+                // Strobe - snapshot do estado atual dos controllers
+                self.controller_state[0] = self.controller[0];
+                self.controller_state[1] = self.controller[1];
+            },
             _ => {}
         }
     }
@@ -72,7 +82,17 @@ impl Bus {
                 self.ppu.cpu_read(addr & 0x0007, _read_only)
             },
             0x4000..=0x4013 | 0x4015 => 0x00,
-            0x4016 | 0x4017 => 0x00,
+            0x4016 => {
+                // Ler bit mais significativo e shiftar
+                let data = (self.controller_state[0] & 0x80) >> 7;
+                self.controller_state[0] <<= 1;
+                data
+            },
+            0x4017 => {
+                let data = (self.controller_state[1] & 0x80) >> 7;
+                self.controller_state[1] <<= 1;
+                data
+            },
             _ => 0x00,
         }
     }
@@ -92,5 +112,7 @@ impl Bus {
         self.dma_data = 0x00;
         self.dma_transfer = false;
         self.dma_dummy = true;
+        self.controller = [0; 2];
+        self.controller_state = [0; 2];
     }
 }
