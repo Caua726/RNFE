@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState};
+use winit::event::{WindowEvent, ElementState, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -275,6 +275,7 @@ pub struct App {
     audio_buffer: Arc<Mutex<VecDeque<f32>>>,
     _audio_stream: Option<cpal::Stream>,
     last_frame: Instant,
+    cursor_pos: (f64, f64),
 }
 
 impl App {
@@ -285,6 +286,7 @@ impl App {
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _audio_stream: None,
             last_frame: Instant::now(),
+            cursor_pos: (0.0, 0.0),
         }
     }
 
@@ -297,6 +299,7 @@ impl App {
             audio_buffer,
             _audio_stream: stream,
             last_frame: Instant::now(),
+            cursor_pos: (0.0, 0.0),
         }
     }
 
@@ -327,6 +330,15 @@ impl App {
 
         stream.play().ok()?;
         Some(stream)
+    }
+
+    fn open_button_rect() -> (i32, i32, i32, i32) {
+        // (x, y, w, h) em pixels NES (256x240)
+        let bw = 70;
+        let bh = 16;
+        let bx = (NES_WIDTH as i32 - bw) / 2;
+        let by = 130;
+        (bx, by, bw, bh)
     }
 
     fn open_rom(&mut self) {
@@ -389,13 +401,25 @@ impl App {
                 self.framebuffer[fb_idx + 3] = 255;
             }
         } else {
-            // Tela preta com texto
+            // Tela inicial
             self.framebuffer.fill(0);
-            // Setar alpha
             for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
                 self.framebuffer[i * 4 + 3] = 255;
             }
-            font::draw_str(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, "RNFE", 2, [255,255,255,255]);
+
+            // Titulo
+            font::draw_str_at(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT,
+                "RNFE", (NES_WIDTH as i32 - font::text_width("RNFE", 3)) / 2, 60, 3, [255,255,255,255]);
+
+            // Botão "OPEN ROM"
+            let (bx, by, bw, bh) = Self::open_button_rect();
+            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, bw, bh, [60,60,60,255]);
+            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, bw, 1, [100,100,100,255]);
+            font::draw_rect(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT, bx, by, 1, bh, [100,100,100,255]);
+            let text = "OPEN ROM";
+            let tw = font::text_width(text, 1);
+            font::draw_str_at(&mut self.framebuffer, NES_WIDTH, NES_HEIGHT,
+                text, bx + (bw - tw) / 2, by + (bh - 7) / 2, 1, [255,255,255,255]);
         }
 
         gpu.render(&self.framebuffer);
@@ -425,6 +449,39 @@ impl ApplicationHandler for App {
                 w.request_redraw();
             }
             WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = (position.x, position.y);
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                if self.nes.is_none() {
+                    // Converter coordenada da janela pra NES
+                    let win_size = w.inner_size();
+                    let win_w = win_size.width as f64;
+                    let win_h = win_size.height as f64;
+                    let win_aspect = win_w / win_h;
+
+                    let (scale_x, scale_y) = if win_aspect > NES_ASPECT as f64 {
+                        (NES_ASPECT as f64 / win_aspect, 1.0)
+                    } else {
+                        (1.0, win_aspect / NES_ASPECT as f64)
+                    };
+
+                    // Area renderizada na janela
+                    let render_w = win_w * scale_x;
+                    let render_h = win_h * scale_y;
+                    let offset_x = (win_w - render_w) / 2.0;
+                    let offset_y = (win_h - render_h) / 2.0;
+
+                    // Posição em coordenadas NES
+                    let nes_x = ((self.cursor_pos.0 - offset_x) / render_w * NES_WIDTH as f64) as i32;
+                    let nes_y = ((self.cursor_pos.1 - offset_y) / render_h * NES_HEIGHT as f64) as i32;
+
+                    let (bx, by, bw, bh) = Self::open_button_rect();
+                    if nes_x >= bx && nes_x < bx + bw && nes_y >= by && nes_y < by + bh {
+                        self.open_rom();
+                    }
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some(ref mut nes) = self.nes {
                     let pressed = event.state == ElementState::Pressed;
