@@ -7,6 +7,7 @@ mod display;
 mod font;
 mod ui;
 mod debug;
+mod diagnostic;
 mod nes;
 
 use nes::Nes;

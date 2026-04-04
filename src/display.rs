@@ -847,6 +847,11 @@ impl ApplicationHandler for App {
                                 self.toast_msg = if nes.debugger.trace_enabled { "Trace ON".into() } else { "Trace OFF -> terminal".into() };
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
+                            PhysicalKey::Code(KeyCode::F6) => {
+                                crate::diagnostic::run_diagnostic(&nes.cpu, &nes.bus);
+                                self.toast_msg = "Diagnostic -> terminal".into();
+                                self.toast_until = Instant::now() + Duration::from_secs(2);
+                            }
                             PhysicalKey::Code(KeyCode::F11) => {
                                 if w.fullscreen().is_some() {
                                     w.set_fullscreen(None);

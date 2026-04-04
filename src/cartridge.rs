@@ -304,6 +304,55 @@ impl Cartridge {
     pub fn get_chr_data(&self) -> &[u8] {
         &self.chr_memory
     }
+
+    // Debug: ler CHR sem side effects
+    pub fn cpu_read_chr_debug(&self, addr: u16) -> Option<u8> {
+        if addr <= 0x1FFF {
+            // Ler via mapper sem &mut
+            match self.mapper_id {
+                0 => self.mapper_000_ppu_read(addr),
+                4 => self.mapper_004_ppu_read(addr),
+                _ => {
+                    if (addr as usize) < self.chr_memory.len() {
+                        Some(self.chr_memory[addr as usize])
+                    } else {
+                        Some(0)
+                    }
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn print_mapper_state(&self) {
+        println!("  Mapper: {}  PRG banks: {}  CHR banks: {}", self.mapper_id, self.prg_banks, self.chr_banks);
+        match self.mapper_id {
+            4 => {
+                println!("  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
+                    self.mmc3_bank_select,
+                    if self.mmc3_bank_select & 0x80 != 0 { "yes" } else { "no" },
+                    if self.mmc3_bank_select & 0x40 != 0 { "swap" } else { "normal" });
+                println!("  MMC3 PRG banks: [{}, {}, {}, {}]",
+                    self.mmc3_prg_banks[0], self.mmc3_prg_banks[1],
+                    self.mmc3_prg_banks[2], self.mmc3_prg_banks[3]);
+                println!("  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
+                    self.mmc3_chr_banks[0], self.mmc3_chr_banks[1],
+                    self.mmc3_chr_banks[2], self.mmc3_chr_banks[3],
+                    self.mmc3_chr_banks[4], self.mmc3_chr_banks[5],
+                    self.mmc3_chr_banks[6], self.mmc3_chr_banks[7]);
+                println!("  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
+                    self.mmc3_irq_counter, self.mmc3_irq_reload,
+                    self.mmc3_irq_enabled, self.mmc3_irq_pending);
+            },
+            1 => {
+                println!("  MMC1 ctrl: ${:02X}  PRG bank: {}  CHR banks: {}/{}",
+                    self.mmc1_control, self.mmc1_prg_bank,
+                    self.mmc1_chr_bank0, self.mmc1_chr_bank1);
+            },
+            _ => {}
+        }
+    }
     
     // Mapper 000 (NROM) implementation
     fn mapper_000_cpu_read(&self, addr: u16) -> Option<u8> {
