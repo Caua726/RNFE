@@ -510,16 +510,17 @@ impl App {
                 self.menu_fb[idx + 3] = 255;
             }
 
+            let mx = self.cursor_pos.0 as i32;
+            let my = self.cursor_pos.1 as i32;
+
             let cx = mw as i32 / 2;
-            let title_y = (mh as f32 * 0.28) as i32;
+            let title_y = (mh as f32 * 0.30) as i32;
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 56.0, title_y, [220, 220, 220, 255]);
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 16.0, title_y + 65, [80, 80, 80, 255]);
 
-            let btn_y = (mh as f32 * 0.55) as i32;
+            let btn_y = (mh as f32 * 0.58) as i32;
             let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
-            let mx = self.cursor_pos.0 as i32;
-            let my = self.cursor_pos.1 as i32;
             let hover = mx >= bx && mx < bx + bw && my >= by && my < by + bh;
 
             if hover {
@@ -531,6 +532,9 @@ impl App {
             }
 
             self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
+
+            // Menu bar no topo (por cima de tudo)
+            self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
             gpu.render_menu(&self.menu_fb);
             return;
@@ -567,15 +571,28 @@ impl ApplicationHandler for App {
                 self.cursor_pos = (position.x, position.y);
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                let mx = self.cursor_pos.0 as i32;
+                let my = self.cursor_pos.1 as i32;
+
                 if self.nes.is_none() {
-                    let win_size = w.inner_size();
-                    let mx = self.cursor_pos.0 as i32;
-                    let my = self.cursor_pos.1 as i32;
-                    let cx = win_size.width as i32 / 2;
-                    let btn_y = (win_size.height as f32 * 0.55) as i32;
-                    let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 20.0, cx, btn_y);
-                    if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
-                        self.open_rom();
+                    // Processar menu bar
+                    let action = self.ui.handle_click(mx, my);
+                    match action {
+                        crate::ui::MenuAction::OpenRom => self.open_rom(),
+                        crate::ui::MenuAction::Reset => {
+                            if let Some(ref mut nes) = self.nes { nes.reset(); }
+                        },
+                        crate::ui::MenuAction::Quit => el.exit(),
+                        crate::ui::MenuAction::None => {
+                            // Check botão central "Open ROM"
+                            let win_size = w.inner_size();
+                            let cx = win_size.width as i32 / 2;
+                            let btn_y = (win_size.height as f32 * 0.58) as i32;
+                            let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
+                            if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
+                                self.open_rom();
+                            }
+                        },
                     }
                 }
             }

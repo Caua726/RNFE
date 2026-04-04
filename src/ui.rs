@@ -2,17 +2,47 @@ use fontdue::Font;
 
 const FONT_DATA: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
+pub const MENUBAR_HEIGHT: i32 = 28;
+const MENU_FONT_SIZE: f32 = 14.0;
+const MENU_PAD_X: i32 = 12;
+const DROPDOWN_ITEM_H: i32 = 26;
+const DROPDOWN_PAD_X: i32 = 16;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum MenuAction {
+    None,
+    OpenRom,
+    Reset,
+    Quit,
+}
+
 pub struct Ui {
     font: Font,
+    pub open_menu: Option<usize>, // qual menu tá aberto (0=File, 1=Settings)
 }
+
+struct MenuItem {
+    label: &'static str,
+    items: &'static [(&'static str, MenuAction)],
+}
+
+const MENUS: &[MenuItem] = &[
+    MenuItem {
+        label: "File",
+        items: &[
+            ("Open ROM", MenuAction::OpenRom),
+            ("Reset", MenuAction::Reset),
+            ("Quit", MenuAction::Quit),
+        ],
+    },
+];
 
 impl Ui {
     pub fn new() -> Self {
         let font = Font::from_bytes(FONT_DATA, fontdue::FontSettings::default()).unwrap();
-        Ui { font }
+        Ui { font, open_menu: None }
     }
 
-    // Desenha texto centralizado horizontalmente no framebuffer RGBA
     pub fn draw_text_centered(&self, fb: &mut [u8], w: u32, h: u32, text: &str, size: f32, y: i32, color: [u8; 4]) {
         let tw = self.text_width(text, size);
         let x = (w as i32 - tw) / 2;
@@ -34,7 +64,6 @@ impl Ui {
                     let py = gy + row as i32;
                     if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 { continue; }
                     let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    // Alpha blending
                     let a = alpha as f32 / 255.0;
                     fb[idx]     = (fb[idx] as f32 * (1.0 - a) + color[0] as f32 * a) as u8;
                     fb[idx + 1] = (fb[idx+1] as f32 * (1.0 - a) + color[1] as f32 * a) as u8;
@@ -66,16 +95,8 @@ impl Ui {
         let w_i = w as i32;
         let h_i = h as i32;
 
-        // Só bordas, sem preenchimento
         for px in bx..bx + bw {
-            // Borda superior e inferior
-            for t in 0..1 {
-                let py = by + t;
-                if px >= 0 && py >= 0 && px < w_i && py < h_i {
-                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    fb[idx..idx + 4].copy_from_slice(&border);
-                }
-                let py = by + bh - 1 + t;
+            for &py in &[by, by + bh - 1] {
                 if px >= 0 && py >= 0 && px < w_i && py < h_i {
                     let idx = ((py as u32 * w + px as u32) * 4) as usize;
                     fb[idx..idx + 4].copy_from_slice(&border);
@@ -83,14 +104,7 @@ impl Ui {
             }
         }
         for py in by..by + bh {
-            // Borda esquerda e direita
-            for t in 0..1 {
-                let px = bx + t;
-                if px >= 0 && py >= 0 && px < w_i && py < h_i {
-                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    fb[idx..idx + 4].copy_from_slice(&border);
-                }
-                let px = bx + bw - 1 + t;
+            for &px in &[bx, bx + bw - 1] {
                 if px >= 0 && py >= 0 && px < w_i && py < h_i {
                     let idx = ((py as u32 * w + px as u32) * 4) as usize;
                     fb[idx..idx + 4].copy_from_slice(&border);
@@ -103,7 +117,6 @@ impl Ui {
         self.draw_text(fb, w, h, text, size, tx, ty, color);
     }
 
-    // Retorna (x, y, w, h) do botão pra hit testing
     pub fn button_rect(&self, text: &str, size: f32, cx: i32, cy: i32) -> (i32, i32, i32, i32) {
         let tw = self.text_width(text, size);
         let pad_x = 20;
@@ -111,5 +124,137 @@ impl Ui {
         let bw = tw + pad_x * 2;
         let bh = size as i32 + pad_y * 2;
         (cx - bw / 2, cy - bh / 2, bw, bh)
+    }
+
+    fn fill_rect(&self, fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+        let w_i = w as i32;
+        let h_i = h as i32;
+        for py in ry.max(0)..((ry + rh).min(h_i)) {
+            for px in rx.max(0)..((rx + rw).min(w_i)) {
+                let idx = ((py as u32 * w + px as u32) * 4) as usize;
+                fb[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+
+    // Desenha a barra de menu no topo
+    pub fn draw_menubar(&self, fb: &mut [u8], w: u32, h: u32, mx: i32, my: i32) {
+        // Fundo da barra
+        self.fill_rect(fb, w, h, 0, 0, w as i32, MENUBAR_HEIGHT, [22, 22, 28, 255]);
+        // Linha inferior
+        self.fill_rect(fb, w, h, 0, MENUBAR_HEIGHT - 1, w as i32, 1, [40, 40, 50, 255]);
+
+        let mut x = 0;
+        for (i, menu) in MENUS.iter().enumerate() {
+            let tw = self.text_width(menu.label, MENU_FONT_SIZE);
+            let item_w = tw + MENU_PAD_X * 2;
+
+            let hover = mx >= x && mx < x + item_w && my >= 0 && my < MENUBAR_HEIGHT;
+            let active = self.open_menu == Some(i);
+
+            if hover || active {
+                self.fill_rect(fb, w, h, x, 0, item_w, MENUBAR_HEIGHT, [40, 40, 55, 255]);
+            }
+
+            let text_color = if hover || active { [255, 255, 255, 255] } else { [170, 170, 170, 255] };
+            self.draw_text(fb, w, h, menu.label, MENU_FONT_SIZE, x + MENU_PAD_X, 7, text_color);
+
+            // Dropdown
+            if active {
+                self.draw_dropdown(fb, w, h, x, menu.items, mx, my);
+            }
+
+            x += item_w;
+        }
+    }
+
+    fn draw_dropdown(&self, fb: &mut [u8], w: u32, h: u32, x: i32, items: &[(&str, MenuAction)], mx: i32, my: i32) {
+        let mut max_w = 0;
+        for (label, _) in items {
+            let tw = self.text_width(label, MENU_FONT_SIZE);
+            if tw > max_w { max_w = tw; }
+        }
+        let dropdown_w = max_w + DROPDOWN_PAD_X * 2;
+        let dropdown_h = items.len() as i32 * DROPDOWN_ITEM_H;
+        let dy = MENUBAR_HEIGHT;
+
+        // Fundo do dropdown
+        self.fill_rect(fb, w, h, x, dy, dropdown_w, dropdown_h, [28, 28, 36, 255]);
+        // Borda
+        self.fill_rect(fb, w, h, x, dy, dropdown_w, 1, [50, 50, 60, 255]);
+        self.fill_rect(fb, w, h, x, dy + dropdown_h - 1, dropdown_w, 1, [50, 50, 60, 255]);
+        self.fill_rect(fb, w, h, x, dy, 1, dropdown_h, [50, 50, 60, 255]);
+        self.fill_rect(fb, w, h, x + dropdown_w - 1, dy, 1, dropdown_h, [50, 50, 60, 255]);
+
+        for (i, (label, _)) in items.iter().enumerate() {
+            let iy = dy + i as i32 * DROPDOWN_ITEM_H;
+            let hover = mx >= x && mx < x + dropdown_w && my >= iy && my < iy + DROPDOWN_ITEM_H;
+
+            if hover {
+                self.fill_rect(fb, w, h, x + 1, iy, dropdown_w - 2, DROPDOWN_ITEM_H, [50, 70, 120, 255]);
+            }
+
+            let color = if hover { [255, 255, 255, 255] } else { [170, 170, 170, 255] };
+            self.draw_text(fb, w, h, label, MENU_FONT_SIZE, x + DROPDOWN_PAD_X, iy + 6, color);
+        }
+    }
+
+    // Retorna a posição X de cada menu item na barra
+    fn menu_item_x(&self, index: usize) -> (i32, i32) {
+        let mut x = 0;
+        for (i, menu) in MENUS.iter().enumerate() {
+            let tw = self.text_width(menu.label, MENU_FONT_SIZE);
+            let item_w = tw + MENU_PAD_X * 2;
+            if i == index { return (x, item_w); }
+            x += item_w;
+        }
+        (0, 0)
+    }
+
+    // Processa click do mouse, retorna a ação se clicou num item
+    pub fn handle_click(&mut self, mx: i32, my: i32) -> MenuAction {
+        // Click na barra?
+        if my >= 0 && my < MENUBAR_HEIGHT {
+            let mut x = 0;
+            for (i, menu) in MENUS.iter().enumerate() {
+                let tw = self.text_width(menu.label, MENU_FONT_SIZE);
+                let item_w = tw + MENU_PAD_X * 2;
+                if mx >= x && mx < x + item_w {
+                    if self.open_menu == Some(i) {
+                        self.open_menu = None;
+                    } else {
+                        self.open_menu = Some(i);
+                    }
+                    return MenuAction::None;
+                }
+                x += item_w;
+            }
+        }
+
+        // Click no dropdown?
+        if let Some(menu_idx) = self.open_menu {
+            let menu = &MENUS[menu_idx];
+            let (x, _) = self.menu_item_x(menu_idx);
+            let mut max_w = 0;
+            for (label, _) in menu.items {
+                let tw = self.text_width(label, MENU_FONT_SIZE);
+                if tw > max_w { max_w = tw; }
+            }
+            let dropdown_w = max_w + DROPDOWN_PAD_X * 2;
+            let dy = MENUBAR_HEIGHT;
+
+            for (i, (_, action)) in menu.items.iter().enumerate() {
+                let iy = dy + i as i32 * DROPDOWN_ITEM_H;
+                if mx >= x && mx < x + dropdown_w && my >= iy && my < iy + DROPDOWN_ITEM_H {
+                    self.open_menu = None;
+                    return *action;
+                }
+            }
+
+            // Clicou fora, fechar
+            self.open_menu = None;
+        }
+
+        MenuAction::None
     }
 }
