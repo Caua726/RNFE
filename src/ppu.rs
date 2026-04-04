@@ -50,8 +50,8 @@ pub struct Ppu {
     // Frame par/ímpar
     odd_frame: bool,
 
-    // Mirroring
-    pub mirror_horizontal: bool,
+    // Mirroring (0=vertical, 1=horizontal, 2=onescreen_lo, 3=onescreen_hi)
+    pub mirror_mode: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -98,7 +98,7 @@ impl Ppu {
             frame_complete: false,
             nmi: false,
             odd_frame: false,
-            mirror_horizontal: false,
+            mirror_mode: 0,
         }
     }
 
@@ -222,12 +222,12 @@ impl Ppu {
         let addr = addr & 0x0FFF;
         let table = (addr >> 10) as usize; // 0-3
         let offset = (addr & 0x03FF) as usize;
-        let nt = if self.mirror_horizontal {
-            // Horizontal: 0->0, 1->0, 2->1, 3->1
-            table >> 1
-        } else {
-            // Vertical: 0->0, 1->1, 2->0, 3->1
-            table & 1
+        let nt = match self.mirror_mode {
+            0 => table & 1,      // Vertical: 0->0, 1->1, 2->0, 3->1
+            1 => table >> 1,     // Horizontal: 0->0, 1->0, 2->1, 3->1
+            2 => 0,              // OneScreen Lo: tudo pra nametable 0
+            3 => 1,              // OneScreen Hi: tudo pra nametable 1
+            _ => table & 1,
         };
         (nt, offset)
     }

@@ -14,3 +14,4 @@ wgpu = "24"
 winit = { version = "0.30.12", features = ["x11", "wayland"] }
 pollster = "0.4"
 cpal = "0.17.3"
+bytemuck = { version = "1.25.0", features = ["derive"] }

@@ -249,11 +249,79 @@ impl Noise {
     }
 }
 
+const DMC_RATE_TABLE: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
+
+struct Dmc {
+    enabled: bool,
+    irq_enabled: bool,
+    loop_flag: bool,
+    timer: u16,
+    timer_period: u16,
+    output_level: u8,
+    sample_addr: u16,
+    sample_length: u16,
+    current_addr: u16,
+    bytes_remaining: u16,
+    sample_buffer: u8,
+    sample_buffer_empty: bool,
+    shift_register: u8,
+    bits_remaining: u8,
+    silence: bool,
+}
+
+impl Dmc {
+    fn new() -> Self {
+        Dmc {
+            enabled: false, irq_enabled: false, loop_flag: false,
+            timer: 0, timer_period: 0, output_level: 0,
+            sample_addr: 0xC000, sample_length: 0, current_addr: 0xC000,
+            bytes_remaining: 0, sample_buffer: 0, sample_buffer_empty: true,
+            shift_register: 0, bits_remaining: 0, silence: true,
+        }
+    }
+
+    fn clock_timer(&mut self) {
+        if self.timer == 0 {
+            self.timer = self.timer_period;
+
+            if !self.silence {
+                if self.shift_register & 1 != 0 {
+                    if self.output_level <= 125 { self.output_level += 2; }
+                } else {
+                    if self.output_level >= 2 { self.output_level -= 2; }
+                }
+                self.shift_register >>= 1;
+            }
+
+            self.bits_remaining = self.bits_remaining.wrapping_sub(1);
+            if self.bits_remaining == 0 {
+                self.bits_remaining = 8;
+                if self.sample_buffer_empty {
+                    self.silence = true;
+                } else {
+                    self.silence = false;
+                    self.shift_register = self.sample_buffer;
+                    self.sample_buffer_empty = true;
+                }
+            }
+        } else {
+            self.timer -= 1;
+        }
+    }
+
+    fn output(&self) -> u8 {
+        self.output_level
+    }
+}
+
 pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
+    dmc: Dmc,
     frame_counter_mode: u8,
     frame_clock: u32,
     irq_inhibit: bool,
@@ -276,6 +344,7 @@ impl Apu {
             pulse2: Pulse::new(1),
             triangle: Triangle::new(),
             noise: Noise::new(),
+            dmc: Dmc::new(),
             frame_counter_mode: 0,
             frame_clock: 0,
             irq_inhibit: false,
@@ -379,16 +448,39 @@ impl Apu {
                 self.noise.envelope_start = true;
             },
 
+            // DMC
+            0x4010 => {
+                self.dmc.irq_enabled = (data & 0x80) != 0;
+                self.dmc.loop_flag = (data & 0x40) != 0;
+                self.dmc.timer_period = DMC_RATE_TABLE[(data & 0x0F) as usize];
+            },
+            0x4011 => {
+                self.dmc.output_level = data & 0x7F;
+            },
+            0x4012 => {
+                self.dmc.sample_addr = 0xC000 | ((data as u16) << 6);
+            },
+            0x4013 => {
+                self.dmc.sample_length = ((data as u16) << 4) | 1;
+            },
+
             // Status
             0x4015 => {
                 self.pulse1.enabled = (data & 0x01) != 0;
                 self.pulse2.enabled = (data & 0x02) != 0;
                 self.triangle.enabled = (data & 0x04) != 0;
                 self.noise.enabled = (data & 0x08) != 0;
+                self.dmc.enabled = (data & 0x10) != 0;
                 if !self.pulse1.enabled { self.pulse1.length_counter = 0; }
                 if !self.pulse2.enabled { self.pulse2.length_counter = 0; }
                 if !self.triangle.enabled { self.triangle.length_counter = 0; }
                 if !self.noise.enabled { self.noise.length_counter = 0; }
+                if !self.dmc.enabled {
+                    self.dmc.bytes_remaining = 0;
+                } else if self.dmc.bytes_remaining == 0 {
+                    self.dmc.current_addr = self.dmc.sample_addr;
+                    self.dmc.bytes_remaining = self.dmc.sample_length;
+                }
             },
 
             // Frame counter
@@ -412,6 +504,7 @@ impl Apu {
             if self.pulse2.length_counter > 0 { status |= 0x02; }
             if self.triangle.length_counter > 0 { status |= 0x04; }
             if self.noise.length_counter > 0 { status |= 0x08; }
+            if self.dmc.bytes_remaining > 0 { status |= 0x10; }
             status
         } else {
             0
@@ -444,6 +537,7 @@ impl Apu {
             self.pulse1.clock_timer();
             self.pulse2.clock_timer();
             self.noise.clock_timer();
+            self.dmc.clock_timer();
 
             // Frame counter (~240Hz, a cada 3728.5 APU cycles)
             self.frame_clock += 1;
@@ -501,16 +595,17 @@ impl Apu {
         let p2 = self.pulse2.output() as f32;
         let tri = self.triangle.output() as f32;
         let noise = self.noise.output() as f32;
+        let dmc = self.dmc.output() as f32;
 
-        // Mix usando as formulas do NES
         let pulse_out = if p1 + p2 > 0.0 {
             95.88 / (8128.0 / (p1 + p2) + 100.0)
         } else {
             0.0
         };
 
-        let tnd_out = if tri + noise > 0.0 {
-            159.79 / (1.0 / (tri / 8227.0 + noise / 12241.0) + 100.0)
+        let tnd_sum = tri / 8227.0 + noise / 12241.0 + dmc / 22638.0;
+        let tnd_out = if tnd_sum > 0.0 {
+            159.79 / (1.0 / tnd_sum + 100.0)
         } else {
             0.0
         };
@@ -523,6 +618,7 @@ impl Apu {
         self.pulse2 = Pulse::new(1);
         self.triangle = Triangle::new();
         self.noise = Noise::new();
+        self.dmc = Dmc::new();
         self.frame_counter_mode = 0;
         self.frame_clock = 0;
         self.cpu_clock = 0;

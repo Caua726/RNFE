@@ -1,6 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent, ElementState};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -13,15 +14,20 @@ use crate::{font, nes::Nes};
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
 
+// NES aspect ratio: 256 pixels * 8/7 per pixel = ~292.57 visible width
+// Aspect ratio = (256 * 8/7) / 240 = ~1.219
+const NES_ASPECT: f32 = (256.0 * 8.0 / 7.0) / 240.0;
+
 const SHADER: &str = r#"
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
 };
 
+@group(0) @binding(2) var<uniform> scale: vec2<f32>;
+
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-    // Fullscreen quad com 6 vertices (2 triangulos)
     var positions = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
         vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
@@ -31,7 +37,7 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
         vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0),
     );
     var out: VertexOutput;
-    out.pos = vec4(positions[idx], 0.0, 1.0);
+    out.pos = vec4(positions[idx] * scale, 0.0, 1.0);
     out.uv = uvs[idx];
     return out;
 }
@@ -53,6 +59,9 @@ struct GpuState {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     texture: wgpu::Texture,
+    scale_buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
 }
 
 impl GpuState {
@@ -106,6 +115,14 @@ impl GpuState {
 
         let tex_view = texture.create_view(&Default::default());
 
+        // Scale uniform pra aspect ratio
+        let scale = Self::calc_scale(size.width, size.height);
+        let scale_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("scale"),
+            contents: bytemuck::cast_slice(&scale),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[
@@ -125,6 +142,16 @@ impl GpuState {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -134,6 +161,7 @@ impl GpuState {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&tex_view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: scale_buffer.as_entire_binding() },
             ],
         });
 
@@ -165,13 +193,27 @@ impl GpuState {
             cache: None,
         });
 
-        GpuState { surface, device, queue, config, pipeline, bind_group, texture }
+        GpuState { surface, device, queue, config, pipeline, bind_group, texture, scale_buffer, bind_group_layout, sampler }
+    }
+
+    fn calc_scale(win_w: u32, win_h: u32) -> [f32; 2] {
+        let win_aspect = win_w as f32 / win_h.max(1) as f32;
+        if win_aspect > NES_ASPECT {
+            // Janela mais larga que NES - pillarbox
+            [NES_ASPECT / win_aspect, 1.0]
+        } else {
+            // Janela mais alta - letterbox
+            [1.0, win_aspect / NES_ASPECT]
+        }
     }
 
     fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+
+        let scale = Self::calc_scale(width, height);
+        self.queue.write_buffer(&self.scale_buffer, 0, bytemuck::cast_slice(&scale));
     }
 
     fn render(&mut self, pixels: &[u8]) {
@@ -223,6 +265,8 @@ impl GpuState {
     }
 }
 
+const FRAME_DURATION: Duration = Duration::from_nanos(16_639_267); // ~60.0988 Hz (NTSC)
+
 pub struct App {
     win: Option<&'static Window>,
     gpu: Option<GpuState>,
@@ -230,6 +274,7 @@ pub struct App {
     framebuffer: Vec<u8>,
     audio_buffer: Arc<Mutex<VecDeque<f32>>>,
     _audio_stream: Option<cpal::Stream>,
+    last_frame: Instant,
 }
 
 impl App {
@@ -239,6 +284,7 @@ impl App {
             framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _audio_stream: None,
+            last_frame: Instant::now(),
         }
     }
 
@@ -250,6 +296,7 @@ impl App {
             framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
             audio_buffer,
             _audio_stream: stream,
+            last_frame: Instant::now(),
         }
     }
 
@@ -286,6 +333,13 @@ impl App {
         let Some(gpu) = self.gpu.as_mut() else { return };
 
         if let Some(ref mut nes) = self.nes {
+            // Frame timing - esperar até o proximo frame NTSC
+            let elapsed = self.last_frame.elapsed();
+            if elapsed < FRAME_DURATION {
+                std::thread::sleep(FRAME_DURATION - elapsed);
+            }
+            self.last_frame = Instant::now();
+
             loop {
                 nes.clock();
                 if nes.bus.ppu.frame_complete {

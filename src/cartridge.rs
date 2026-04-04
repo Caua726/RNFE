@@ -20,6 +20,12 @@ pub struct Cartridge {
     // UxROM (mapper 2) state
     uxrom_bank: u8,
 
+    // CNROM (mapper 3) state
+    cnrom_chr_bank: u8,
+
+    // AxROM (mapper 7) state
+    axrom_prg_bank: u8,
+
     // MMC3 state
     mmc3_bank_select: u8,
     mmc3_prg_banks: [u8; 4],
@@ -106,6 +112,12 @@ impl Cartridge {
             // UxROM
             uxrom_bank: 0,
 
+            // CNROM
+            cnrom_chr_bank: 0,
+
+            // AxROM
+            axrom_prg_bank: 0,
+
             // MMC3
             mmc3_bank_select: 0,
             mmc3_prg_banks: [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)],
@@ -118,7 +130,9 @@ impl Cartridge {
             0 => self.mapper_000_cpu_read(addr),
             1 => self.mapper_001_cpu_read(addr),
             2 => self.mapper_002_cpu_read(addr),
+            3 => self.mapper_003_cpu_read(addr),
             4 => self.mapper_004_cpu_read(addr),
+            7 => self.mapper_007_cpu_read(addr),
             _ => None,
         }
     }
@@ -128,7 +142,9 @@ impl Cartridge {
             0 => self.mapper_000_cpu_write(addr, data),
             1 => self.mapper_001_cpu_write(addr, data),
             2 => self.mapper_002_cpu_write(addr, data),
+            3 => self.mapper_003_cpu_write(addr, data),
             4 => self.mapper_004_cpu_write(addr, data),
+            7 => self.mapper_007_cpu_write(addr, data),
             _ => false,
         }
     }
@@ -137,7 +153,8 @@ impl Cartridge {
         match self.mapper_id {
             0 => self.mapper_000_ppu_read(addr),
             1 => self.mapper_001_ppu_read(addr),
-            2 => self.mapper_002_ppu_read(addr),
+            2 | 7 => self.mapper_002_ppu_read(addr), // CHR RAM simples
+            3 => self.mapper_003_ppu_read(addr),
             _ => None,
         }
     }
@@ -145,8 +162,7 @@ impl Cartridge {
     pub fn ppu_write(&mut self, addr: u16, data: u8) -> bool {
         match self.mapper_id {
             0 => self.mapper_000_ppu_write(addr, data),
-            1 | 2 => {
-                // CHR RAM
+            1 | 2 | 7 => {
                 if addr <= 0x1FFF && self.chr_banks == 0 {
                     self.chr_memory[addr as usize] = data;
                     true
@@ -154,6 +170,7 @@ impl Cartridge {
                     false
                 }
             },
+            3 => false, // CNROM é CHR ROM, read-only
             _ => false,
         }
     }
@@ -348,6 +365,54 @@ impl Cartridge {
         }
     }
 
+    // Mapper 003 (CNROM) - CHR bank switching
+    fn mapper_003_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let masked = addr & if self.prg_banks > 1 { 0x7FFF } else { 0x3FFF };
+            Some(self.prg_memory[masked as usize % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_003_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.cnrom_chr_bank = data & 0x03;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mapper_003_ppu_read(&self, addr: u16) -> Option<u8> {
+        if addr <= 0x1FFF {
+            let offset = self.cnrom_chr_bank as usize * 0x2000 + addr as usize;
+            Some(self.chr_memory[offset % self.chr_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    // Mapper 007 (AxROM) - 32KB PRG switching + single screen mirroring
+    fn mapper_007_cpu_read(&self, addr: u16) -> Option<u8> {
+        if addr >= 0x8000 {
+            let offset = self.axrom_prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
+            Some(self.prg_memory[offset % self.prg_memory.len()])
+        } else {
+            None
+        }
+    }
+
+    fn mapper_007_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x8000 {
+            self.axrom_prg_bank = data & 0x07;
+            self.mirror = if data & 0x10 != 0 { Mirror::OneScreenHi } else { Mirror::OneScreenLo };
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn reset(&mut self) {
         if self.mapper_id == 1 {
             self.mmc1_shift = 0x10;
@@ -358,6 +423,10 @@ impl Cartridge {
             self.mmc1_prg_bank = 0;
         } else if self.mapper_id == 2 {
             self.uxrom_bank = 0;
+        } else if self.mapper_id == 3 {
+            self.cnrom_chr_bank = 0;
+        } else if self.mapper_id == 7 {
+            self.axrom_prg_bank = 0;
         } else if self.mapper_id == 4 {
             self.mmc3_bank_select = 0;
             self.mmc3_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];

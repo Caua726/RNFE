@@ -39,7 +39,12 @@ impl Bus {
 
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         self.ppu.load_chr(cartridge.get_chr_data());
-        self.ppu.mirror_horizontal = matches!(cartridge.get_mirror(), crate::cartridge::Mirror::Horizontal);
+        self.ppu.mirror_mode = match cartridge.get_mirror() {
+            crate::cartridge::Mirror::Vertical => 0,
+            crate::cartridge::Mirror::Horizontal => 1,
+            crate::cartridge::Mirror::OneScreenLo => 2,
+            crate::cartridge::Mirror::OneScreenHi => 3,
+        };
         self.cartridge = Some(cartridge);
     }
 
@@ -126,9 +131,9 @@ impl Bus {
         if let Some(ref mut cartridge) = self.cartridge {
             cartridge.reset();
         }
-        let mirror = self.ppu.mirror_horizontal;
+        let mirror = self.ppu.mirror_mode;
         self.ppu = Ppu::new();
-        self.ppu.mirror_horizontal = mirror;
+        self.ppu.mirror_mode = mirror;
         if let Some(ref cartridge) = self.cartridge {
             self.ppu.load_chr(cartridge.get_chr_data());
         }
