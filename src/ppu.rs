@@ -244,6 +244,17 @@ impl Ppu {
         (nt, offset)
     }
 
+    // Atualizar pattern tables a partir do cartridge (chamado pelo Nes)
+    pub fn update_chr_from_cartridge(&mut self, cartridge: &mut crate::cartridge::Cartridge) {
+        for addr in 0..0x2000u16 {
+            if let Some(byte) = cartridge.ppu_read(addr) {
+                let table = ((addr & 0x1000) >> 12) as usize;
+                let offset = (addr & 0x0FFF) as usize;
+                self.pattern_table[table][offset] = byte;
+            }
+        }
+    }
+
     fn ppu_read_internal(&self, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
 
