@@ -826,8 +826,6 @@ impl ApplicationHandler for App {
                             PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
                             PhysicalKey::Code(KeyCode::F3) => {
                                 self.debug_overlay = !self.debug_overlay;
-                                self.toast_msg = if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
-                                self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F4) => {
                                 println!("{}", nes.debugger.coverage_report());
@@ -873,11 +871,15 @@ impl ApplicationHandler for App {
                         _ => {}
                     }
                 }
-                // F3/F4/F5 funcionam sempre (com ou sem ROM)
+                // F3 funciona sempre (com ou sem ROM)
                 if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::F3) => { self.debug_overlay = !self.debug_overlay; }
-                        _ => {}
+                    if let PhysicalKey::Code(KeyCode::F3) = event.physical_key {
+                        // Já foi toggled acima se tinha ROM, mas na tela sem ROM precisa fazer aqui
+                        if self.nes.is_none() {
+                            self.debug_overlay = !self.debug_overlay;
+                        }
+                        self.toast_msg = if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
+                        self.toast_until = Instant::now() + Duration::from_secs(2);
                     }
                 }
             },
