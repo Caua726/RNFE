@@ -57,11 +57,18 @@ struct GpuState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    // NES rendering (256x240 com aspect ratio)
     bind_group: wgpu::BindGroup,
     texture: wgpu::Texture,
     scale_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    // Menu rendering (resolução da janela, sem scaling)
+    menu_texture: wgpu::Texture,
+    menu_bind_group: wgpu::BindGroup,
+    menu_scale_buffer: wgpu::Buffer,
+    menu_w: u32,
+    menu_h: u32,
 }
 
 impl GpuState {
@@ -193,10 +200,49 @@ impl GpuState {
             cache: None,
         });
 
+        // Menu texture (resolução da janela)
+        let menu_w = size.width.max(1);
+        let menu_h = size.height.max(1);
+        let (menu_texture, menu_bind_group, menu_scale_buffer) =
+            Self::create_menu_resources(&device, &queue, &bind_group_layout, &sampler, menu_w, menu_h);
+
         GpuState {
             surface, device, queue, config, pipeline, bind_group, texture,
             scale_buffer, bind_group_layout, sampler,
+            menu_texture, menu_bind_group, menu_scale_buffer, menu_w, menu_h,
         }
+    }
+
+    fn create_menu_resources(
+        device: &wgpu::Device, queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler,
+        w: u32, h: u32,
+    ) -> (wgpu::Texture, wgpu::BindGroup, wgpu::Buffer) {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("menu"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        // Scale = 1.0, 1.0 (sem aspect ratio correction)
+        let scale_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("menu_scale"),
+            contents: bytemuck::cast_slice(&[1.0f32, 1.0f32]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None, layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: scale_buf.as_entire_binding() },
+            ],
+        });
+        (tex, bg, scale_buf)
     }
 
     fn calc_scale(win_w: u32, win_h: u32) -> [f32; 2] {
@@ -217,6 +263,15 @@ impl GpuState {
 
         let scale = Self::calc_scale(width, height);
         self.queue.write_buffer(&self.scale_buffer, 0, bytemuck::cast_slice(&scale));
+
+        // Recriar menu texture na nova resolução
+        let (mt, mbg, msb) = Self::create_menu_resources(
+            &self.device, &self.queue, &self.bind_group_layout, &self.sampler, width.max(1), height.max(1));
+        self.menu_texture = mt;
+        self.menu_bind_group = mbg;
+        self.menu_scale_buffer = msb;
+        self.menu_w = width.max(1);
+        self.menu_h = height.max(1);
     }
 
     fn render(&mut self, pixels: &[u8]) {
@@ -267,6 +322,44 @@ impl GpuState {
         frame.present();
     }
 
+    fn render_menu(&mut self, pixels: &[u8]) {
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.menu_texture, mip_level: 0,
+                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.menu_w * 4),
+                rows_per_image: Some(self.menu_h),
+            },
+            wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
+        );
+
+        let frame = match self.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => { self.surface.configure(&self.device, &self.config); return; }
+        };
+        let view = frame.texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view, resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.menu_bind_group, &[]);
+            pass.draw(0..6, 0..1);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+    }
 }
 
 const FRAME_DURATION: Duration = Duration::from_nanos(16_639_267); // ~60.0988 Hz (NTSC)
@@ -281,6 +374,7 @@ pub struct App {
     last_frame: Instant,
     cursor_pos: (f64, f64),
     ui: Ui,
+    menu_fb: Vec<u8>,
 }
 
 impl App {
@@ -293,6 +387,7 @@ impl App {
             last_frame: Instant::now(),
             cursor_pos: (0.0, 0.0),
             ui: Ui::new(),
+            menu_fb: Vec::new(),
         }
     }
 
@@ -307,6 +402,7 @@ impl App {
             last_frame: Instant::now(),
             cursor_pos: (0.0, 0.0),
             ui: Ui::new(),
+            menu_fb: Vec::new(),
         }
     }
 
@@ -399,33 +495,35 @@ impl App {
                 self.framebuffer[fb_idx + 3] = 255;
             }
         } else {
-            // Tela inicial com fontdue
-            // Fundo escuro
-            for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
+            // Menu na resolução da janela
+            let mw = gpu.menu_w;
+            let mh = gpu.menu_h;
+            let size = (mw * mh * 4) as usize;
+            self.menu_fb.resize(size, 0);
+
+            // Fundo
+            for i in 0..(mw * mh) as usize {
                 let idx = i * 4;
-                self.framebuffer[idx] = 20;
-                self.framebuffer[idx + 1] = 20;
-                self.framebuffer[idx + 2] = 30;
-                self.framebuffer[idx + 3] = 255;
+                self.menu_fb[idx] = 18;
+                self.menu_fb[idx + 1] = 18;
+                self.menu_fb[idx + 2] = 28;
+                self.menu_fb[idx + 3] = 255;
             }
 
-            let w = NES_WIDTH;
-            let h = NES_HEIGHT;
+            let cx = mw as i32 / 2;
+            let title_y = (mh as f32 * 0.25) as i32;
 
-            // Titulo
-            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "RNFE", 28.0, 55, [255, 255, 255, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 64.0, title_y, [255, 255, 255, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 18.0, title_y + 70, [120, 120, 120, 255]);
 
-            // Subtítulo
-            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "NES Emulator", 10.0, 88, [140, 140, 140, 255]);
+            let btn_y = (mh as f32 * 0.55) as i32;
+            self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 20.0, cx, btn_y,
+                [255, 255, 255, 255], [50, 90, 170, 255]);
 
-            // Botão
-            let cx = w as i32 / 2;
-            let cy = 140;
-            self.ui.draw_button(&mut self.framebuffer, w, h, "Open ROM", 12.0, cx, cy,
-                [255, 255, 255, 255], [60, 100, 180, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "or press O", 14.0, btn_y + 40, [80, 80, 80, 255]);
 
-            // Hint
-            self.ui.draw_text_centered(&mut self.framebuffer, w, h, "or press O", 8.0, 165, [100, 100, 100, 255]);
+            gpu.render_menu(&self.menu_fb);
+            return;
         }
 
         gpu.render(&self.framebuffer);
@@ -460,25 +558,13 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 if self.nes.is_none() {
-                    // Converter coordenada da janela pra NES
                     let win_size = w.inner_size();
-                    let win_w = win_size.width as f64;
-                    let win_h = win_size.height as f64;
-                    let win_aspect = win_w / win_h;
-                    let (sx, sy) = if win_aspect > NES_ASPECT as f64 {
-                        (NES_ASPECT as f64 / win_aspect, 1.0)
-                    } else {
-                        (1.0, win_aspect / NES_ASPECT as f64)
-                    };
-                    let rw = win_w * sx;
-                    let rh = win_h * sy;
-                    let ox = (win_w - rw) / 2.0;
-                    let oy = (win_h - rh) / 2.0;
-                    let nx = ((self.cursor_pos.0 - ox) / rw * NES_WIDTH as f64) as i32;
-                    let ny = ((self.cursor_pos.1 - oy) / rh * NES_HEIGHT as f64) as i32;
-
-                    let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 12.0, NES_WIDTH as i32 / 2, 140);
-                    if nx >= bx && nx < bx + bw && ny >= by && ny < by + bh {
+                    let mx = self.cursor_pos.0 as i32;
+                    let my = self.cursor_pos.1 as i32;
+                    let cx = win_size.width as i32 / 2;
+                    let btn_y = (win_size.height as f32 * 0.55) as i32;
+                    let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 20.0, cx, btn_y);
+                    if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
                         self.open_rom();
                     }
                 }
