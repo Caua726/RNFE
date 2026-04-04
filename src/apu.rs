@@ -263,6 +263,10 @@ pub struct Apu {
     pub sample_buffer: Vec<f32>,
     sample_rate: f32,
     sample_clock: f64,
+
+    // Filtro high-pass pra remover DC offset
+    hp_prev_in: f32,
+    hp_prev_out: f32,
 }
 
 impl Apu {
@@ -279,6 +283,8 @@ impl Apu {
             sample_buffer: Vec::with_capacity(1024),
             sample_rate: 44100.0,
             sample_clock: 0.0,
+            hp_prev_in: 0.0,
+            hp_prev_out: 0.0,
         }
     }
 
@@ -478,8 +484,13 @@ impl Apu {
         self.sample_clock += self.sample_rate as f64 / 1789773.0;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
-            let sample = self.mix();
-            self.sample_buffer.push(sample);
+            let raw = self.mix();
+            // High-pass filter (remove DC offset / ruido de fundo)
+            let alpha = 0.996;
+            let filtered = alpha * self.hp_prev_out + raw - self.hp_prev_in;
+            self.hp_prev_in = raw;
+            self.hp_prev_out = filtered;
+            self.sample_buffer.push(filtered * 0.8); // volume
         }
 
         self.cpu_clock += 1;
@@ -504,9 +515,7 @@ impl Apu {
             0.0
         };
 
-        // Output 0.0 a ~1.0, centralizar e escalar
-        let out = pulse_out + tnd_out;
-        (out - 0.5).clamp(-1.0, 1.0)
+        pulse_out + tnd_out
     }
 
     pub fn reset(&mut self) {
@@ -519,5 +528,7 @@ impl Apu {
         self.cpu_clock = 0;
         self.sample_buffer.clear();
         self.sample_clock = 0.0;
+        self.hp_prev_in = 0.0;
+        self.hp_prev_out = 0.0;
     }
 }

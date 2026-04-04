@@ -258,14 +258,20 @@ impl App {
         let device = host.default_output_device()?;
         let config = device.default_output_config().ok()?;
         let sample_rate = config.sample_rate();
+        let channels = config.channels() as usize;
         nes.bus.apu.set_sample_rate(sample_rate as f32);
 
         let stream = device.build_output_stream(
             &config.into(),
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut buf = buffer.lock().unwrap();
-                for sample in data.iter_mut() {
-                    *sample = buf.pop_front().unwrap_or(0.0);
+                // Preencher frames (cada frame tem N canais)
+                for frame in data.chunks_mut(channels) {
+                    let sample = buf.pop_front().unwrap_or(0.0);
+                    // Mesmo sample pra todos os canais (mono -> stereo)
+                    for ch in frame.iter_mut() {
+                        *ch = sample;
+                    }
                 }
             },
             |err| eprintln!("Audio error: {}", err),
