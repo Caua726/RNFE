@@ -97,9 +97,13 @@ impl Cartridge {
             vec![0; 8192]
         };
         
-        println!("Cartridge loaded: PRG banks: {}, CHR banks: {}, Mapper: {}, Mirror: {:?}", 
+        let supported = matches!(mapper_id, 0 | 1 | 2 | 3 | 4 | 7 | 11 | 66);
+        println!("Cartridge loaded: PRG banks: {}, CHR banks: {}, Mapper: {}, Mirror: {:?}",
                  prg_banks, chr_banks, mapper_id, mirror);
         println!("PRG ROM size: {} bytes, CHR ROM size: {} bytes", prg_size, chr_size);
+        if !supported {
+            eprintln!("WARNING: Mapper {} not supported! Game may not work.", mapper_id);
+        }
         
         Ok(Cartridge {
             prg_memory,
