@@ -815,6 +815,13 @@ impl ApplicationHandler for App {
                         _ => {}
                     }
                 }
+                // F3/F4/F5 funcionam sempre (com ou sem ROM)
+                if event.state == ElementState::Pressed {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::F3) => { self.debug_overlay = !self.debug_overlay; }
+                        _ => {}
+                    }
+                }
             },
             _ => {}
         }

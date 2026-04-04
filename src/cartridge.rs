@@ -612,7 +612,9 @@ impl Cartridge {
             self.dxrom_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.dxrom_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
         } else if self.mapper_id == 227 {
-            self.m227_reg = 0;
+            // Iniciar com ultimo banco mapeado (reset vector fica la)
+            let last_bank = (self.prg_banks as u16 / 2).saturating_sub(1);
+            self.m227_reg = (last_bank << 2) & 0x7C;
         }
     }
     
