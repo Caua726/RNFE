@@ -2,7 +2,7 @@ pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
     pub pattern_table: [[u8; 4096]; 2],
-    cart_ptr: Option<*mut crate::cartridge::Cartridge>,
+    pub cart_ptr: Option<*mut crate::cartridge::Cartridge>,
     
     // Status registers
     pub status: u8,
@@ -609,8 +609,7 @@ impl Ppu {
             }
         }
 
-        self.cart_ptr = None;
-
+        // cart_ptr permanece setado - limpo no próximo clock cycle pelo nes.rs
         self.cycle += 1;
         if self.cycle >= 341 {
             self.cycle = 0;

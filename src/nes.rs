@@ -26,6 +26,9 @@ impl Nes {
     }
 
     pub fn clock(&mut self) {
+        // Setar cart_ptr pra todo o clock cycle (PPU reads E CPU writes precisam)
+        self.bus.ppu.cart_ptr = self.bus.cartridge.as_mut()
+            .map(|c| c as *mut crate::cartridge::Cartridge);
         self.bus.ppu.clock(self.bus.cartridge.as_mut());
 
         // Atualizar mirroring cada frame
