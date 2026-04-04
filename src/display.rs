@@ -589,18 +589,58 @@ impl App {
                 self.menu_fb.resize((mw * mh * 4) as usize, 0);
                 self.menu_fb.fill(0);
 
-                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, 4, 4, 360, 70, [0, 0, 0, 160]);
+                let bg = [0u8, 0, 0, 160];
+                let green = [0u8, 255, 80, 255];
+                let gray = [200u8, 200, 200, 255];
+                let yellow = [255u8, 255, 80, 255];
+                let red = [255u8, 80, 80, 255];
+                let sz = 13.0f32;
 
-                let fps = format!("FPS: {}", self.fps_display);
+                let mut y = 8i32;
+                let mut panel_h = 90;
+
+                // Stuck detection
+                let stuck = nes.debugger.detect_stuck(&nes.cpu, &nes.bus);
+                // Unknown opcodes
+                let has_unknown = !nes.debugger.unknown_opcodes.is_empty();
+                if stuck.is_some() { panel_h += 18; }
+                if has_unknown { panel_h += 18; }
+
+                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, 4, 4, 420, panel_h, bg);
+
+                let fps = format!("FPS: {}  Instrs: {}", self.fps_display, nes.debugger.total_instructions);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &fps, sz, 12, y, green);
+                y += 18;
+
                 let cpu = format!("PC:{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  SP:{:02X}  P:{:02X}",
                     nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &cpu, sz, 12, y, gray);
+                y += 18;
+
                 let ppu = format!("SL:{}  CYC:{}  CTRL:{:02X}  MASK:{:02X}  STAT:{:02X}",
                     nes.bus.ppu.scanline, nes.bus.ppu.cycle,
                     nes.bus.ppu.control, nes.bus.ppu.mask, nes.bus.ppu.status);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &ppu, sz, 12, y, gray);
+                y += 18;
 
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &fps, 14.0, 12, 10, [0, 255, 80, 255]);
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &cpu, 14.0, 12, 28, [200, 200, 200, 255]);
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &ppu, 14.0, 12, 46, [200, 200, 200, 255]);
+                // Opcodes coverage
+                let used = nes.debugger.opcode_count.iter().enumerate()
+                    .filter(|(i, c)| **c > 0 && nes.debugger.opcode_names[*i] != "???" && nes.debugger.opcode_names[*i] != "NOP*")
+                    .count();
+                let coverage = format!("Coverage: {}/56 opcodes  F4=report  F5=trace", used);
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &coverage, sz, 12, y, gray);
+                y += 18;
+
+                if let Some(ref msg) = stuck {
+                    self.ui.draw_text(&mut self.menu_fb, mw, mh, msg, sz, 12, y, red);
+                    y += 18;
+                }
+
+                if has_unknown {
+                    let unk = format!("Unknown opcodes: {:?}",
+                        nes.debugger.unknown_opcodes.iter().map(|(op, _)| format!("${:02X}", op)).collect::<Vec<_>>());
+                    self.ui.draw_text(&mut self.menu_fb, mw, mh, &unk, sz, 12, y, yellow);
+                }
 
                 Some(self.menu_fb.as_slice())
             } else {
@@ -730,6 +770,22 @@ impl ApplicationHandler for App {
                             PhysicalKey::Code(KeyCode::KeyR) => { nes.reset(); println!("NES Reset!"); }
                             PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
                             PhysicalKey::Code(KeyCode::F3) => { self.debug_overlay = !self.debug_overlay; }
+                            PhysicalKey::Code(KeyCode::F4) => {
+                                println!("{}", nes.debugger.coverage_report());
+                                if let Some(stuck) = nes.debugger.detect_stuck(&nes.cpu, &nes.bus) {
+                                    println!("[STUCK] {}", stuck);
+                                }
+                            }
+                            PhysicalKey::Code(KeyCode::F5) => {
+                                nes.debugger.trace_enabled = !nes.debugger.trace_enabled;
+                                println!("CPU Trace: {}", if nes.debugger.trace_enabled { "ON" } else { "OFF" });
+                                if !nes.debugger.trace_enabled && !nes.debugger.trace_log.is_empty() {
+                                    println!("--- Last {} instructions ---", nes.debugger.trace_log.len());
+                                    for line in nes.debugger.trace_log.iter().rev().take(20).rev() {
+                                        println!("{}", line);
+                                    }
+                                }
+                            }
                             PhysicalKey::Code(KeyCode::F11) => {
                                 if w.fullscreen().is_some() {
                                     w.set_fullscreen(None);

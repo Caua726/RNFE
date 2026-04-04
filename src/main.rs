@@ -6,6 +6,7 @@ mod cartridge;
 mod display;
 mod font;
 mod ui;
+mod debug;
 mod nes;
 
 use nes::Nes;

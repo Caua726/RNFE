@@ -1,10 +1,12 @@
 use crate::cpu6502::Cpu6502;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
+use crate::debug::Debugger;
 
 pub struct Nes {
     pub cpu: Cpu6502,
     pub bus: Bus,
+    pub debugger: Debugger,
     system_clock_counter: u32,
 }
 
@@ -13,6 +15,7 @@ impl Nes {
         Nes {
             cpu: Cpu6502::new(),
             bus: Bus::new(),
+            debugger: Debugger::new(),
             system_clock_counter: 0,
         }
     }
@@ -26,9 +29,7 @@ impl Nes {
         self.bus.ppu.clock();
 
         if self.system_clock_counter % 3 == 0 {
-            // APU roda na mesma velocidade da CPU
             self.bus.apu.clock();
-            // DMC sample read
             if let Some(addr) = self.bus.apu.dmc_read_addr.take() {
                 let data = self.bus.cpu_read(addr, false);
                 self.bus.apu.dmc_feed_sample(data);
@@ -53,6 +54,10 @@ impl Nes {
                     }
                 }
             } else {
+                // Debug: trackear instrução antes de executar
+                if self.cpu.is_instruction_start() {
+                    self.debugger.on_instruction(&self.cpu, &self.bus);
+                }
                 self.cpu.clock(&mut self.bus);
             }
         }

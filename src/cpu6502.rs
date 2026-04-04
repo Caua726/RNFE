@@ -866,6 +866,10 @@ impl Cpu6502 {
     // XXX: Illegal Opcode
     pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {0}
 
+    pub fn is_instruction_start(&self) -> bool {
+        self.cycles == 0
+    }
+
     // Clock
     pub fn clock(&mut self, bus: &mut crate::bus::Bus) {
         if self.cycles == 0 {

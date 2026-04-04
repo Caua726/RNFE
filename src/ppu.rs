@@ -111,6 +111,14 @@ impl Ppu {
         }
     }
 
+    pub fn cpu_read_debug(&self, addr: u16) -> u8 {
+        match addr {
+            0x0002 => self.status,
+            0x0004 => self.oam[self.oam_addr as usize],
+            _ => 0,
+        }
+    }
+
     pub fn cpu_read(&mut self, addr: u16, read_only: bool) -> u8 {
         let mut data = 0x00;
         

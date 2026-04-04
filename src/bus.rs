@@ -127,6 +127,20 @@ impl Bus {
         }
     }
 
+    // Read sem side effects (pra debug)
+    pub fn cpu_read_debug(&self, addr: u16) -> u8 {
+        if let Some(ref cartridge) = self.cartridge {
+            if let Some(data) = cartridge.cpu_read(addr) {
+                return data;
+            }
+        }
+        match addr {
+            0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
+            0x2000..=0x3FFF => self.ppu.cpu_read_debug(addr & 0x0007),
+            _ => 0x00,
+        }
+    }
+
     pub fn reset(&mut self) {
         if let Some(ref mut cartridge) = self.cartridge {
             cartridge.reset();
