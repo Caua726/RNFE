@@ -1,0 +1,65 @@
+use crate::cpu6502::Cpu6502;
+use crate::bus::Bus;
+use crate::cartridge::Cartridge;
+
+pub struct Nes {
+    pub cpu: Cpu6502,
+    pub bus: Bus,
+    system_clock_counter: u32,
+}
+
+impl Nes {
+    pub fn new() -> Nes {
+        Nes {
+            cpu: Cpu6502::new(),
+            bus: Bus::new(),
+            system_clock_counter: 0,
+        }
+    }
+
+    pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
+        self.bus.insert_cartridge(cartridge);
+        self.cpu.reset(&mut self.bus);
+    }
+
+    pub fn clock(&mut self) {
+        self.bus.ppu.clock();
+
+        if self.system_clock_counter % 3 == 0 {
+            if self.bus.dma_transfer {
+                if self.bus.dma_dummy {
+                    if self.system_clock_counter % 2 == 1 {
+                        self.bus.dma_dummy = false;
+                    }
+                } else {
+                    if self.system_clock_counter % 2 == 0 {
+                        self.bus.dma_data = self.bus.cpu_read(
+                            (self.bus.dma_page as u16) << 8 | self.bus.dma_addr as u16, false
+                        );
+                    } else {
+                        self.bus.ppu.cpu_write(0x0004, self.bus.dma_data);
+                        self.bus.dma_addr = self.bus.dma_addr.wrapping_add(1);
+                        if self.bus.dma_addr == 0x00 {
+                            self.bus.dma_transfer = false;
+                            self.bus.dma_dummy = true;
+                        }
+                    }
+                }
+            } else {
+                self.cpu.clock(&mut self.bus);
+            }
+        }
+
+        if self.bus.ppu.get_nmi() {
+            self.cpu.nmi(&mut self.bus);
+        }
+
+        self.system_clock_counter += 1;
+    }
+
+    pub fn reset(&mut self) {
+        self.bus.reset();
+        self.cpu.reset(&mut self.bus);
+        self.system_clock_counter = 0;
+    }
+}

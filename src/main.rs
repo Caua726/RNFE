@@ -1,10 +1,40 @@
 mod cpu6502;
 mod bus;
+mod ppu;
+mod cartridge;
 mod display;
-use cpu6502::Cpu6502;
-use bus::Bus;
+mod font;
+mod nes;
 
-fn main() {
-    display::run().unwrap();
-    // This is an a very simple example of an a full NES emulator written in Rust.
+use nes::Nes;
+use cartridge::Cartridge;
+use std::env;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Nenhuma ROM passada, abrindo janela...");
+        display::run()?;
+        return Ok(());
+    }
+
+    let rom_path = &args[1];
+
+    let mut nes = Box::new(Nes::new());
+
+    match Cartridge::new(rom_path) {
+        Ok(cartridge) => {
+            println!("ROM carregada: {}", rom_path);
+            nes.insert_cartridge(cartridge);
+            nes.reset();
+            display::run_with_nes(nes)?
+        },
+        Err(e) => {
+            eprintln!("Erro ao carregar ROM '{}': {}", rom_path, e);
+            display::run()?
+        }
+    }
+
+    Ok(())
 }

@@ -1,6 +1,3 @@
-use crate::bus::Bus;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 // Flags Cpu6502
 pub enum FLAGS6502{
@@ -15,13 +12,12 @@ pub enum FLAGS6502{
 }
 
 pub struct Cpu6502 {
-    bus: Option<Rc<RefCell<Bus>>>,
-    a: u8,          // Acccumulator Register
-    x: u8,          // X Register
-    y: u8,          // Y Register
-    stkp: u8,       // Stack Pointer (mostra os pontos do bus)
-    pc: u16,        // Program Counter
-    status: u8,     // Status Register
+    pub a: u8,          // Acccumulator Register
+    pub x: u8,          // X Register
+    pub y: u8,          // Y Register
+    pub stkp: u8,       // Stack Pointer (mostra os pontos do bus)
+    pub pc: u16,        // Program Counter
+    pub status: u8,     // Status Register
     fetched: u8,    // Nao sei, depois vejo
     temp: u16,      // Variavel temporaria
     addr_abs: u16,  // Endereco Absoluto
@@ -33,16 +29,15 @@ pub struct Cpu6502 {
 
 pub struct Instruction {
     pub name: &'static str,                           // Nome da instrução
-    pub operate: fn(&mut Cpu6502) -> u8,              // Ponteiro para a função de operação
-    pub addrmode: fn(&mut Cpu6502) -> u8,             // Ponteiro para a função de modo de endereçamento
+    pub operate: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
+    pub addrmode: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
     pub cycles: u8,                                   // Ciclos necessários para a instrução
 }
 //Vector<Instruction> lookup
 
 impl Cpu6502 {
     pub fn new() -> Self {
-        Cpu6502 { 
-            bus: None,                      // Barramento
+        Cpu6502 {
             a:0x00,                         // Accumulator
             x:0x00,                         // X Register
             y:0x00,                         // Y Register
@@ -59,10 +54,6 @@ impl Cpu6502 {
         }
     }
 
-    pub fn connect_bus(&mut self, bus: Rc<RefCell<Bus>>) {
-        self.bus = Some(bus);
-    }
-
     pub fn getFlag(&self, flag: FLAGS6502) -> u8 {
         if self.status & flag as u8 != 0 {
             1
@@ -77,21 +68,12 @@ impl Cpu6502 {
             self.status &= !(flag as u8);
         }
     }
-    pub fn read(&self, addr: u16) -> u8 {
-        self.bus
-            .as_ref()
-            .expect("Bus nao conectado")
-            .borrow()
-            .read(addr, false)
-        // self.bus.read(addr, false)
+    pub fn read(&self, bus: &mut crate::bus::Bus, addr: u16) -> u8 {
+        bus.cpu_read(addr, false)
     }
 
-    pub fn write(&mut self, addr: u16, data: u8) {
-        self.bus
-            .as_ref()
-            .expect("Bus nao conectado")
-            .borrow_mut()
-            .write(addr, data);
+    pub fn write(&mut self, bus: &mut crate::bus::Bus, addr: u16, data: u8) {
+        bus.cpu_write(addr, data);
     }
     //==========================
     //# Modos de enderecamento #
@@ -102,15 +84,15 @@ impl Cpu6502 {
     // Ele Faz uma coisa muito simples, como, mudar o estado
     // De Bits, de qualquer jeito, o objetivo dele é
     // O Acumulador, para instrucoes como PHA
-    pub fn IMP(&mut self) -> u8 {
+    pub fn IMP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         0
-    } 
+    }
 
     // IMM: Imediato
     // A instrução espera até o proximo bit para ser usado
     // Como valor, o endereco de leitura deve apontar ao
     // Proximo valor
-    pub fn IMM(&mut self) -> u8 {
+    pub fn IMM(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.addr_abs = self.pc;
         self.pc += 1;
         0
@@ -121,8 +103,8 @@ impl Cpu6502 {
     // Que você salve o local nos primeiros 0xFF bytes
     // De um endereço de memoria, e por isso, isto só
     // Requer um byte de memoria ao invez de 2
-    pub fn ZP0(&mut self) -> u8 {
-        self.addr_abs = self.read(self.pc) as u16;
+    pub fn ZP0(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.addr_abs = self.read(bus, self.pc) as u16;
         self.pc += 1;
         self.addr_abs &= 0x00FF;
         0
@@ -133,16 +115,16 @@ impl Cpu6502 {
     // O endereço de memoria que o valor lido Apontava
     // Isso é util para interagir com areas da memória
     // Como um array em C
-    pub fn ZPX(&mut self) -> u8 {
-        let base = self.read(self.pc) as u8;
+    pub fn ZPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let base = self.read(bus, self.pc) as u8;
         self.pc += 1;
         self.addr_abs = base.wrapping_add(self.x) as u16;
         0
     }
     // ZPY: Zero Paging Y
     // O Mesmo do ZPX mas com Y
-    pub fn ZPY(&mut self) -> u8 {
-        let base = self.read(self.pc) as u8;
+    pub fn ZPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let base = self.read(bus, self.pc) as u8;
         self.pc += 1;
         self.addr_abs = base.wrapping_add(self.y) as u16;
         0
@@ -153,10 +135,10 @@ impl Cpu6502 {
     // Serve para o banco de memoória
     // O segundo para o endereço na
     // Memória para formar um en1dreço de 16 bits
-    pub fn ABS(&mut self) -> u8 {
-        let lo: u16 = self.read(self.pc) as u16;
+    pub fn ABS(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let lo: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let hi: u16 = self.read(self.pc) as u16;
+        let hi: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
 
         self.addr_abs = (hi << 8) | lo;
@@ -167,10 +149,10 @@ impl Cpu6502 {
     // Endereço absoluto com valor X
     // Isto calcula o mesmo que o
     // ABS, mas adiciona o endereço X
-    pub fn ABX(&mut self) -> u8 {
-        let lo: u16 = self.read(self.pc) as u16;
+    pub fn ABX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let lo: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let hi: u16 = self.read(self.pc) as u16;
+        let hi: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
 
         self.addr_abs = (hi << 8) | lo;
@@ -186,10 +168,10 @@ impl Cpu6502 {
     // ABY: Absolute Y
     // O mesmo que o ABX, mas
     // Adiciona o valor Y ao endereço
-    pub fn ABY(&mut self) -> u8 {
-        let lo: u16 = self.read(self.pc) as u16;
+    pub fn ABY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let lo: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let hi: u16 = self.read(self.pc) as u16;
+        let hi: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
 
         self.addr_abs = (hi << 8) | lo;
@@ -209,18 +191,18 @@ impl Cpu6502 {
     // Faz, é, apontar para o endereço 0xFF e ler
     // O byte mais alto, ele precisa atravesar
     // A page boudnary
-    pub fn IND(&mut self) -> u8 {
-        let ptr_lo: u16 = self.read(self.pc) as u16;
+    pub fn IND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let ptr_lo: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let ptr_hi: u16 = self.read(self.pc) as u16;
+        let ptr_hi: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
 
         let ptr: u16 = (ptr_hi << 8) | ptr_lo;
 
         if ptr_lo == 0x00FF {
-            self.addr_abs = ((self.read(ptr & 0xFF00) as u16) << 8) | self.read(ptr) as u16;
+            self.addr_abs = ((self.read(bus, ptr & 0xFF00) as u16) << 8) | self.read(bus, ptr) as u16;
         } else {
-            self.addr_abs = ((self.read(ptr + 1) as u16) << 8) | self.read(ptr) as u16;
+            self.addr_abs = ((self.read(bus, ptr + 1) as u16) << 8) | self.read(bus, ptr) as u16;
         }
         0
     }
@@ -228,11 +210,11 @@ impl Cpu6502 {
     // Ele referencia um endereço na memória pagina
     // Zero a partir do offset X para ler o endereço
     // De 16 bits que precisamos para a instrução
-    pub fn IZX(&mut self) -> u8 {
-        let t: u16 = self.read(self.pc) as u16;
+    pub fn IZX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let t: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let lo: u16 = self.read((t + (self.x  as u16)) & 0x00FF) as u16;
-        let hi: u16 = self.read((t + (self.x as u16) + 1) & 0x00FF) as u16;
+        let lo: u16 = self.read(bus, (t + (self.x  as u16)) & 0x00FF) as u16;
+        let hi: u16 = self.read(bus, (t + (self.x as u16) + 1) & 0x00FF) as u16;
 
         self.addr_abs = (hi << 8 | lo);
 
@@ -243,11 +225,11 @@ impl Cpu6502 {
     // O X !== Y, neste caso ele lê um ponteiro de 16 bits
     // Da pagina zero e usa o offset Y para formar um
     // Endereço final.
-    pub fn IZY(&mut self) -> u8 {
-        let t: u16 = self.read(self.pc) as u16;
+    pub fn IZY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        let t: u16 = self.read(bus, self.pc) as u16;
         self.pc += 1;
-        let lo: u16 = self.read(t & 0x00FF) as u16;
-        let hi: u16 = self.read((t + 1) & 0x00FF) as u16;
+        let lo: u16 = self.read(bus, t & 0x00FF) as u16;
+        let hi: u16 = self.read(bus, (t + 1) & 0x00FF) as u16;
 
         let base = ((hi << 8) | lo) as u16;
         self.addr_abs = base.wrapping_add(self.y as u16);
@@ -268,8 +250,8 @@ impl Cpu6502 {
     // Acessar um endereço relativo ao endereço atual
     // Num range de 127 localizações, pois é um endereço
     // Relativo, diferente dos demais
-    pub fn REL(&mut self) -> u8 {
-        self.addr_rel = self.read(self.pc) as u16;
+    pub fn REL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.addr_rel = self.read(bus, self.pc) as u16;
         self.pc += 1;
         if (self.addr_rel & 0x80) != 0 {
             self.addr_rel |= 0xFF00;
@@ -277,7 +259,7 @@ impl Cpu6502 {
         0
     }
 
-    pub fn ACC(&mut self) -> u8 {
+    pub fn ACC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         0
     }
     //==========================//
@@ -285,22 +267,22 @@ impl Cpu6502 {
     //==========================//
 
     // Fetch
-    pub fn fetch(&mut self) -> u8 {
+    pub fn fetch(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let idx = self.opcode as usize;
         let am = self.lookup[idx].addrmode as usize;
     
         if am == Cpu6502::ACC as usize {
             self.fetched = self.a;
         } else if am != Cpu6502::IMP as usize {
-            self.fetched = self.read(self.addr_abs);
+            self.fetched = self.read(bus, self.addr_abs);
         }
         self.fetched
     }
     
 
     // AND: And
-    pub fn AND(&mut self) -> u8 {
-        self.fetch();
+    pub fn AND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         self.a = self.a & self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
@@ -309,10 +291,10 @@ impl Cpu6502 {
     }
 
     // BCS: Branch Carry Set
-    pub fn BCS(&mut self) -> u8 {
+    pub fn BCS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::C) == 1 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
 
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
@@ -323,10 +305,10 @@ impl Cpu6502 {
     }
     
     // BCC: Branch Carry Clear
-    pub fn BCC(&mut self) -> u8 {
+    pub fn BCC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::C) == 0 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -336,10 +318,10 @@ impl Cpu6502 {
     }
 
     // BEQ: Branch Equal
-    pub fn BEQ(&mut self) -> u8 {
+    pub fn BEQ(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::Z) == 1 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -349,10 +331,10 @@ impl Cpu6502 {
     }
 
     // BMI: Branch Minus
-    pub fn BMI(&mut self) -> u8 {
+    pub fn BMI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::N) == 1 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -362,10 +344,10 @@ impl Cpu6502 {
     }
 
     // BME: Branch Not Equal
-    pub fn BNE(&mut self) -> u8 {
+    pub fn BNE(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::Z) == 0 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -375,10 +357,10 @@ impl Cpu6502 {
     }
 
     // BPL: Branch Plus
-    pub fn BPL(&mut self) -> u8 {
+    pub fn BPL(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::N) == 0 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -388,10 +370,10 @@ impl Cpu6502 {
     }
 
     // BVC: Branch Overflow
-    pub fn BVC(&mut self) -> u8 {
+    pub fn BVC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::V) == 0 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -401,10 +383,10 @@ impl Cpu6502 {
     }
 
     // BVS: Branch Not Overflow
-    pub fn BVS(&mut self) -> u8 {
+    pub fn BVS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::V) == 1 {
             self.cycles += 1;
-            self.addr_abs = self.pc + self.addr_rel;
+            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
                 self.cycles += 1;
             }
@@ -414,24 +396,24 @@ impl Cpu6502 {
     }
 
     // CLC: Clear Carry Bit
-    pub fn CLC(&mut self) -> u8 {
+    pub fn CLC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.setFlag(FLAGS6502::C, false);
         return 0;
     }
     // CLD: Clear Decimal Mode
-    pub fn CLD(&mut self) -> u8 {
+    pub fn CLD(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.setFlag(FLAGS6502::D, false);
         0
     }
 
     // CLI: Clear Interrupt Disable
-    pub fn CLI(&mut self) -> u8 {
+    pub fn CLI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.setFlag(FLAGS6502::I, false);
         0
     }
 
     // CLV: Clear Overflow Flag
-    pub fn CLV(&mut self) -> u8 {
+    pub fn CLV(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.setFlag(FLAGS6502::V, false);
         0
     }
@@ -439,8 +421,8 @@ impl Cpu6502 {
     // CMP: Compare Accumulator
     // Function: Compare A with fetched value
     // Flags Out: C, Z, N
-    pub fn CMP(&mut self) -> u8 {
-        self.fetch();
+    pub fn CMP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         self.temp = (self.a as u16).wrapping_sub(self.fetched as u16);
         self.setFlag(FLAGS6502::C, self.a >= self.fetched);
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
@@ -451,8 +433,8 @@ impl Cpu6502 {
     // CPX: Compare X Register
     // Function: Compare X with fetched value
     // Flags Out: C, Z, N
-    pub fn CPX(&mut self) -> u8 {
-        self.fetch();
+    pub fn CPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         self.temp = (self.x as u16).wrapping_sub(self.fetched as u16);
         self.setFlag(FLAGS6502::C, self.x >= self.fetched);
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
@@ -463,8 +445,8 @@ impl Cpu6502 {
     // CPY: Compare Y Register
     // Function: Compare Y with fetched value
     // Flags Out: C, Z, N
-    pub fn CPY(&mut self) -> u8 {
-        self.fetch();
+    pub fn CPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         self.temp = (self.y as u16).wrapping_sub(self.fetched as u16);
         self.setFlag(FLAGS6502::C, self.y >= self.fetched);
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
@@ -475,8 +457,8 @@ impl Cpu6502 {
     // ADC: Add with Carry
     // Function: Add memory value to accumulator with carry
     // Flags Out: C, Z, V, N
-    pub fn ADC(&mut self) -> u8 {
-        self.fetch();
+    pub fn ADC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         self.temp = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
     
         self.setFlag(FLAGS6502::C, self.temp > 0x00FF);
@@ -499,8 +481,8 @@ impl Cpu6502 {
     // SBC: Subtract with Carry
     // Subtrai um valor da memoria com o acumulador
     // Flags Out: C, Z, V, N
-    pub fn SBC(&mut self) -> u8 {
-        self.fetch();
+    pub fn SBC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
         let value = (self.fetched as u16) ^ 0x00FF;
         let temp = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
     
@@ -522,33 +504,33 @@ impl Cpu6502 {
     
     // PHA: Push Accumulator
     // Funcão: Coloca o valor do acumulador no stack
-    pub fn PHA(&mut self) -> u8 {
-        self.write(0x100 + self.stkp as u16, self.a);
+    pub fn PHA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.write(bus, 0x100 + self.stkp as u16, self.a);
         self.stkp -= 1;
         0
     }
 
     // PLA: Pull Accumulator
     // Funcão: Pega o valor do stack e coloca no acumulador
-    pub fn PLA(&mut self) -> u8 {
+    pub fn PLA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.stkp += 1;
-        self.a = self.read(0x100 + self.stkp as u16);
+        self.a = self.read(bus, 0x100 + self.stkp as u16);
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
         0
     }
     
     // RTI: Return from Interrupt
-    pub fn RTI(&mut self) -> u8 {
+    pub fn RTI(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.stkp = self.stkp.wrapping_add(1);
-        self.status = self.read(0x0100 + self.stkp as u16);
+        self.status = self.read(bus, 0x0100 + self.stkp as u16);
         self.status &= !(FLAGS6502::B as u8);
         self.status |=  (FLAGS6502::U as u8);
     
         self.stkp = self.stkp.wrapping_add(1);
-        let lo = self.read(0x0100 + self.stkp as u16) as u16;
+        let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
         self.stkp = self.stkp.wrapping_add(1);
-        let hi = self.read(0x0100 + self.stkp as u16) as u16;
+        let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
     
         self.pc = (hi << 8) | lo;
         0
@@ -557,47 +539,337 @@ impl Cpu6502 {
     //===========================================//
     //#         Opcodes Nao Implementados       #//
     //===========================================//
-    pub fn ASL(&mut self) -> u8 {0}
-    pub fn BIT(&mut self) -> u8 {0}
-    pub fn BRK(&mut self) -> u8 {0}
-    pub fn DEC(&mut self) -> u8 {0}
-    pub fn DEX(&mut self) -> u8 {0}
-    pub fn DEY(&mut self) -> u8 {0}
-    pub fn EOR(&mut self) -> u8 {0}
-    pub fn INC(&mut self) -> u8 {0}
-    pub fn INX(&mut self) -> u8 {0}
-    pub fn INY(&mut self) -> u8 {0}
-    pub fn JMP(&mut self) -> u8 {0}
-    pub fn JSR(&mut self) -> u8 {0}
-    pub fn LDA(&mut self) -> u8 {0}
-    pub fn LDX(&mut self) -> u8 {0}
-    pub fn LDY(&mut self) -> u8 {0}
-    pub fn LSR(&mut self) -> u8 {0}
-    pub fn NOP(&mut self) -> u8 {0}
-    pub fn ORA(&mut self) -> u8 {0}
-    pub fn PHP(&mut self) -> u8 {0}
-    pub fn ROL(&mut self) -> u8 {0}
-    pub fn PLP(&mut self) -> u8 {0}
-    pub fn SEC(&mut self) -> u8 {0}
-    pub fn RTS(&mut self) -> u8 {0}
-    pub fn SEI(&mut self) -> u8 {0}
-    pub fn ROR(&mut self) -> u8 {0}
-    pub fn STA(&mut self) -> u8 {0}
-    pub fn STY(&mut self) -> u8 {0}
-    pub fn STX(&mut self) -> u8 {0}
-    pub fn TXS(&mut self) -> u8 {0}
-    pub fn TAY(&mut self) -> u8 {0}
-    pub fn TAX(&mut self) -> u8 {0}
-    pub fn TXA(&mut self) -> u8 {0}
-    pub fn TYA(&mut self) -> u8 {0}
-    pub fn TSX(&mut self) -> u8 {0}
-    pub fn SED(&mut self) -> u8 {0}
-    pub fn XXX(&mut self) -> u8 {0}   // Nao Implementado
+    // ASL: Arithmetic Shift Left
+    pub fn ASL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = (self.fetched as u16) << 1;
+        self.setFlag(FLAGS6502::C, temp > 0x00FF);
+        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+            self.a = (temp & 0x00FF) as u8;
+        } else {
+            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
+        }
+        0
+    }
+
+    // BIT: Bit Test
+    pub fn BIT(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = self.a & self.fetched;
+        self.setFlag(FLAGS6502::Z, temp == 0);
+        self.setFlag(FLAGS6502::N, (self.fetched & 0x80) != 0);
+        self.setFlag(FLAGS6502::V, (self.fetched & 0x40) != 0);
+        0
+    }
+
+    // BRK: Force Interrupt
+    pub fn BRK(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.pc += 1;
+        
+        self.setFlag(FLAGS6502::I, true);
+        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        
+        self.setFlag(FLAGS6502::B, true);
+        self.write(bus, 0x0100 + self.stkp as u16, self.status);
+        self.stkp = self.stkp.wrapping_sub(1);
+        
+        let lo = self.read(bus, 0xFFFE) as u16;
+        let hi = self.read(bus, 0xFFFF) as u16;
+        self.pc = (hi << 8) | lo;
+        0
+    }
+
+    // DEC: Decrement Memory
+    pub fn DEC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = self.fetched.wrapping_sub(1);
+        self.write(bus, self.addr_abs, temp);
+        self.setFlag(FLAGS6502::Z, temp == 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
+        0
+    }
+
+    // DEX: Decrement X Register
+    pub fn DEX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.x = self.x.wrapping_sub(1);
+        self.setFlag(FLAGS6502::Z, self.x == 0);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+
+    // DEY: Decrement Y Register
+    pub fn DEY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.y = self.y.wrapping_sub(1);
+        self.setFlag(FLAGS6502::Z, self.y == 0);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+
+    // EOR: Exclusive OR
+    pub fn EOR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.a = self.a ^ self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+
+    // INC: Increment Memory
+    pub fn INC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = self.fetched.wrapping_add(1);
+        self.write(bus, self.addr_abs, temp);
+        self.setFlag(FLAGS6502::Z, temp == 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
+        0
+    }
+
+    // INX: Increment X Register
+    pub fn INX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.x = self.x.wrapping_add(1);
+        self.setFlag(FLAGS6502::Z, self.x == 0);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+
+    // INY: Increment Y Register
+    pub fn INY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.y = self.y.wrapping_add(1);
+        self.setFlag(FLAGS6502::Z, self.y == 0);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+
+    // JMP: Jump
+    pub fn JMP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.pc = self.addr_abs;
+        0
+    }
+
+    // JSR: Jump to Subroutine
+    pub fn JSR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.pc = self.pc.wrapping_sub(1);
+        
+        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        
+        self.pc = self.addr_abs;
+        0
+    }
+
+    // LDA: Load Accumulator
+    pub fn LDA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.a = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+
+    // LDX: Load X Register
+    pub fn LDX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.x = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.x == 0);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        1
+    }
+
+    // LDY: Load Y Register
+    pub fn LDY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.y = self.fetched;
+        self.setFlag(FLAGS6502::Z, self.y == 0);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        1
+    }
+
+    // LSR: Logical Shift Right
+    pub fn LSR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x0001) != 0);
+        let temp = self.fetched >> 1;
+        self.setFlag(FLAGS6502::Z, temp == 0);
+        self.setFlag(FLAGS6502::N, false);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+            self.a = temp;
+        } else {
+            self.write(bus, self.addr_abs, temp);
+        }
+        0
+    }
+
+    // NOP: No Operation
+    pub fn NOP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        match self.opcode {
+            0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => 1,
+            _ => 0
+        }
+    }
+
+    // ORA: Logical Inclusive OR
+    pub fn ORA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        self.a = self.a | self.fetched;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        1
+    }
+
+    // PHP: Push Processor Status
+    pub fn PHP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.write(bus, 0x0100 + self.stkp as u16, self.status | FLAGS6502::B as u8 | FLAGS6502::U as u8);
+        self.stkp = self.stkp.wrapping_sub(1);
+        0
+    }
+
+    // PLP: Pull Processor Status
+    pub fn PLP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.stkp = self.stkp.wrapping_add(1);
+        self.status = self.read(bus, 0x0100 + self.stkp as u16);
+        self.setFlag(FLAGS6502::U, true);
+        self.setFlag(FLAGS6502::B, false);
+        0
+    }
+
+    // ROL: Rotate Left
+    pub fn ROL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = ((self.fetched as u16) << 1) | (self.getFlag(FLAGS6502::C) as u16);
+        self.setFlag(FLAGS6502::C, temp > 0x00FF);
+        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+            self.a = (temp & 0x00FF) as u8;
+        } else {
+            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
+        }
+        0
+    }
+
+    // ROR: Rotate Right
+    pub fn ROR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.fetch(bus);
+        let temp = ((self.getFlag(FLAGS6502::C) as u16) << 7) | (self.fetched as u16 >> 1);
+        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
+        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
+        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+            self.a = (temp & 0x00FF) as u8;
+        } else {
+            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
+        }
+        0
+    }
+
+    // RTS: Return from Subroutine
+    pub fn RTS(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.stkp = self.stkp.wrapping_add(1);
+        let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
+        self.stkp = self.stkp.wrapping_add(1);
+        let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
+        
+        self.pc = (hi << 8) | lo;
+        self.pc = self.pc.wrapping_add(1);
+        0
+    }
+
+    // SEC: Set Carry Flag
+    pub fn SEC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.setFlag(FLAGS6502::C, true);
+        0
+    }
+
+    // SED: Set Decimal Mode
+    pub fn SED(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.setFlag(FLAGS6502::D, true);
+        0
+    }
+
+    // SEI: Set Interrupt Disable
+    pub fn SEI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.setFlag(FLAGS6502::I, true);
+        0
+    }
+
+    // STA: Store Accumulator
+    pub fn STA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.write(bus, self.addr_abs, self.a);
+        0
+    }
+
+    // STX: Store X Register
+    pub fn STX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.write(bus, self.addr_abs, self.x);
+        0
+    }
+
+    // STY: Store Y Register
+    pub fn STY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+        self.write(bus, self.addr_abs, self.y);
+        0
+    }
+
+    // TAX: Transfer Accumulator to X
+    pub fn TAX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.x = self.a;
+        self.setFlag(FLAGS6502::Z, self.x == 0);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+
+    // TAY: Transfer Accumulator to Y
+    pub fn TAY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.y = self.a;
+        self.setFlag(FLAGS6502::Z, self.y == 0);
+        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
+        0
+    }
+
+    // TSX: Transfer Stack Pointer to X
+    pub fn TSX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.x = self.stkp;
+        self.setFlag(FLAGS6502::Z, self.x == 0);
+        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
+        0
+    }
+
+    // TXA: Transfer X to Accumulator
+    pub fn TXA(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.a = self.x;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+
+    // TXS: Transfer X to Stack Pointer
+    pub fn TXS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.stkp = self.x;
+        0
+    }
+
+    // TYA: Transfer Y to Accumulator
+    pub fn TYA(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        self.a = self.y;
+        self.setFlag(FLAGS6502::Z, self.a == 0);
+        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
+        0
+    }
+
+    // XXX: Illegal Opcode
+    pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {0}
 
     // Clock
-    pub fn clock(&mut self) {
+    pub fn clock(&mut self, bus: &mut crate::bus::Bus) {
         if self.cycles == 0 {
-            self.opcode = self.read(self.pc);
+            self.opcode = self.read(bus, self.pc);
             self.pc = self.pc.wrapping_add(1); // só +1
     
             let (addrmode, operate, base_cycles) = {
@@ -606,8 +878,8 @@ impl Cpu6502 {
             };
     
             self.cycles = base_cycles;
-            let cycle0 = addrmode(self);
-            let cycle1 = operate(self);
+            let cycle0 = addrmode(self, bus);
+            let cycle1 = operate(self, bus);
             self.cycles = self.cycles.wrapping_add((cycle0 & cycle1) as u8);
         }
         self.cycles = self.cycles.wrapping_sub(1);
@@ -615,7 +887,7 @@ impl Cpu6502 {
     
     
     // Reset
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, bus: &mut crate::bus::Bus) {
         self.a = 0;
         self.x = 0;
         self.y = 0;
@@ -623,8 +895,8 @@ impl Cpu6502 {
         self.status = 0x00 | FLAGS6502::U as u8;
         
         self.addr_abs = 0xFFFC;
-        let lo = self.read(self.addr_abs + 0);
-        let hi = self.read(self.addr_abs + 1);
+        let lo = self.read(bus, self.addr_abs + 0);
+        let hi = self.read(bus, self.addr_abs + 1);
 
         self.pc = ((hi as u16) << 8) | (lo as u16);
 
@@ -635,44 +907,44 @@ impl Cpu6502 {
         self.cycles = 8;
     }
     // Interruptiuon Request
-    pub fn irq(&mut self) {
+    pub fn irq(&mut self, bus: &mut crate::bus::Bus) {
         if self.getFlag(FLAGS6502::I) == 0 {
             // push PC
-            self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+            self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
             self.stkp = self.stkp.wrapping_sub(1);
-            self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+            self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
             self.stkp = self.stkp.wrapping_sub(1);
     
             // push status (B=0, U=1) e seta I
             self.setFlag(FLAGS6502::B, false);
             self.setFlag(FLAGS6502::U, true);
             self.setFlag(FLAGS6502::I, true);
-            self.write(0x0100 + self.stkp as u16, self.status);
+            self.write(bus, 0x0100 + self.stkp as u16, self.status);
             self.stkp = self.stkp.wrapping_sub(1);
     
             // vetor IRQ
-            let lo = self.read(0xFFFE) as u16;
-            let hi = self.read(0xFFFF) as u16;
+            let lo = self.read(bus, 0xFFFE) as u16;
+            let hi = self.read(bus, 0xFFFF) as u16;
             self.pc = (hi << 8) | lo;
     
             self.cycles = 7;
         }
     }
     
-    pub fn nmi(&mut self) {
-        self.write(0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
+    pub fn nmi(&mut self, bus: &mut crate::bus::Bus) {
+        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
-        self.write(0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
+        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
     
         self.setFlag(FLAGS6502::B, false);
         self.setFlag(FLAGS6502::U, true);
         self.setFlag(FLAGS6502::I, true);
-        self.write(0x0100 + self.stkp as u16, self.status);
+        self.write(bus, 0x0100 + self.stkp as u16, self.status);
         self.stkp = self.stkp.wrapping_sub(1);
     
-        let lo = self.read(0xFFFA) as u16;
-        let hi = self.read(0xFFFB) as u16;
+        let lo = self.read(bus, 0xFFFA) as u16;
+        let hi = self.read(bus, 0xFFFB) as u16;
         self.pc = (hi << 8) | lo;
     
         self.cycles = 8;
