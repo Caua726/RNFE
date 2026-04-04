@@ -302,6 +302,11 @@ impl Ppu {
         let addr = addr & 0x3FFF;
 
         if addr <= 0x1FFF {
+            // Escrever no cartridge CHR RAM se disponível
+            if let Some(cart) = self.cart_ptr {
+                unsafe { (*cart).ppu_write_chr(addr, data); }
+            }
+            // Também escrever no pattern_table local (fallback)
             self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize] = data;
         } else if addr >= 0x2000 && addr <= 0x3EFF {
             let (nt, offset) = self.mirror_nametable(addr);

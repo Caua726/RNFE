@@ -34,6 +34,9 @@ pub struct Cartridge {
     colordreams_prg_bank: u8,
     colordreams_chr_bank: u8,
 
+    // PRG RAM (8KB, usado por MMC1, MMC3, etc)
+    prg_ram: Vec<u8>,
+
     // MMC3 state
     mmc3_bank_select: u8,
     mmc3_prg_banks: [u8; 4],
@@ -142,6 +145,8 @@ impl Cartridge {
             mirror,
             
             // MMC1
+            prg_ram: vec![0; 8192],
+
             mmc1_shift: 0x10,
             mmc1_shift_count: 0,
             mmc1_control: 0x0C, // PRG 16KB mode, fix last bank
@@ -301,6 +306,16 @@ impl Cartridge {
         self.mirror
     }
 
+    pub fn ppu_write_chr(&mut self, addr: u16, data: u8) {
+        if addr <= 0x1FFF && self.chr_banks == 0 {
+            // CHR RAM - escreve direto
+            let idx = addr as usize;
+            if idx < self.chr_memory.len() {
+                self.chr_memory[idx] = data;
+            }
+        }
+    }
+
     pub fn get_chr_data(&self) -> &[u8] {
         &self.chr_memory
     }
@@ -427,14 +442,17 @@ impl Cartridge {
                 Some(0)
             }
         } else if addr >= 0x6000 {
-            // PRG RAM (not implemented, return 0)
-            Some(0)
+            Some(self.prg_ram[(addr - 0x6000) as usize])
         } else {
             None
         }
     }
 
     fn mapper_001_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x6000 && addr < 0x8000 {
+            self.prg_ram[(addr - 0x6000) as usize] = data;
+            return true;
+        }
         if addr >= 0x8000 {
             if data & 0x80 != 0 {
                 // Reset shift register
@@ -669,7 +687,10 @@ impl Cartridge {
     
     // MMC3 (Mapper 4) implementation
     fn mapper_004_cpu_read(&self, addr: u16) -> Option<u8> {
-        if addr >= 0x8000 && addr <= 0xFFFF {
+        if addr >= 0x6000 && addr < 0x8000 {
+            return Some(self.prg_ram[(addr - 0x6000) as usize]);
+        }
+        if addr >= 0x8000 {
             let bank = match addr {
                 0x8000..=0x9FFF => self.mmc3_prg_banks[0],
                 0xA000..=0xBFFF => self.mmc3_prg_banks[1], 
@@ -690,6 +711,10 @@ impl Cartridge {
     }
     
     fn mapper_004_cpu_write(&mut self, addr: u16, data: u8) -> bool {
+        if addr >= 0x6000 && addr < 0x8000 {
+            self.prg_ram[(addr - 0x6000) as usize] = data;
+            return true;
+        }
         match addr {
             0x8000..=0x9FFF => {
                 if addr % 2 == 0 {
