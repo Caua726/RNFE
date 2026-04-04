@@ -501,26 +501,26 @@ impl App {
             let size = (mw * mh * 4) as usize;
             self.menu_fb.resize(size, 0);
 
-            // Fundo
+            // Fundo escuro
             for i in 0..(mw * mh) as usize {
                 let idx = i * 4;
-                self.menu_fb[idx] = 18;
-                self.menu_fb[idx + 1] = 18;
-                self.menu_fb[idx + 2] = 28;
+                self.menu_fb[idx] = 12;
+                self.menu_fb[idx + 1] = 12;
+                self.menu_fb[idx + 2] = 16;
                 self.menu_fb[idx + 3] = 255;
             }
 
             let cx = mw as i32 / 2;
-            let title_y = (mh as f32 * 0.25) as i32;
+            let title_y = (mh as f32 * 0.28) as i32;
 
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 64.0, title_y, [255, 255, 255, 255]);
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 18.0, title_y + 70, [120, 120, 120, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 56.0, title_y, [220, 220, 220, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 16.0, title_y + 65, [80, 80, 80, 255]);
 
             let btn_y = (mh as f32 * 0.55) as i32;
-            self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 20.0, cx, btn_y,
-                [255, 255, 255, 255], [50, 90, 170, 255]);
+            self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
+                [180, 180, 180, 255], [80, 80, 80, 255]);
 
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "or press O", 14.0, btn_y + 40, [80, 80, 80, 255]);
+            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
 
             gpu.render_menu(&self.menu_fb);
             return;

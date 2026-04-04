@@ -55,27 +55,49 @@ impl Ui {
         w
     }
 
-    // Retângulo com cantos arredondados simples
-    pub fn draw_button(&self, fb: &mut [u8], w: u32, h: u32, text: &str, size: f32, cx: i32, cy: i32, color: [u8; 4], bg: [u8; 4]) {
+    pub fn draw_button(&self, fb: &mut [u8], w: u32, h: u32, text: &str, size: f32, cx: i32, cy: i32, color: [u8; 4], border: [u8; 4]) {
         let tw = self.text_width(text, size);
-        let pad_x = 16;
-        let pad_y = 6;
+        let pad_x = 20;
+        let pad_y = 10;
         let bw = tw + pad_x * 2;
         let bh = size as i32 + pad_y * 2;
         let bx = cx - bw / 2;
         let by = cy - bh / 2;
+        let w_i = w as i32;
+        let h_i = h as i32;
 
-        // Fundo do botão
-        for py in by..by + bh {
-            for px in bx..bx + bw {
-                if px >= 0 && py >= 0 && px < w as i32 && py < h as i32 {
+        // Só bordas, sem preenchimento
+        for px in bx..bx + bw {
+            // Borda superior e inferior
+            for t in 0..1 {
+                let py = by + t;
+                if px >= 0 && py >= 0 && px < w_i && py < h_i {
                     let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    fb[idx..idx + 4].copy_from_slice(&bg);
+                    fb[idx..idx + 4].copy_from_slice(&border);
+                }
+                let py = by + bh - 1 + t;
+                if px >= 0 && py >= 0 && px < w_i && py < h_i {
+                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
+                    fb[idx..idx + 4].copy_from_slice(&border);
+                }
+            }
+        }
+        for py in by..by + bh {
+            // Borda esquerda e direita
+            for t in 0..1 {
+                let px = bx + t;
+                if px >= 0 && py >= 0 && px < w_i && py < h_i {
+                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
+                    fb[idx..idx + 4].copy_from_slice(&border);
+                }
+                let px = bx + bw - 1 + t;
+                if px >= 0 && py >= 0 && px < w_i && py < h_i {
+                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
+                    fb[idx..idx + 4].copy_from_slice(&border);
                 }
             }
         }
 
-        // Texto centralizado no botão
         let tx = cx - tw / 2;
         let ty = by + pad_y;
         self.draw_text(fb, w, h, text, size, tx, ty, color);
@@ -84,8 +106,8 @@ impl Ui {
     // Retorna (x, y, w, h) do botão pra hit testing
     pub fn button_rect(&self, text: &str, size: f32, cx: i32, cy: i32) -> (i32, i32, i32, i32) {
         let tw = self.text_width(text, size);
-        let pad_x = 16;
-        let pad_y = 6;
+        let pad_x = 20;
+        let pad_y = 10;
         let bw = tw + pad_x * 2;
         let bh = size as i32 + pad_y * 2;
         (cx - bw / 2, cy - bh / 2, bw, bh)
