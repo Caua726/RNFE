@@ -546,7 +546,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
@@ -698,7 +698,7 @@ impl Cpu6502 {
         let temp = self.fetched >> 1;
         self.setFlag(FLAGS6502::Z, temp == 0);
         self.setFlag(FLAGS6502::N, false);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
             self.a = temp;
         } else {
             self.write(bus, self.addr_abs, temp);
@@ -746,7 +746,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
@@ -761,7 +761,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::IMP as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);

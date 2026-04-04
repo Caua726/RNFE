@@ -14,6 +14,7 @@ pub struct Bus {
     // Bits: A B Select Start Up Down Left Right
     pub controller: [u8; 2],
     controller_state: [u8; 2],
+    controller_strobe: bool,
 }
 
 impl Bus {
@@ -29,6 +30,7 @@ impl Bus {
             dma_dummy: true,
             controller: [0; 2],
             controller_state: [0; 2],
+            controller_strobe: false,
         }
     }
 
@@ -59,9 +61,16 @@ impl Bus {
                 self.dma_transfer = true;
             },
             0x4016 => {
-                // Strobe - snapshot do estado atual dos controllers
-                self.controller_state[0] = self.controller[0];
-                self.controller_state[1] = self.controller[1];
+                if data & 0x01 != 0 {
+                    self.controller_strobe = true;
+                } else {
+                    if self.controller_strobe {
+                        // Snapshot quando strobe desliga
+                        self.controller_state[0] = self.controller[0];
+                        self.controller_state[1] = self.controller[1];
+                    }
+                    self.controller_strobe = false;
+                }
             },
             _ => {}
         }
@@ -83,15 +92,23 @@ impl Bus {
             },
             0x4000..=0x4013 | 0x4015 => 0x00,
             0x4016 => {
-                // Ler bit mais significativo e shiftar
-                let data = (self.controller_state[0] & 0x80) >> 7;
-                self.controller_state[0] <<= 1;
-                data
+                if self.controller_strobe {
+                    // Durante strobe, retorna estado do botão A
+                    self.controller[0] >> 7
+                } else {
+                    let data = (self.controller_state[0] & 0x80) >> 7;
+                    self.controller_state[0] <<= 1;
+                    data
+                }
             },
             0x4017 => {
-                let data = (self.controller_state[1] & 0x80) >> 7;
-                self.controller_state[1] <<= 1;
-                data
+                if self.controller_strobe {
+                    self.controller[1] >> 7
+                } else {
+                    let data = (self.controller_state[1] & 0x80) >> 7;
+                    self.controller_state[1] <<= 1;
+                    data
+                }
             },
             _ => 0x00,
         }
@@ -114,5 +131,6 @@ impl Bus {
         self.dma_dummy = true;
         self.controller = [0; 2];
         self.controller_state = [0; 2];
+        self.controller_strobe = false;
     }
 }

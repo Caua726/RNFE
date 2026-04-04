@@ -139,8 +139,10 @@ impl Ppu {
                     data = self.ppu_data_buffer;
                     self.ppu_data_buffer = self.ppu_read_internal(self.vram_addr);
 
+                    // Paletas retornam imediatamente, buffer recebe o nametable abaixo
                     if self.vram_addr >= 0x3F00 {
                         data = self.ppu_data_buffer;
+                        self.ppu_data_buffer = self.ppu_read_internal(self.vram_addr - 0x1000);
                     }
 
                     if (self.control & 0x04) != 0 {
@@ -159,9 +161,13 @@ impl Ppu {
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
         match addr {
             0x0000 => {
+                let old_nmi = self.control & 0x80;
                 self.control = data;
-                // Nametable select bits go into t
                 self.tram_addr = (self.tram_addr & 0xF3FF) | ((data as u16 & 0x03) << 10);
+                // Se NMI foi habilitado e vblank tá ativo, disparar NMI
+                if old_nmi == 0 && (data & 0x80) != 0 && (self.status & 0x80) != 0 {
+                    self.nmi = true;
+                }
             },
             0x0001 => {
                 self.mask = data;
@@ -172,6 +178,7 @@ impl Ppu {
             },
             0x0004 => {
                 self.oam[self.oam_addr as usize] = data;
+                self.oam_addr = self.oam_addr.wrapping_add(1);
             },
             0x0005 => {
                 if self.address_latch == 0 {
@@ -296,10 +303,14 @@ impl Ppu {
                 self.cycle = 1;
             }
 
-            if (self.scanline == -1 && self.cycle == 1) {
-                self.status &= 0x7F;
-                self.status &= 0xDF;
-                self.status &= 0xEF;
+            if self.scanline == -1 && self.cycle == 1 {
+                // Limpar vblank, sprite overflow, sprite zero hit
+                self.status &= !(0x80 | 0x40 | 0x20);
+                // Limpar sprite shifters
+                for i in 0..8 {
+                    self.sprite_shifter_pattern_lo[i] = 0;
+                    self.sprite_shifter_pattern_hi[i] = 0;
+                }
             }
 
             if (self.cycle >= 2 && self.cycle < 258) || (self.cycle >= 321 && self.cycle < 338) {
@@ -356,7 +367,7 @@ impl Ppu {
 
                 let mut oam_entry = 0;
                 while oam_entry < 64 && self.sprite_count < 9 {
-                    let diff = self.scanline - self.oam[(oam_entry * 4) as usize] as i16;
+                    let diff = self.scanline as i16 - self.oam[(oam_entry * 4) as usize] as i16;
                     if diff >= 0 && diff < if (self.control & 0x20) != 0 { 16 } else { 8 } && self.sprite_count < 8 {
                         if self.sprite_count < 8 {
                             if oam_entry == 0 {
