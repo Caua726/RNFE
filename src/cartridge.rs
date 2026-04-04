@@ -603,36 +603,31 @@ impl Cartridge {
     }
 
     // Mapper 227 (multicart chinês)
-    // Mapper 227 (multicart chinês)
-    // Registro = endereço escrito em $8000+
-    // A0: mirroring (0=vert, 1=horiz)
-    // A1: "last bank" flag - se 1, $C000-$FFFF mapeia o ultimo 16KB
-    // A2-A6: PRG bank number (5 bits)
-    // A7: mode (0=32KB, 1=16KB)
+    // Mapper 227 (multicart chinês) - encoding FCEUX
+    // A0: mirroring
+    // A2-A6 + A8: PRG bank (6 bits: A2-A6 = low 5, A8 = bit 5)
+    // A7: mode (0=32K, 1=16K)
+    // A9: L flag (32K mode: 0=mirrored, 1=split odd/even)
     fn mapper_227_cpu_read(&self, addr: u16) -> Option<u8> {
         if addr >= 0x8000 {
             let reg = self.m227_reg;
-            let prg_bank = ((reg >> 2) & 0x1F) as usize;
+            let p = (((reg >> 2) & 0x1F) | ((reg & 0x100) >> 3)) as usize;
             let mode_16k = (reg >> 7) & 1;
-            let last_flag = (reg >> 1) & 1;
+            let l = (reg >> 9) & 1;
 
             let offset = if mode_16k != 0 {
+                // 16K mode: $8000 = $C000 = bank p
+                p * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
+            } else if l != 0 {
+                // 32K mode split: $8000 = p&0x3E (even), $C000 = p|1 (odd)
                 if addr >= 0xC000 {
-                    // 16KB mode: $C000 = last bank
-                    let last = self.prg_memory.len() - 0x4000;
-                    last + (addr as usize - 0xC000)
+                    (p | 1) * 0x4000 + (addr as usize - 0xC000)
                 } else {
-                    // $8000 = selected bank
-                    prg_bank * 0x4000 + (addr as usize - 0x8000)
+                    (p & 0x3E) * 0x4000 + (addr as usize - 0x8000)
                 }
             } else {
-                // 32KB mode: $8000 = selected 16KB bank, $C000 = last 16KB (trampoline)
-                if addr >= 0xC000 {
-                    let last = self.prg_memory.len() - 0x4000;
-                    last + (addr as usize - 0xC000)
-                } else {
-                    prg_bank * 0x4000 + (addr as usize - 0x8000)
-                }
+                // 32K mode mirrored: $8000 = $C000 = bank p
+                p * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
             };
 
             Some(self.prg_memory[offset % self.prg_memory.len()])
@@ -696,8 +691,8 @@ impl Cartridge {
             self.dxrom_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.dxrom_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
         } else if self.mapper_id == 227 {
-            // Bit 1 = last bank flag, mapeando ultimo 16KB em $C000
-            self.m227_reg = 0x02;
+            // Powerup: banco 0 mirrored em $8000 e $C000 (32KB mode, p=0, L=0)
+            self.m227_reg = 0;
         }
     }
     

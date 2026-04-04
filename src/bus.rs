@@ -21,13 +21,7 @@ pub struct Bus {
 
 impl Bus {
     pub fn new() -> Bus {
-        // RAM não-inicializada (NES real tem lixo)
-        // Preencher warm boot pattern e menu index pra multicarts
-        let mut ram = [0u8; 2048];
-        for i in 0xF0..=0xFFu8 {
-            ram[0x0700 + i as usize] = i;
-        }
-        ram[0x07E0] = 0xC8; // menu index (mapper 227 multicarts)
+        let ram = [0u8; 2048];
 
         Bus {
             ppu: Ppu::new(),
