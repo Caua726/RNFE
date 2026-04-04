@@ -28,8 +28,8 @@ impl Nes {
     pub fn clock(&mut self) {
         self.bus.ppu.clock();
 
-        // Atualizar CHR banks e mirroring a cada scanline
-        if self.bus.ppu.cycle == 0 {
+        // Atualizar CHR banks e mirroring durante pre-render (depois que NMI handler configurou tudo)
+        if self.bus.ppu.scanline == -1 && self.bus.ppu.cycle == 0 {
             if let Some(ref mut cart) = self.bus.cartridge {
                 self.bus.ppu.update_chr_from_cartridge(cart);
                 self.bus.ppu.mirror_mode = match cart.get_mirror() {
