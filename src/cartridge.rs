@@ -658,11 +658,7 @@ impl Cartridge {
                             self.mmc3_chr_banks[bank_register as usize + 2] = data;
                         },
                         6 => {
-                            if (self.mmc3_bank_select & 0x40) != 0 {
-                                self.mmc3_prg_banks[2] = data;
-                            } else {
-                                self.mmc3_prg_banks[0] = data;
-                            }
+                            self.mmc3_prg_banks[if (self.mmc3_bank_select & 0x40) != 0 { 2 } else { 0 }] = data;
                         },
                         7 => {
                             self.mmc3_prg_banks[1] = data;
@@ -670,12 +666,11 @@ impl Cartridge {
                         _ => {}
                     }
                 }
-                // Update fixed banks based on PRG mode
+                // Manter fixed banks corretos
                 let last = (self.prg_banks * 2).wrapping_sub(1);
                 let second_last = (self.prg_banks * 2).wrapping_sub(2);
                 if (self.mmc3_bank_select & 0x40) != 0 {
                     self.mmc3_prg_banks[0] = second_last;
-                    // bank[2] is switchable (set above)
                 } else {
                     self.mmc3_prg_banks[2] = second_last;
                 }
