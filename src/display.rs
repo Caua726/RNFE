@@ -417,6 +417,8 @@ pub struct App {
     fps_counter: u32,
     fps_timer: Instant,
     fps_display: u32,
+    toast_msg: String,
+    toast_until: Instant,
 }
 
 impl App {
@@ -435,6 +437,8 @@ impl App {
             fps_counter: 0,
             fps_timer: Instant::now(),
             fps_display: 0,
+            toast_msg: String::new(),
+            toast_until: Instant::now(),
         }
     }
 
@@ -455,6 +459,8 @@ impl App {
             fps_counter: 0,
             fps_timer: Instant::now(),
             fps_display: 0,
+            toast_msg: String::new(),
+            toast_until: Instant::now(),
         }
     }
 
@@ -485,6 +491,11 @@ impl App {
 
         stream.play().ok()?;
         Some(stream)
+    }
+
+    fn toast(&mut self, msg: &str) {
+        self.toast_msg = msg.to_string();
+        self.toast_until = Instant::now() + Duration::from_secs(2);
     }
 
     fn open_rom(&mut self) {
@@ -587,8 +598,9 @@ impl App {
                 self.framebuffer[fb_idx + 3] = 255;
             }
 
-            // Debug overlay
-            let overlay = if self.debug_overlay {
+            // Debug overlay + toast
+            let mut has_overlay = false;
+            if self.debug_overlay {
                 let mw = gpu.menu_w;
                 let mh = gpu.menu_h;
                 self.menu_fb.resize((mw * mh * 4) as usize, 0);
@@ -647,11 +659,30 @@ impl App {
                     self.ui.draw_text(&mut self.menu_fb, mw, mh, &unk, sz, 12, y, yellow);
                 }
 
-                Some(self.menu_fb.as_slice())
-            } else {
-                None
-            };
+                has_overlay = true;
+            }
 
+            // Toast notification
+            let show_toast = Instant::now() < self.toast_until;
+            if show_toast && !has_overlay {
+                let mw = gpu.menu_w;
+                let mh = gpu.menu_h;
+                self.menu_fb.resize((mw * mh * 4) as usize, 0);
+                self.menu_fb.fill(0);
+                has_overlay = true;
+            }
+            if show_toast {
+                let mw = gpu.menu_w;
+                let mh = gpu.menu_h;
+                let tw = self.ui.text_width(&self.toast_msg, 16.0);
+                let tx = (mw as i32 - tw) / 2;
+                let ty = mh as i32 - 50;
+                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                let msg = self.toast_msg.clone();
+                self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
+            }
+
+            let overlay = if has_overlay { Some(self.menu_fb.as_slice()) } else { None };
             gpu.render(&self.framebuffer, overlay);
             return;
         } else {
@@ -774,12 +805,18 @@ impl ApplicationHandler for App {
                             PhysicalKey::Code(KeyCode::Escape) => { self.paused = !self.paused; },
                             PhysicalKey::Code(KeyCode::KeyR) => { nes.reset(); println!("NES Reset!"); }
                             PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
-                            PhysicalKey::Code(KeyCode::F3) => { self.debug_overlay = !self.debug_overlay; }
+                            PhysicalKey::Code(KeyCode::F3) => {
+                                self.debug_overlay = !self.debug_overlay;
+                                self.toast_msg = if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
+                                self.toast_until = Instant::now() + Duration::from_secs(2);
+                            }
                             PhysicalKey::Code(KeyCode::F4) => {
                                 println!("{}", nes.debugger.coverage_report());
                                 if let Some(stuck) = nes.debugger.detect_stuck(&nes.cpu, &nes.bus) {
                                     println!("[STUCK] {}", stuck);
                                 }
+                                self.toast_msg = "Coverage report -> terminal".into();
+                                self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F5) => {
                                 nes.debugger.trace_enabled = !nes.debugger.trace_enabled;
@@ -790,6 +827,8 @@ impl ApplicationHandler for App {
                                         println!("{}", line);
                                     }
                                 }
+                                self.toast_msg = if nes.debugger.trace_enabled { "Trace ON".into() } else { "Trace OFF -> terminal".into() };
+                                self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F11) => {
                                 if w.fullscreen().is_some() {
