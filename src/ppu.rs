@@ -73,7 +73,7 @@ impl Ppu {
             palette_table: [0; 32],
             pattern_table: [[0; 4096]; 2],
             cart_ptr: None,
-            status: 0,
+            status: 0x80, // vblank flag setado no powerup
             mask: 0,
             control: 0,
             address_latch: 0,
@@ -98,7 +98,7 @@ impl Ppu {
             sprite_zero_hit_possible: false,
             sprite_zero_being_rendered: false,
             screen: vec![[0u8; 3]; 256 * 240].into_boxed_slice().try_into().unwrap(),
-            scanline: 0,
+            scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
             frame_complete: false,
             nmi: false,
@@ -145,6 +145,10 @@ impl Ppu {
                 0x0000 => {},
                 0x0001 => {},
                 0x0002 => {
+                    // Garantir que vblank flag está setado durante vblank period
+                    if self.scanline >= 241 && self.scanline < 261 && self.cycle > 1 {
+                        self.status |= 0x80;
+                    }
                     data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
                     self.status &= 0x7F;
                     self.address_latch = 0;

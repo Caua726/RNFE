@@ -113,6 +113,7 @@ impl Debugger {
     pub fn on_instruction(&mut self, cpu: &Cpu6502, bus: &Bus) {
         let pc = cpu.pc;
         let opcode = bus.cpu_read_debug(pc);
+
         self.opcode_count[opcode as usize] += 1;
         self.total_instructions += 1;
 

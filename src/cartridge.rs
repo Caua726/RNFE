@@ -64,6 +64,7 @@ pub struct Cartridge {
 
     // Mapper 227 (multicart) state
     m227_reg: u16,
+    m227_fixed_bank: usize, // banco fixo em $C000 (setado no powerup)
 
     // DxROM (mapper 206) state
     dxrom_bank_select: u8,
@@ -196,8 +197,9 @@ impl Cartridge {
             fme7_prg_banks: [0; 4],
             fme7_chr_banks: [0; 8],
 
-            // Mapper 227
+            // Mapper 227 - powerup: banco 0 mirrored
             m227_reg: 0,
+            m227_fixed_bank: 0,
 
             // DxROM
             dxrom_bank_select: 0,
@@ -612,22 +614,19 @@ impl Cartridge {
         if addr >= 0x8000 {
             let reg = self.m227_reg;
             let p = (((reg >> 2) & 0x1F) | ((reg & 0x100) >> 3)) as usize;
-            let mode_16k = (reg >> 7) & 1;
-            let l = (reg >> 9) & 1;
+            let mode_32k = (reg >> 7) & 1;
 
-            let offset = if mode_16k != 0 {
-                // 16K mode: $8000 = $C000 = bank p
-                p * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
-            } else if l != 0 {
-                // 32K mode split: $8000 = p&0x3E (even), $C000 = p|1 (odd)
-                if addr >= 0xC000 {
-                    (p | 1) * 0x4000 + (addr as usize - 0xC000)
-                } else {
-                    (p & 0x3E) * 0x4000 + (addr as usize - 0x8000)
-                }
+            let offset = if mode_32k != 0 {
+                // 32K mode: 2 bancos contíguos de 16KB
+                let base = (p & 0x3E) * 0x4000;
+                base + (addr as usize - 0x8000)
             } else {
-                // 32K mode mirrored: $8000 = $C000 = bank p
-                p * 0x4000 + ((addr as usize - 0x8000) & 0x3FFF)
+                // 16K mode: $8000 = bank p, $C000 = banco fixo (do powerup/init)
+                if addr >= 0xC000 {
+                    self.m227_fixed_bank * 0x4000 + ((addr as usize - 0xC000) & 0x3FFF)
+                } else {
+                    p * 0x4000 + (addr as usize - 0x8000)
+                }
             };
 
             Some(self.prg_memory[offset % self.prg_memory.len()])
@@ -691,8 +690,8 @@ impl Cartridge {
             self.dxrom_prg_banks = [0, 1, (self.prg_banks * 2).wrapping_sub(2), (self.prg_banks * 2).wrapping_sub(1)];
             self.dxrom_chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
         } else if self.mapper_id == 227 {
-            // Powerup: banco 0 mirrored em $8000 e $C000 (32KB mode, p=0, L=0)
             self.m227_reg = 0;
+            self.m227_fixed_bank = 0;
         }
     }
     
