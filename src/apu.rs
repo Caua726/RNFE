@@ -278,7 +278,7 @@ impl Dmc {
             timer: 0, timer_period: 0, output_level: 0,
             sample_addr: 0xC000, sample_length: 0, current_addr: 0xC000,
             bytes_remaining: 0, sample_buffer: 0, sample_buffer_empty: true,
-            shift_register: 0, bits_remaining: 0, silence: true,
+            shift_register: 0, bits_remaining: 8, silence: true,
         }
     }
 

@@ -3,6 +3,7 @@ mod bus;
 mod ppu;
 mod apu;
 mod cartridge;
+mod mappers;
 mod display;
 mod font;
 mod ui;

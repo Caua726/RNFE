@@ -145,10 +145,6 @@ impl Ppu {
                 0x0000 => {},
                 0x0001 => {},
                 0x0002 => {
-                    // Garantir que vblank flag está setado durante vblank period
-                    if self.scanline >= 241 && self.scanline < 261 && self.cycle > 1 {
-                        self.status |= 0x80;
-                    }
                     data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
                     self.status &= 0x7F;
                     self.address_latch = 0;
