@@ -1,0 +1,20 @@
+[package]
+name = "rnfe-tty"
+description = "RNFE no terminal: half-blocks com cor 24-bit. Zero dependências externas — roda no Termux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rnfe-tty"
+path = "src/main.rs"
+
+[dependencies]
+rnfe-core.workspace = true
+rnfe-frontend.workspace = true
+
+[lints]
+workspace = true

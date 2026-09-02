@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 # `cargo build/check/test` na raiz só toca o núcleo — wgpu/winit nunca compilam no celular.
-default-members = ["crates/rnfe-core"]
+default-members = ["crates/rnfe-core", "crates/rnfe-frontend", "crates/rnfe-tty"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,7 @@ repository = "https://github.com/Caua726/RNFE"
 [workspace.dependencies]
 rnfe-core = { path = "crates/rnfe-core" }
 rnfe-gui = { path = "crates/rnfe-gui" }
+rnfe-frontend = { path = "crates/rnfe-frontend" }
 log = "0.4"
 wgpu = "24"
 winit = "0.30.12"

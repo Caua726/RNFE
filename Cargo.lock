@@ -1592,6 +1592,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rnfe-frontend"
+version = "0.1.0"
+dependencies = [
+ "rnfe-core",
+]
+
+[[package]]
 name = "rnfe-gui"
 version = "0.1.0"
 dependencies = [
@@ -1603,6 +1610,14 @@ dependencies = [
  "rnfe-core",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "rnfe-tty"
+version = "0.1.0"
+dependencies = [
+ "rnfe-core",
+ "rnfe-frontend",
 ]
 
 [[package]]

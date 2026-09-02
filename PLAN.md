@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-07 (qualidade)
+Tarefa: F0-08 (frontend + tty)
 Estado: concluída
-Próximo: F0-08 — rnfe-frontend mínimo + rnfe-tty
+Próximo: F0-09 — CI
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -26,6 +26,7 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - `cargo test -p rnfe-core` (21 suítes blargg + nestest + snapshots + rom_parse): ~80 s
 - `status` (120 ROMs, 6 threads): 38 s · `cargo build -p rnfe-core` debug: 9,5 s · release: pico de RAM do rustc 276 MB (`scripts/peak-rss.sh`)
 - ROMs: 30 Pass / 90 KnownFail · nestest 5004/8991 · 10 snapshots
+- `rnfe-tty --headless` BladeBuster: 260 fps; interativo em pty 40×120: 60 fps estáveis, ~2 KB/frame desenhado
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -40,7 +41,7 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - [x] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
 - [x] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
 - [x] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
-- [ ] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
+- [x] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
 - [ ] F0-09 CI: ci.yml (core, desktop-check, bench)
 - [ ] F0-10 README real + CHANGELOG
 
