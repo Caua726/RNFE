@@ -1,6 +1,6 @@
 [package]
 name = "rnfe-desktop"
-description = "RNFE para Linux, Windows e macOS."
+description = "RNFE no desktop: janela (winit + wgpu), som (cpal), gamepad."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,14 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "rnfe"
+name = "rnfe-desktop"
 path = "src/main.rs"
 
 [dependencies]
 rnfe-gui.workspace = true
+rnfe-frontend.workspace = true
+log.workspace = true
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
 [lints]
 workspace = true

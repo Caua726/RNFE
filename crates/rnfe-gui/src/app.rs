@@ -1,1142 +1,728 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use wgpu::util::DeviceExt;
+//! O aplicativo: laço de eventos do winit, emulação com cadência própria, entrada
+//! (teclado, toque, gamepad), saves, save states, rewind e overlays.
+//!
+//! Fluxo por plataforma:
+//! - desktop: `resumed` cria a janela e a GPU (bloqueando), `about_to_wait` emula os frames
+//!   devidos e agenda `WaitUntil` no próximo — sem `sleep`.
+//! - web: a GPU é inicializada num futuro e chega como `UserEvent::GpuReady`; a ROM chega por
+//!   `UserEvent::RomLoaded` do seletor de arquivo; o áudio só nasce após o primeiro gesto.
+
+use crate::Launch;
+use crate::audio::AudioOut;
+use crate::gpu::GpuState;
+use crate::platform::{self, Instant};
+use crate::ui::{self, MenuAction, Ui};
+use rnfe_core::{Buttons, Nes, Storage};
+use rnfe_frontend::touch::Special;
+use rnfe_frontend::{FramePacer, InputState, NTSC_FPS, Rewind, SaveManager, TouchLayout, TouchState};
+use std::sync::Arc;
+use std::time::Duration;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
-use crate::ui::Ui;
-use rnfe_core::Nes;
-use rnfe_frontend::{FsStorage, SaveManager};
-
-const NES_WIDTH: u32 = 256;
-const NES_HEIGHT: u32 = 240;
-
-// NES aspect ratio: 256 pixels * 8/7 per pixel = ~292.57 visible width
-// Aspect ratio = (256 * 8/7) / 240 = ~1.219
-const NES_ASPECT: f32 = (256.0 * 8.0 / 7.0) / 240.0;
-
-const SHADER: &str = r#"
-struct VertexOutput {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
-
-@group(0) @binding(2) var<uniform> scale: vec2<f32>;
-
-@vertex
-fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-    var positions = array<vec2<f32>, 6>(
-        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
-    );
-    var uvs = array<vec2<f32>, 6>(
-        vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0),
-        vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0),
-    );
-    var out: VertexOutput;
-    out.pos = vec4(positions[idx] * scale, 0.0, 1.0);
-    out.uv = uvs[idx];
-    return out;
+pub enum UserEvent {
+    GpuReady(Box<Result<GpuState, String>>),
+    RomLoaded { name: String, bytes: Vec<u8> },
+    RomLoadFailed(String),
 }
 
-@group(0) @binding(0) var tex: texture_2d<f32>;
-@group(0) @binding(1) var samp: sampler;
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(tex, samp, in.uv);
-}
-"#;
-
-struct GpuState {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
-    // NES rendering (256x240 com aspect ratio)
-    bind_group: wgpu::BindGroup,
-    texture: wgpu::Texture,
-    scale_buffer: wgpu::Buffer,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    overlay_pipeline: wgpu::RenderPipeline,
-    // Menu rendering (resolução da janela, sem scaling)
-    menu_texture: wgpu::Texture,
-    menu_bind_group: wgpu::BindGroup,
-    menu_scale_buffer: wgpu::Buffer,
-    menu_w: u32,
-    menu_h: u32,
-}
-
-impl GpuState {
-    fn new(window: &'static Window) -> Self {
-        let size = window.inner_size();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = instance.create_surface(window).expect("surface");
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .expect("adapter");
-
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                .expect("device");
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps.formats[0];
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        // Textura NES 256x240 RGBA
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("nes_screen"),
-            size: wgpu::Extent3d { width: NES_WIDTH, height: NES_HEIGHT, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let tex_view = texture.create_view(&Default::default());
-
-        // Scale uniform pra aspect ratio
-        let scale = Self::calc_scale(size.width, size.height);
-        let scale_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("scale"),
-            contents: bytemuck::cast_slice(&scale),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&tex_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: scale_buffer.as_entire_binding() },
-            ],
-        });
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        // Pipeline com alpha blending pra overlays
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("overlay"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent::OVER,
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        // Menu texture (resolução da janela)
-        let menu_w = size.width.max(1);
-        let menu_h = size.height.max(1);
-        let (menu_texture, menu_bind_group, menu_scale_buffer) =
-            Self::create_menu_resources(&device, &queue, &bind_group_layout, &sampler, menu_w, menu_h);
-
-        GpuState {
-            surface,
-            device,
-            queue,
-            config,
-            pipeline,
-            bind_group,
-            texture,
-            scale_buffer,
-            bind_group_layout,
-            sampler,
-            overlay_pipeline,
-            menu_texture,
-            menu_bind_group,
-            menu_scale_buffer,
-            menu_w,
-            menu_h,
-        }
-    }
-
-    fn create_menu_resources(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
-        w: u32,
-        h: u32,
-    ) -> (wgpu::Texture, wgpu::BindGroup, wgpu::Buffer) {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("menu"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = tex.create_view(&Default::default());
-        // Scale = 1.0, 1.0 (sem aspect ratio correction)
-        let scale_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("menu_scale"),
-            contents: bytemuck::cast_slice(&[1.0f32, 1.0f32]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: scale_buf.as_entire_binding() },
-            ],
-        });
-        (tex, bg, scale_buf)
-    }
-
-    fn calc_scale(win_w: u32, win_h: u32) -> [f32; 2] {
-        let win_aspect = win_w as f32 / win_h.max(1) as f32;
-        if win_aspect > NES_ASPECT {
-            // Janela mais larga que NES - pillarbox
-            [NES_ASPECT / win_aspect, 1.0]
-        } else {
-            // Janela mais alta - letterbox
-            [1.0, win_aspect / NES_ASPECT]
-        }
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        self.config.width = width.max(1);
-        self.config.height = height.max(1);
-        self.surface.configure(&self.device, &self.config);
-
-        let scale = Self::calc_scale(width, height);
-        self.queue.write_buffer(&self.scale_buffer, 0, bytemuck::cast_slice(&scale));
-
-        // Recriar menu texture na nova resolução
-        let (mt, mbg, msb) = Self::create_menu_resources(
-            &self.device,
-            &self.queue,
-            &self.bind_group_layout,
-            &self.sampler,
-            width.max(1),
-            height.max(1),
-        );
-        self.menu_texture = mt;
-        self.menu_bind_group = mbg;
-        self.menu_scale_buffer = msb;
-        self.menu_w = width.max(1);
-        self.menu_h = height.max(1);
-    }
-
-    // Renderiza NES framebuffer com overlay opcional (tudo num frame só)
-    fn render(&mut self, nes_pixels: &[u8], overlay: Option<&[u8]>) {
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            nes_pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(NES_WIDTH * 4),
-                rows_per_image: Some(NES_HEIGHT),
-            },
-            wgpu::Extent3d { width: NES_WIDTH, height: NES_HEIGHT, depth_or_array_layers: 1 },
-        );
-
-        if let Some(ovr) = overlay {
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.menu_texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                ovr,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(self.menu_w * 4),
-                    rows_per_image: Some(self.menu_h),
-                },
-                wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
-            );
-        }
-
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => {
-                self.surface.configure(&self.device, &self.config);
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-            // NES quad com aspect ratio
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.draw(0..6, 0..1);
-
-            // Overlay com alpha blending
-            if overlay.is_some() {
-                pass.set_pipeline(&self.overlay_pipeline);
-                pass.set_bind_group(0, &self.menu_bind_group, &[]);
-                pass.draw(0..6, 0..1);
-            }
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-    }
-
-    // Renderiza só o menu (sem NES)
-    fn render_menu(&mut self, pixels: &[u8]) {
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.menu_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(self.menu_w * 4),
-                rows_per_image: Some(self.menu_h),
-            },
-            wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
-        );
-
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => {
-                self.surface.configure(&self.device, &self.config);
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.menu_bind_group, &[]);
-            pass.draw(0..6, 0..1);
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-    }
-}
-
-const FRAME_DURATION: Duration = Duration::from_nanos(16_639_267); // ~60.0988 Hz (NTSC)
+/// Velocidade do turbo (Espaço).
+const TURBO: f64 = 4.0;
 
 pub struct App {
-    win: Option<&'static Window>,
+    proxy: EventLoopProxy<UserEvent>,
+    window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+    gpu_error: Option<String>,
     nes: Option<Box<Nes>>,
-    framebuffer: Vec<u8>,
-    audio_buffer: Arc<Mutex<VecDeque<f32>>>,
-    _audio_stream: Option<cpal::Stream>,
-    last_frame: Instant,
-    cursor_pos: (f64, f64),
+    rom_name: String,
+    storage: Box<dyn Storage>,
+    save: SaveManager,
+    rewind: Rewind,
+    audio: Option<AudioOut>,
+    pacer: FramePacer,
+    start: Instant,
+    input: InputState,
+    touch: TouchState,
+    layout: TouchLayout,
+    #[cfg(feature = "gamepad")]
+    gilrs: Option<gilrs::Gilrs>,
+    pad: Buttons,
+    pad_stick: Buttons,
+    cursor: (f64, f64),
     ui: Ui,
-    menu_fb: Vec<u8>,
+    overlay: Vec<u8>,
     paused: bool,
     debug_overlay: bool,
+    rewinding: bool,
+    turbo: bool,
     fps_counter: u32,
     fps_timer: Instant,
     fps_display: u32,
     toast_msg: String,
     toast_until: Instant,
-    storage: FsStorage,
-    save: SaveManager,
+    loading: bool,
 }
 
 impl App {
-    pub fn new() -> Self {
-        Self {
-            win: None,
-            gpu: None,
-            nes: None,
-            framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
-            audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
-            _audio_stream: None,
-            last_frame: Instant::now(),
-            cursor_pos: (0.0, 0.0),
-            ui: Ui::new(),
-            menu_fb: Vec::new(),
-            paused: false,
-            debug_overlay: false,
-            fps_counter: 0,
-            fps_timer: Instant::now(),
-            fps_display: 0,
-            toast_msg: String::new(),
-            toast_until: Instant::now(),
-            storage: FsStorage::new(FsStorage::default_dir()),
-            save: SaveManager::none(),
-        }
-    }
-
-    pub fn new_with_nes(mut nes: Box<Nes>) -> Self {
-        let audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
-        let stream = Self::init_audio(audio_buffer.clone(), &mut nes);
-        let storage = FsStorage::new(FsStorage::default_dir());
-        let mut save = SaveManager::new(&nes);
-        save.load(&mut nes, &storage);
-        Self {
-            win: None,
-            gpu: None,
-            nes: Some(nes),
-            framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
-            audio_buffer,
-            _audio_stream: stream,
-            last_frame: Instant::now(),
-            cursor_pos: (0.0, 0.0),
-            ui: Ui::new(),
-            menu_fb: Vec::new(),
-            paused: false,
-            debug_overlay: false,
-            fps_counter: 0,
-            fps_timer: Instant::now(),
-            fps_display: 0,
-            toast_msg: String::new(),
-            toast_until: Instant::now(),
-            storage,
-            save,
-        }
-    }
-
-    /// Grava o `.sav` pendente (ao trocar de ROM ou sair).
-    fn flush_save(&mut self) {
-        if let Some(nes) = self.nes.as_mut() {
-            if let Err(e) = self.save.flush(nes, &mut self.storage) {
-                eprintln!("erro ao gravar save: {e}");
+    pub fn new(launch: Launch, proxy: EventLoopProxy<UserEvent>) -> Self {
+        let Launch { mut nes, rom_name, mut storage } = launch;
+        let mut save = match &nes {
+            Some(n) => SaveManager::new(n),
+            None => SaveManager::none(),
+        };
+        if let Some(n) = nes.as_mut() {
+            if save.load(n, storage.as_mut()) {
+                log::info!("save carregado: {}", save.key().unwrap_or(""));
             }
         }
+        let now = Instant::now();
+        App {
+            proxy,
+            window: None,
+            gpu: None,
+            gpu_error: None,
+            nes,
+            rom_name,
+            storage,
+            save,
+            rewind: Rewind::new(Rewind::DEFAULT_CAP),
+            audio: None,
+            pacer: FramePacer::new(NTSC_FPS),
+            start: now,
+            input: InputState::new(),
+            touch: TouchState::new(),
+            layout: TouchLayout::for_size(768.0, 720.0),
+            #[cfg(feature = "gamepad")]
+            gilrs: None,
+            pad: Buttons::NONE,
+            pad_stick: Buttons::NONE,
+            cursor: (0.0, 0.0),
+            ui: Ui::new(),
+            overlay: Vec::new(),
+            paused: false,
+            debug_overlay: false,
+            rewinding: false,
+            turbo: false,
+            fps_counter: 0,
+            fps_timer: now,
+            fps_display: 0,
+            toast_msg: String::new(),
+            toast_until: now,
+            loading: false,
+        }
     }
 
-    fn init_audio(buffer: Arc<Mutex<VecDeque<f32>>>, nes: &mut Nes) -> Option<cpal::Stream> {
-        let host = cpal::default_host();
-        let device = host.default_output_device()?;
-        let config = device.default_output_config().ok()?;
-        let sample_rate = config.sample_rate();
-        let channels = config.channels() as usize;
-        nes.bus.apu.set_sample_rate(sample_rate as f32);
-
-        let stream = device
-            .build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut buf = buffer.lock().unwrap();
-                    // Preencher frames (cada frame tem N canais)
-                    for frame in data.chunks_mut(channels) {
-                        let sample = buf.pop_front().unwrap_or(0.0);
-                        // Mesmo sample pra todos os canais (mono -> stereo)
-                        for ch in frame.iter_mut() {
-                            *ch = sample;
-                        }
-                    }
-                },
-                |err| eprintln!("Audio error: {}", err),
-                None,
-            )
-            .ok()?;
-
-        stream.play().ok()?;
-        Some(stream)
+    fn now(&self) -> Duration {
+        self.start.elapsed()
     }
 
-    fn toast(&mut self, msg: &str) {
-        self.toast_msg = msg.to_string();
+    fn toast(&mut self, msg: impl Into<String>) {
+        self.toast_msg = msg.into();
         self.toast_until = Instant::now() + Duration::from_secs(2);
     }
 
-    fn open_rom(&mut self) {
-        if let Some(path) = crate::pick_rom() {
-            if let Some(mut new_nes) = crate::load_rom(&path) {
-                // Configurar audio
-                if self._audio_stream.is_none() {
-                    self._audio_stream = Self::init_audio(self.audio_buffer.clone(), &mut new_nes);
-                } else if let Some(ref old_nes) = self.nes {
-                    new_nes.bus.apu.set_sample_rate(old_nes.bus.apu.sample_rate);
-                }
-                // Preservar estado do debugger
-                if let Some(ref old_nes) = self.nes {
-                    new_nes.debugger.trace_enabled = old_nes.debugger.trace_enabled;
-                }
-                self.flush_save();
-                self.save = SaveManager::new(&new_nes);
-                self.save.load(&mut new_nes, &self.storage);
-                self.nes = Some(new_nes);
-                self.paused = false;
-                if let Ok(mut buf) = self.audio_buffer.lock() {
-                    buf.clear();
-                }
+    fn state_key(&self) -> Option<String> {
+        self.nes.as_ref().map(|n| format!("state/{:016x}/1.rnfs", n.cartridge().rom_hash()))
+    }
+
+    fn redraw(&self) {
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Áudio nasce no primeiro gesto do usuário (exigência dos navegadores; inofensivo no desktop).
+    fn ensure_audio(&mut self) {
+        if self.audio.is_some() {
+            return;
+        }
+        if let Some(a) = AudioOut::start() {
+            if let Some(n) = self.nes.as_mut() {
+                n.set_sample_rate(a.sample_rate);
+            }
+            self.audio = Some(a);
+        }
+    }
+
+    fn flush_save(&mut self) {
+        if let Some(n) = self.nes.as_mut() {
+            if let Err(e) = self.save.flush(n, self.storage.as_mut()) {
+                log::error!("erro ao gravar save: {e}");
             }
         }
     }
 
-    fn draw(&mut self) {
-        let Some(gpu) = self.gpu.as_mut() else { return };
+    fn install_nes(&mut self, mut nes: Box<Nes>, name: String) {
+        self.flush_save();
+        if let Some(a) = &self.audio {
+            nes.set_sample_rate(a.sample_rate);
+            a.ring.clear();
+        }
+        if let Some(old) = &self.nes {
+            nes.debugger.trace_enabled = old.debugger.trace_enabled;
+            nes.debugger.enabled = old.debugger.enabled;
+        }
+        self.save = SaveManager::new(&nes);
+        if self.save.load(&mut nes, self.storage.as_mut()) {
+            log::info!("save carregado: {}", self.save.key().unwrap_or(""));
+        }
+        self.nes = Some(nes);
+        self.rom_name = name;
+        self.rewind.clear();
+        self.input.clear();
+        self.touch.clear();
+        self.paused = false;
+        self.pacer.resync(self.now());
+        if let Some(w) = &self.window {
+            w.set_title(&format!("RNFE — {}", self.rom_name));
+        }
+    }
 
-        if let Some(ref mut nes) = self.nes {
-            if self.paused {
-                // Tela de pausa com menu
-                let mw = gpu.menu_w;
-                let mh = gpu.menu_h;
-                let size = (mw * mh * 4) as usize;
-                self.menu_fb.resize(size, 0);
-
-                for i in 0..(mw * mh) as usize {
-                    let idx = i * 4;
-                    self.menu_fb[idx] = 8;
-                    self.menu_fb[idx + 1] = 8;
-                    self.menu_fb[idx + 2] = 14;
-                    self.menu_fb[idx + 3] = 255;
-                }
-
-                let mx = self.cursor_pos.0 as i32;
-                let my = self.cursor_pos.1 as i32;
-
-                self.ui.draw_text_centered(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    "PAUSED",
-                    36.0,
-                    (mh as f32 * 0.35) as i32,
-                    [200, 200, 200, 255],
-                );
-                self.ui.draw_text_centered(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    "ESC to resume",
-                    14.0,
-                    (mh as f32 * 0.35) as i32 + 48,
-                    [70, 70, 70, 255],
-                );
-
-                self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
-
-                if Instant::now() < self.toast_until {
-                    let tw = self.ui.text_width(&self.toast_msg, 16.0);
-                    let tx = (mw as i32 - tw) / 2;
-                    let ty = mh as i32 - 50;
-                    self.ui.fill_rect_pub(
-                        &mut self.menu_fb,
-                        mw,
-                        mh,
-                        tx - 12,
-                        ty - 6,
-                        tw + 24,
-                        28,
-                        [0, 0, 0, 180],
-                    );
-                    let msg = self.toast_msg.clone();
-                    self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
-                }
-
-                gpu.render_menu(&self.menu_fb);
-                return;
-            }
-
-            // Frame timing
-            let elapsed = self.last_frame.elapsed();
-            if elapsed < FRAME_DURATION {
-                std::thread::sleep(FRAME_DURATION - elapsed);
-            }
-            self.last_frame = Instant::now();
-
-            nes.run_frame();
-            if let Err(e) = self.save.tick(nes, &mut self.storage) {
-                eprintln!("erro ao gravar save: {e}");
-            }
-
-            // Enviar samples de audio
-            if !nes.bus.apu.sample_buffer.is_empty() {
-                if let Ok(mut buf) = self.audio_buffer.lock() {
-                    for &s in &nes.bus.apu.sample_buffer {
-                        buf.push_back(s);
-                    }
-                    // Limitar buffer pra não acumular latência
-                    while buf.len() > 4096 {
-                        buf.pop_front();
-                    }
-                }
-                nes.bus.apu.sample_buffer.clear();
-            }
-
-            // FPS counter
-            self.fps_counter += 1;
-            if self.fps_timer.elapsed() >= Duration::from_secs(1) {
-                self.fps_display = self.fps_counter;
-                self.fps_counter = 0;
-                self.fps_timer = Instant::now();
-            }
-
-            // A PPU já produz RGBA8
-            self.framebuffer.copy_from_slice(nes.framebuffer());
-
-            // Debug overlay + toast
-            let mut has_overlay = false;
-            if self.debug_overlay {
-                let mw = gpu.menu_w;
-                let mh = gpu.menu_h;
-                self.menu_fb.resize((mw * mh * 4) as usize, 0);
-                self.menu_fb.fill(0);
-
-                let bg = [0u8, 0, 0, 160];
-                let green = [0u8, 255, 80, 255];
-                let gray = [200u8, 200, 200, 255];
-                let yellow = [255u8, 255, 80, 255];
-                let red = [255u8, 80, 80, 255];
-                let sz = 13.0f32;
-
-                let mut y = 8i32;
-                let mut panel_h = 90;
-
-                // Stuck detection
-                let stuck = nes.debugger.detect_stuck(&nes.cpu, &nes.bus);
-                // Unknown opcodes
-                let has_unknown = !nes.debugger.unknown_opcodes.is_empty();
-                if stuck.is_some() {
-                    panel_h += 18;
-                }
-                if has_unknown {
-                    panel_h += 18;
-                }
-
-                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, 4, 4, 420, panel_h, bg);
-
-                let fps = format!("FPS: {}  Instrs: {}", self.fps_display, nes.debugger.total_instructions);
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &fps, sz, 12, y, green);
-                y += 18;
-
-                let cpu = format!(
-                    "PC:{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  SP:{:02X}  P:{:02X}",
-                    nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status
-                );
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &cpu, sz, 12, y, gray);
-                y += 18;
-
-                let ppu = format!(
-                    "SL:{}  CYC:{}  CTRL:{:02X}  MASK:{:02X}  STAT:{:02X}",
-                    nes.bus.ppu.scanline,
-                    nes.bus.ppu.cycle,
-                    nes.bus.ppu.control,
-                    nes.bus.ppu.mask,
-                    nes.bus.ppu.status
-                );
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &ppu, sz, 12, y, gray);
-                y += 18;
-
-                // Opcodes coverage
-                let used = nes
-                    .debugger
-                    .opcode_count
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, c)| {
-                        **c > 0
-                            && nes.debugger.opcode_names[*i] != "???"
-                            && nes.debugger.opcode_names[*i] != "NOP*"
-                    })
-                    .count();
-                let coverage = format!("Coverage: {}/56 opcodes  F4=report  F5=trace", used);
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &coverage, sz, 12, y, gray);
-                y += 18;
-
-                if let Some(ref msg) = stuck {
-                    self.ui.draw_text(&mut self.menu_fb, mw, mh, msg, sz, 12, y, red);
-                    y += 18;
-                }
-
-                if has_unknown {
-                    let unk = format!(
-                        "Unknown opcodes: {:?}",
-                        nes.debugger
-                            .unknown_opcodes
-                            .iter()
-                            .map(|(op, _)| format!("${:02X}", op))
-                            .collect::<Vec<_>>()
-                    );
-                    self.ui.draw_text(&mut self.menu_fb, mw, mh, &unk, sz, 12, y, yellow);
-                }
-
-                has_overlay = true;
-            }
-
-            // Toast notification
-            let show_toast = Instant::now() < self.toast_until;
-            if show_toast && !has_overlay {
-                let mw = gpu.menu_w;
-                let mh = gpu.menu_h;
-                self.menu_fb.resize((mw * mh * 4) as usize, 0);
-                self.menu_fb.fill(0);
-                has_overlay = true;
-            }
-            if show_toast {
-                let mw = gpu.menu_w;
-                let mh = gpu.menu_h;
-                let tw = self.ui.text_width(&self.toast_msg, 16.0);
-                let tx = (mw as i32 - tw) / 2;
-                let ty = mh as i32 - 50;
-                self.ui.fill_rect_pub(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    tx - 12,
-                    ty - 6,
-                    tw + 24,
-                    28,
-                    [0, 0, 0, 180],
-                );
-                let msg = self.toast_msg.clone();
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
-            }
-
-            let overlay = if has_overlay { Some(self.menu_fb.as_slice()) } else { None };
-            gpu.render(&self.framebuffer, overlay);
+    fn open_rom(&mut self) {
+        if self.loading {
             return;
-        } else {
-            // Tela inicial na resolução da janela
-            let mw = gpu.menu_w;
-            let mh = gpu.menu_h;
-            let size = (mw * mh * 4) as usize;
-            self.menu_fb.resize(size, 0);
+        }
+        self.loading = true;
+        platform::pick_rom(self.proxy.clone());
+    }
 
-            for i in 0..(mw * mh) as usize {
-                let idx = i * 4;
-                self.menu_fb[idx] = 12;
-                self.menu_fb[idx + 1] = 12;
-                self.menu_fb[idx + 2] = 16;
-                self.menu_fb[idx + 3] = 255;
+    fn reset(&mut self) {
+        if let Some(n) = self.nes.as_mut() {
+            n.reset();
+            self.rewind.clear();
+            self.toast("Reset");
+        }
+    }
+
+    fn save_state(&mut self) {
+        let Some(key) = self.state_key() else { return };
+        let data = self.nes.as_ref().map(|n| n.save_state()).unwrap_or_default();
+        match self.storage.write(&key, &data) {
+            Ok(()) => self.toast("State salvo (F5)"),
+            Err(e) => self.toast(format!("Erro: {e}")),
+        }
+    }
+
+    fn load_state(&mut self) {
+        let Some(key) = self.state_key() else { return };
+        let Some(data) = self.storage.read(&key) else {
+            self.toast("Sem state salvo");
+            return;
+        };
+        let r = self.nes.as_mut().map(|n| n.load_state(&data));
+        match r {
+            Some(Ok(())) => {
+                self.rewind.clear();
+                self.toast("State carregado (F7)");
             }
+            Some(Err(e)) => self.toast(format!("Erro: {e}")),
+            None => {}
+        }
+    }
 
-            let cx = mw as i32 / 2;
-            let title_y = (mh as f32 * 0.30) as i32;
+    fn menu_action(&mut self, action: MenuAction, el: &ActiveEventLoop) {
+        match action {
+            MenuAction::OpenRom => {
+                self.paused = false;
+                self.open_rom();
+            }
+            MenuAction::Reset => {
+                self.reset();
+                self.paused = false;
+            }
+            MenuAction::SaveState => self.save_state(),
+            MenuAction::LoadState => self.load_state(),
+            MenuAction::Quit => {
+                self.flush_save();
+                el.exit();
+            }
+            MenuAction::None => {}
+        }
+    }
 
+    fn toggle_fullscreen(&self) {
+        if let Some(w) = &self.window {
+            if w.fullscreen().is_some() {
+                w.set_fullscreen(None);
+            } else {
+                w.set_fullscreen(Some(Fullscreen::Borderless(None)));
+            }
+        }
+    }
+
+    #[cfg(feature = "gamepad")]
+    fn poll_gamepad(&mut self) {
+        use gilrs::{Axis, Button, EventType};
+        let Some(g) = self.gilrs.as_mut() else { return };
+        while let Some(ev) = g.next_event() {
+            let map = |b: Button| match b {
+                Button::South | Button::East => Buttons::A,
+                Button::West | Button::North => Buttons::B,
+                Button::Start => Buttons::START,
+                Button::Select => Buttons::SELECT,
+                Button::DPadUp => Buttons::UP,
+                Button::DPadDown => Buttons::DOWN,
+                Button::DPadLeft => Buttons::LEFT,
+                Button::DPadRight => Buttons::RIGHT,
+                _ => Buttons::NONE,
+            };
+            match ev.event {
+                EventType::ButtonPressed(b, _) => self.pad |= map(b),
+                EventType::ButtonReleased(b, _) => self.pad = self.pad.with(map(b), false),
+                EventType::AxisChanged(axis, v, _) => {
+                    let (neg, pos) = match axis {
+                        Axis::LeftStickX => (Buttons::LEFT, Buttons::RIGHT),
+                        Axis::LeftStickY => (Buttons::DOWN, Buttons::UP),
+                        _ => continue,
+                    };
+                    self.pad_stick = self.pad_stick.with(neg, v < -0.5).with(pos, v > 0.5);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Emula os frames devidos desde a última chamada.
+    fn advance(&mut self) {
+        #[cfg(feature = "gamepad")]
+        self.poll_gamepad();
+        if self.paused || self.gpu.is_none() {
+            return;
+        }
+        let now = self.now();
+        let due = self.pacer.frames_due(now);
+        if due == 0 {
+            return;
+        }
+        let Some(nes) = self.nes.as_mut() else { return };
+        let buttons = self.input.current(now) | self.touch.buttons() | self.pad | self.pad_stick;
+        nes.set_controller(0, buttons);
+        for _ in 0..due {
+            if self.rewinding {
+                if !self.rewind.step_back(nes) {
+                    break;
+                }
+                continue;
+            }
+            nes.run_frame();
+            self.rewind.record(nes);
+            if let Err(e) = self.save.tick(nes, self.storage.as_mut()) {
+                log::error!("erro ao gravar save: {e}");
+            }
+            self.fps_counter += 1;
+        }
+        if let Some(a) = &self.audio {
+            if self.rewinding || self.turbo {
+                nes.bus.apu.sample_buffer.clear();
+            } else {
+                a.ring.push(&nes.bus.apu.sample_buffer);
+                nes.bus.apu.sample_buffer.clear();
+                a.ring.trim_to(AudioOut::TARGET_QUEUE * a.channels.max(1));
+            }
+        } else {
+            nes.bus.apu.sample_buffer.clear();
+        }
+        if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+            self.fps_display = self.fps_counter;
+            self.fps_counter = 0;
+            self.fps_timer = Instant::now();
+        }
+        self.redraw();
+    }
+
+    /// Monta o overlay (menus, toque, debug, toast) e desenha o frame.
+    fn draw(&mut self) {
+        let Some((w, h)) = self.gpu.as_ref().map(|g| g.size()) else { return };
+        let size = (w * h * 4) as usize;
+        self.overlay.resize(size, 0);
+        let mut has_overlay = false;
+        let (mx, my) = (self.cursor.0 as i32, self.cursor.1 as i32);
+        let show_toast = Instant::now() < self.toast_until;
+
+        if self.nes.is_none() {
+            ui::clear(&mut self.overlay, [12, 12, 16, 255]);
+            let title_y = (h as f32 * 0.30) as i32;
+            self.ui.draw_text_centered(&mut self.overlay, w, h, "RNFE", 56.0, title_y, [220, 220, 220, 255]);
             self.ui.draw_text_centered(
-                &mut self.menu_fb,
-                mw,
-                mh,
-                "RNFE",
-                56.0,
-                title_y,
-                [220, 220, 220, 255],
-            );
-            self.ui.draw_text_centered(
-                &mut self.menu_fb,
-                mw,
-                mh,
-                "NES Emulator",
+                &mut self.overlay,
+                w,
+                h,
+                "Famicom / NES",
                 16.0,
                 title_y + 65,
-                [80, 80, 80, 255],
+                [110, 110, 120, 255],
             );
-
-            let mx = self.cursor_pos.0 as i32;
-            let my = self.cursor_pos.1 as i32;
-
-            let btn_y = (mh as f32 * 0.58) as i32;
-            let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
-            let hover = mx >= bx && mx < bx + bw && my >= by && my < by + bh;
-
-            if hover {
-                self.ui.draw_button(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    "Open ROM",
-                    18.0,
-                    cx,
-                    btn_y,
-                    [255, 255, 255, 255],
-                    [150, 150, 150, 255],
-                );
+            let (cx, by) = (w as i32 / 2, (h as f32 * 0.58) as i32);
+            let (bx, byy, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, by);
+            let hover = mx >= bx && mx < bx + bw && my >= byy && my < byy + bh;
+            let (c, b) = if hover {
+                ([255, 255, 255, 255], [150, 150, 150, 255])
             } else {
-                self.ui.draw_button(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    "Open ROM",
-                    18.0,
-                    cx,
-                    btn_y,
-                    [180, 180, 180, 255],
-                    [80, 80, 80, 255],
-                );
-            }
-
+                ([180, 180, 180, 255], [80, 80, 80, 255])
+            };
+            self.ui.draw_button(&mut self.overlay, w, h, "Open ROM", 18.0, cx, by, c, b);
+            let hint = if let Some(e) = &self.gpu_error { e.clone() } else { "toque ou tecle O".to_string() };
+            self.ui.draw_text_centered(&mut self.overlay, w, h, &hint, 12.0, by + 38, [90, 90, 100, 255]);
+            self.ui.draw_menubar(&mut self.overlay, w, h, mx, my);
+            has_overlay = true;
+        } else if self.paused {
+            ui::clear(&mut self.overlay, [8, 8, 14, 230]);
+            let y = (h as f32 * 0.35) as i32;
+            self.ui.draw_text_centered(&mut self.overlay, w, h, "PAUSED", 36.0, y, [200, 200, 200, 255]);
             self.ui.draw_text_centered(
-                &mut self.menu_fb,
-                mw,
-                mh,
-                "press O",
-                12.0,
-                btn_y + 38,
-                [50, 50, 50, 255],
+                &mut self.overlay,
+                w,
+                h,
+                "Esc / MENU para voltar",
+                14.0,
+                y + 48,
+                [120, 120, 130, 255],
             );
-
-            self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
-
-            // Toast na tela do menu
-            if Instant::now() < self.toast_until {
-                let tw = self.ui.text_width(&self.toast_msg, 16.0);
-                let tx = (mw as i32 - tw) / 2;
-                let ty = mh as i32 - 50;
-                self.ui.fill_rect_pub(
-                    &mut self.menu_fb,
-                    mw,
-                    mh,
-                    tx - 12,
-                    ty - 6,
-                    tw + 24,
-                    28,
-                    [0, 0, 0, 180],
-                );
-                let msg = self.toast_msg.clone();
-                self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
+            self.ui.draw_menubar(&mut self.overlay, w, h, mx, my);
+            has_overlay = true;
+        } else {
+            self.overlay.fill(0);
+            if self.touch.seen {
+                let pressed = self.touch.buttons();
+                self.ui.draw_touch_controls(&mut self.overlay, w, h, &self.layout, pressed);
+                has_overlay = true;
             }
+            if self.debug_overlay {
+                if let Some(nes) = self.nes.as_ref() {
+                    let sz = 13.0;
+                    let mut y = 8;
+                    ui::fill_rect(&mut self.overlay, w, h, 4, 4, 460, 80, [0, 0, 0, 160]);
+                    let l1 = format!(
+                        "FPS {}  áudio {}  rewind {} states / {} KB",
+                        self.fps_display,
+                        self.audio.as_ref().map(|a| a.ring.underruns()).unwrap_or(0),
+                        self.rewind.len(),
+                        self.rewind.bytes() / 1024
+                    );
+                    self.ui.draw_text(&mut self.overlay, w, h, &l1, sz, 12, y, [0, 255, 80, 255]);
+                    y += 18;
+                    let l2 = format!(
+                        "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X}  ciclos {}",
+                        nes.cpu.pc,
+                        nes.cpu.a,
+                        nes.cpu.x,
+                        nes.cpu.y,
+                        nes.cpu.stkp,
+                        nes.cpu.status,
+                        nes.cpu_cycles()
+                    );
+                    self.ui.draw_text(&mut self.overlay, w, h, &l2, sz, 12, y, [200, 200, 200, 255]);
+                    y += 18;
+                    let l3 = format!(
+                        "SL:{} CYC:{} CTRL:{:02X} MASK:{:02X} STAT:{:02X}  {}",
+                        nes.bus.ppu.scanline,
+                        nes.bus.ppu.cycle,
+                        nes.bus.ppu.control,
+                        nes.bus.ppu.mask,
+                        nes.bus.ppu.status,
+                        nes.cartridge().describe()
+                    );
+                    self.ui.draw_text(&mut self.overlay, w, h, &l3, sz, 12, y, [200, 200, 200, 255]);
+                    y += 18;
+                    self.ui.draw_text(
+                        &mut self.overlay,
+                        w,
+                        h,
+                        "F3 debug  F4 cobertura  F5/F7 state  F6 diag  F9 trace  Bksp rewind  Espaço turbo",
+                        sz,
+                        12,
+                        y,
+                        [160, 160, 160, 255],
+                    );
+                }
+                has_overlay = true;
+            }
+        }
+        if show_toast {
+            let msg = self.toast_msg.clone();
+            self.ui.draw_toast(&mut self.overlay, w, h, &msg);
+            has_overlay = true;
+        }
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        let fb = self.nes.as_mut().map(|n| n.framebuffer());
+        let ov = if has_overlay { Some(self.overlay.as_slice()) } else { None };
+        gpu.render(fb, ov);
+    }
 
-            gpu.render_menu(&self.menu_fb);
+    fn handle_key(&mut self, key: KeyCode, pressed: bool, el: &ActiveEventLoop) {
+        let bit = match key {
+            KeyCode::KeyZ => Some(Buttons::A),
+            KeyCode::KeyX => Some(Buttons::B),
+            KeyCode::Tab | KeyCode::ShiftRight => Some(Buttons::SELECT),
+            KeyCode::Enter => Some(Buttons::START),
+            KeyCode::ArrowUp => Some(Buttons::UP),
+            KeyCode::ArrowDown => Some(Buttons::DOWN),
+            KeyCode::ArrowLeft => Some(Buttons::LEFT),
+            KeyCode::ArrowRight => Some(Buttons::RIGHT),
+            _ => None,
+        };
+        if let Some(b) = bit {
+            self.input.set(b, pressed);
+        }
+        match key {
+            KeyCode::Backspace => self.rewinding = pressed && self.nes.is_some(),
+            KeyCode::Space => {
+                self.turbo = pressed;
+                self.pacer.set_speed(if pressed { TURBO } else { 1.0 });
+            }
+            _ => {}
+        }
+        if !pressed {
+            return;
+        }
+        match key {
+            KeyCode::Escape => {
+                if self.nes.is_some() {
+                    self.paused = !self.paused;
+                    self.input.clear();
+                    if !self.paused {
+                        self.pacer.resync(self.now());
+                    }
+                } else {
+                    self.flush_save();
+                    el.exit();
+                }
+            }
+            KeyCode::KeyO => self.open_rom(),
+            KeyCode::KeyR => self.reset(),
+            KeyCode::F3 => {
+                self.debug_overlay = !self.debug_overlay;
+                self.toast(if self.debug_overlay { "Debug ON" } else { "Debug OFF" });
+            }
+            KeyCode::F4 => {
+                if let Some(n) = &self.nes {
+                    log::info!("{}", n.debugger.coverage_report());
+                    self.toast("Cobertura -> log");
+                }
+            }
+            KeyCode::F5 => self.save_state(),
+            KeyCode::F7 => self.load_state(),
+            KeyCode::F6 => {
+                if let Some(n) = &self.nes {
+                    log::info!("{}", rnfe_core::diagnostic::diagnostic_report(&n.cpu, &n.bus));
+                    self.toast("Diagnóstico -> log");
+                }
+            }
+            KeyCode::F9 => {
+                if let Some(n) = self.nes.as_mut() {
+                    n.debugger.trace_enabled = !n.debugger.trace_enabled;
+                    n.debugger.enabled = n.debugger.trace_enabled;
+                    if !n.debugger.trace_enabled {
+                        for line in n.debugger.trace_log.iter().rev().take(20).rev() {
+                            log::info!("{line}");
+                        }
+                    }
+                    let on = n.debugger.trace_enabled;
+                    self.toast(if on { "Trace ON" } else { "Trace OFF -> log" });
+                }
+            }
+            KeyCode::F11 => self.toggle_fullscreen(),
+            _ => {}
+        }
+    }
+
+    fn handle_click(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
+        let (mx, my) = (x as i32, y as i32);
+        if self.nes.is_none() || self.paused {
+            let mut action = self.ui.handle_click(mx, my);
+            if action == MenuAction::None && self.nes.is_none() {
+                if let Some((w, h)) = self.gpu.as_ref().map(|g| g.size()) {
+                    let (bx, by, bw, bh) =
+                        self.ui.button_rect("Open ROM", 18.0, w as i32 / 2, (h as f32 * 0.58) as i32);
+                    if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
+                        action = MenuAction::OpenRom;
+                    }
+                }
+            }
+            self.menu_action(action, el);
         }
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.win.is_some() {
+        if self.window.is_some() {
             return;
         }
-        let attrs = WindowAttributes::default()
-            .with_title("RNFE - NES Emulator")
+        let title =
+            if self.rom_name.is_empty() { "RNFE".to_string() } else { format!("RNFE — {}", self.rom_name) };
+        #[allow(unused_mut)]
+        let mut attrs = WindowAttributes::default()
+            .with_title(title)
             .with_inner_size(winit::dpi::PhysicalSize::new(768, 720));
-        let owned = el.create_window(attrs).expect("window");
-        let win: &'static Window = Box::leak(Box::new(owned));
-        self.win = Some(win);
-        self.gpu = Some(GpuState::new(win));
-        win.request_redraw();
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowAttributesExtWebSys;
+            let canvas = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id("rnfe"))
+                .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+            attrs = attrs.with_canvas(canvas).with_prevent_default(true).with_focusable(true);
+        }
+        let window = Arc::new(el.create_window(attrs).expect("janela"));
+        self.window = Some(window.clone());
+        let size = window.inner_size();
+        self.layout = TouchLayout::for_size(size.width.max(1) as f32, size.height.max(1) as f32);
+        #[cfg(feature = "gamepad")]
+        {
+            self.gilrs = gilrs::Gilrs::new().ok();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match pollster::block_on(GpuState::new(window.clone())) {
+                Ok(g) => self.gpu = Some(g),
+                Err(e) => {
+                    log::error!("GPU: {e}");
+                    self.gpu_error = Some(e);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let proxy = self.proxy.clone();
+            platform::spawn_with(move || async move {
+                let r = GpuState::new(window).await;
+                let _ = proxy.send_event(UserEvent::GpuReady(Box::new(r)));
+            });
+        }
+        self.pacer.resync(self.now());
+        self.redraw();
+    }
+
+    fn user_event(&mut self, _el: &ActiveEventLoop, ev: UserEvent) {
+        match ev {
+            UserEvent::GpuReady(r) => match *r {
+                Ok(g) => {
+                    self.gpu = Some(g);
+                    if let Some(w) = &self.window {
+                        let s = w.inner_size();
+                        if let Some(g) = self.gpu.as_mut() {
+                            g.resize(s.width, s.height);
+                        }
+                    }
+                    self.pacer.resync(self.now());
+                    self.redraw();
+                }
+                Err(e) => {
+                    log::error!("GPU: {e}");
+                    self.gpu_error = Some(e);
+                }
+            },
+            UserEvent::RomLoaded { name, bytes } => {
+                self.loading = false;
+                match crate::load_rom_bytes(&bytes) {
+                    Ok(nes) => {
+                        self.install_nes(nes, name.clone());
+                        self.toast(name.clone());
+                    }
+                    Err(e) => self.toast(format!("{name}: {e}")),
+                }
+                self.redraw();
+            }
+            UserEvent::RomLoadFailed(why) => {
+                self.loading = false;
+                if why != "cancelado" {
+                    self.toast(why);
+                }
+            }
+        }
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, ev: WindowEvent) {
-        let Some(w) = self.win else { return };
-        if w.id() != id {
+        let Some(window) = self.window.clone() else { return };
+        if window.id() != id {
             return;
         }
         match ev {
             WindowEvent::CloseRequested => {
                 self.flush_save();
-                el.exit()
+                el.exit();
             }
             WindowEvent::Resized(s) => {
-                if let Some(gpu) = self.gpu.as_mut() {
-                    gpu.resize(s.width, s.height);
+                if let Some(g) = self.gpu.as_mut() {
+                    g.resize(s.width, s.height);
                 }
-                w.request_redraw();
+                self.layout = TouchLayout::for_size(s.width.max(1) as f32, s.height.max(1) as f32);
+                self.redraw();
             }
             WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::Focused(false) => {
+                self.input.clear();
+                self.touch.clear();
+                self.rewinding = false;
+            }
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_pos = (position.x, position.y);
+                self.cursor = (position.x, position.y);
+                if self.nes.is_none() || self.paused {
+                    self.redraw();
+                }
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                let mx = self.cursor_pos.0 as i32;
-                let my = self.cursor_pos.1 as i32;
-
-                if self.nes.is_none() || self.paused {
-                    let mut action = self.ui.handle_click(mx, my);
-                    // Botão central só na tela inicial
-                    if action == crate::ui::MenuAction::None && self.nes.is_none() {
-                        let win_size = w.inner_size();
-                        let cx = win_size.width as i32 / 2;
-                        let btn_y = (win_size.height as f32 * 0.58) as i32;
-                        let (bx, by, bw, bh) = self.ui.button_rect("Open ROM", 18.0, cx, btn_y);
-                        if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
-                            action = crate::ui::MenuAction::OpenRom;
-                        }
-                    }
-                    match action {
-                        crate::ui::MenuAction::OpenRom => {
-                            self.paused = false;
-                            self.open_rom();
-                        }
-                        crate::ui::MenuAction::Reset => {
-                            if let Some(ref mut nes) = self.nes {
-                                nes.reset();
+                self.ensure_audio();
+                let (x, y) = (self.cursor.0 as f32, self.cursor.1 as f32);
+                self.handle_click(x, y, el);
+                self.redraw();
+            }
+            WindowEvent::Touch(t) => {
+                let (x, y) = (t.location.x as f32, t.location.y as f32);
+                match t.phase {
+                    TouchPhase::Started => {
+                        self.ensure_audio();
+                        if self.nes.is_some() && !self.paused {
+                            if self.layout.special(x, y) == Some(Special::Menu) {
+                                self.paused = true;
+                                self.input.clear();
+                                self.touch.clear();
+                            } else {
+                                self.touch.down(&self.layout, t.id, x, y);
                             }
-                            self.paused = false;
+                        } else {
+                            self.touch.seen = true;
+                            self.cursor = (t.location.x, t.location.y);
+                            if self.paused && self.layout.special(x, y) == Some(Special::Menu) {
+                                self.paused = false;
+                                self.pacer.resync(self.now());
+                            } else {
+                                self.handle_click(x, y, el);
+                            }
                         }
-                        crate::ui::MenuAction::Quit => {
-                            self.flush_save();
-                            el.exit()
-                        }
-                        crate::ui::MenuAction::None => {}
                     }
+                    TouchPhase::Moved => self.touch.moved(&self.layout, t.id, x, y),
+                    TouchPhase::Ended | TouchPhase::Cancelled => self.touch.up(t.id),
                 }
+                self.redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(ref mut nes) = self.nes {
-                    let pressed = event.state == ElementState::Pressed;
-                    let bit = match event.physical_key {
-                        PhysicalKey::Code(KeyCode::KeyZ) => Some(0x80),
-                        PhysicalKey::Code(KeyCode::KeyX) => Some(0x40),
-                        PhysicalKey::Code(KeyCode::Tab) => Some(0x20),
-                        PhysicalKey::Code(KeyCode::Enter) => Some(0x10),
-                        PhysicalKey::Code(KeyCode::ArrowUp) => Some(0x08),
-                        PhysicalKey::Code(KeyCode::ArrowDown) => Some(0x04),
-                        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(0x02),
-                        PhysicalKey::Code(KeyCode::ArrowRight) => Some(0x01),
-                        _ => None,
-                    };
-                    if let Some(b) = bit {
-                        if pressed {
-                            nes.bus.controller[0] |= b;
-                        } else {
-                            nes.bus.controller[0] &= !b;
-                        }
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        self.ensure_audio();
                     }
-                    if pressed {
-                        match event.physical_key {
-                            PhysicalKey::Code(KeyCode::Escape) => {
-                                self.paused = !self.paused;
-                            }
-                            PhysicalKey::Code(KeyCode::KeyR) => {
-                                nes.reset();
-                                println!("NES Reset!");
-                            }
-                            PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
-                            PhysicalKey::Code(KeyCode::F3) => {
-                                self.debug_overlay = !self.debug_overlay;
-                            }
-                            PhysicalKey::Code(KeyCode::F4) => {
-                                println!("{}", nes.debugger.coverage_report());
-                                if let Some(stuck) = nes.debugger.detect_stuck(&nes.cpu, &nes.bus) {
-                                    println!("[STUCK] {}", stuck);
-                                }
-                                self.toast_msg = "Coverage report -> terminal".into();
-                                self.toast_until = Instant::now() + Duration::from_secs(2);
-                            }
-                            PhysicalKey::Code(KeyCode::F5) => {
-                                nes.debugger.trace_enabled = !nes.debugger.trace_enabled;
-                                nes.debugger.enabled = nes.debugger.trace_enabled;
-                                println!(
-                                    "CPU Trace: {}",
-                                    if nes.debugger.trace_enabled { "ON" } else { "OFF" }
-                                );
-                                if !nes.debugger.trace_enabled && !nes.debugger.trace_log.is_empty() {
-                                    println!("--- Last {} instructions ---", nes.debugger.trace_log.len());
-                                    for line in nes.debugger.trace_log.iter().rev().take(20).rev() {
-                                        println!("{}", line);
-                                    }
-                                }
-                                self.toast_msg = if nes.debugger.trace_enabled {
-                                    "Trace ON".into()
-                                } else {
-                                    "Trace OFF -> terminal".into()
-                                };
-                                self.toast_until = Instant::now() + Duration::from_secs(2);
-                            }
-                            PhysicalKey::Code(KeyCode::F6) => {
-                                print!("{}", rnfe_core::diagnostic::diagnostic_report(&nes.cpu, &nes.bus));
-                                self.toast_msg = "Diagnostic -> terminal".into();
-                                self.toast_until = Instant::now() + Duration::from_secs(2);
-                            }
-                            PhysicalKey::Code(KeyCode::F11) => {
-                                if w.fullscreen().is_some() {
-                                    w.set_fullscreen(None);
-                                } else {
-                                    w.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                } else if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => {
-                            self.flush_save();
-                            el.exit()
-                        }
-                        PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
-                        PhysicalKey::Code(KeyCode::F11) => {
-                            if w.fullscreen().is_some() {
-                                w.set_fullscreen(None);
-                            } else {
-                                w.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                            }
-                        }
-                        _ => {}
+                    if !event.repeat || event.state == ElementState::Released {
+                        self.handle_key(code, event.state == ElementState::Pressed, el);
                     }
                 }
-                // F3 funciona sempre (com ou sem ROM)
-                if event.state == ElementState::Pressed {
-                    if let PhysicalKey::Code(KeyCode::F3) = event.physical_key {
-                        // Já foi toggled acima se tinha ROM, mas na tela sem ROM precisa fazer aqui
-                        if self.nes.is_none() {
-                            self.debug_overlay = !self.debug_overlay;
-                        }
-                        self.toast_msg =
-                            if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
-                        self.toast_until = Instant::now() + Duration::from_secs(2);
-                    }
-                }
+                self.redraw();
             }
             _ => {}
         }
-
-        w.request_redraw();
     }
-}
 
-pub fn run() -> Result<(), winit::error::EventLoopError> {
-    let el: EventLoop<()> = EventLoop::new()?;
-    el.run_app(&mut App::new())
-}
-
-pub fn run_with_nes(nes: Box<Nes>) -> Result<(), winit::error::EventLoopError> {
-    let el: EventLoop<()> = EventLoop::new()?;
-    el.run_app(&mut App::new_with_nes(nes))
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        self.advance();
+        if self.nes.is_some() && !self.paused && self.gpu.is_some() {
+            el.set_control_flow(ControlFlow::WaitUntil(self.start + self.pacer.next_deadline()));
+        } else {
+            el.set_control_flow(ControlFlow::Wait);
+        }
+    }
 }
