@@ -1,0 +1,115 @@
+name: Release
+
+# Em tag `v*`: binários Linux/Windows x86_64, APK arm64 e o site web, anexados à Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  desktop:
+    name: desktop — ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-x86_64, archive: tar.gz }
+          - { os: windows-latest, name: windows-x86_64, archive: zip }
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libxkbcommon-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - run: cargo build --release -p rnfe-desktop -p rnfe-tty
+      - name: Empacotar
+        shell: bash
+        run: |
+          mkdir -p out/rnfe-${{ matrix.name }}
+          cp README.md LICENSE out/rnfe-${{ matrix.name }}/
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/rnfe-desktop.exe target/release/rnfe-tty.exe out/rnfe-${{ matrix.name }}/
+            cd out && 7z a ../rnfe-${{ matrix.name }}.zip rnfe-${{ matrix.name }}
+          else
+            cp target/release/rnfe-desktop target/release/rnfe-tty out/rnfe-${{ matrix.name }}/
+            cd out && tar czf ../rnfe-${{ matrix.name }}.tar.gz rnfe-${{ matrix.name }}
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rnfe-${{ matrix.name }}
+          path: rnfe-${{ matrix.name }}.${{ matrix.archive }}
+
+  web:
+    name: web — dist.tar.gz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-web
+      - uses: jetli/trunk-action@v0.5.0
+        with:
+          version: "latest"
+      - run: trunk build --release
+      - run: tar czf rnfe-web-dist.tar.gz -C dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rnfe-web-dist
+          path: rnfe-web-dist.tar.gz
+
+  android:
+    name: android — APK arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-android
+      - run: cargo install cargo-ndk --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build -p rnfe-android --release
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - run: cp android/app/build/outputs/apk/release/app-release.apk rnfe-android-arm64.apk && ls -la rnfe-android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rnfe-android-arm64
+          path: rnfe-android-arm64.apk
+
+  release:
+    name: GitHub Release
+    needs: [desktop, web, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: ls -la artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
