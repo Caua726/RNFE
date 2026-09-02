@@ -13,6 +13,10 @@ pub mod mappers;
 pub mod nes;
 pub mod ppu;
 
+#[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod testing;
+
 pub use buttons::Buttons;
 pub use cartridge::{Cartridge, Mirror, RomError};
 pub use nes::Nes;

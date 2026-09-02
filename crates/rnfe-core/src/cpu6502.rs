@@ -94,7 +94,7 @@ impl Cpu6502 {
     // Proximo valor
     pub fn IMM(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.addr_abs = self.pc;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         0
     }
 
@@ -105,7 +105,7 @@ impl Cpu6502 {
     // Requer um byte de memoria ao invez de 2
     pub fn ZP0(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.addr_abs = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         self.addr_abs &= 0x00FF;
         0
     }
@@ -117,7 +117,7 @@ impl Cpu6502 {
     // Como um array em C
     pub fn ZPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let base = self.read(bus, self.pc) as u8;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         self.addr_abs = base.wrapping_add(self.x) as u16;
         0
     }
@@ -125,7 +125,7 @@ impl Cpu6502 {
     // O Mesmo do ZPX mas com Y
     pub fn ZPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let base = self.read(bus, self.pc) as u8;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         self.addr_abs = base.wrapping_add(self.y) as u16;
         0
     }   
@@ -137,9 +137,9 @@ impl Cpu6502 {
     // Memória para formar um en1dreço de 16 bits
     pub fn ABS(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         self.addr_abs = (hi << 8) | lo;
 
@@ -151,12 +151,12 @@ impl Cpu6502 {
     // ABS, mas adiciona o endereço X
     pub fn ABX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         self.addr_abs = (hi << 8) | lo;
-        self.addr_abs += self.x as u16;
+        self.addr_abs = self.addr_abs.wrapping_add(self.x as u16);
 
         if (self.addr_abs & 0xFF00) != (hi << 8) {
             1
@@ -170,12 +170,12 @@ impl Cpu6502 {
     // Adiciona o valor Y ao endereço
     pub fn ABY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         self.addr_abs = (hi << 8) | lo;
-        self.addr_abs += self.y  as u16;
+        self.addr_abs = self.addr_abs.wrapping_add(self.y as u16);
 
         if (self.addr_abs & 0xFF00) != (hi << 8) {
             1
@@ -193,9 +193,9 @@ impl Cpu6502 {
     // A page boudnary
     pub fn IND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let ptr_lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let ptr_hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
 
         let ptr: u16 = (ptr_hi << 8) | ptr_lo;
 
@@ -212,7 +212,7 @@ impl Cpu6502 {
     // De 16 bits que precisamos para a instrução
     pub fn IZX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let t: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let lo: u16 = self.read(bus, (t + (self.x  as u16)) & 0x00FF) as u16;
         let hi: u16 = self.read(bus, (t + (self.x as u16) + 1) & 0x00FF) as u16;
 
@@ -227,7 +227,7 @@ impl Cpu6502 {
     // Endereço final.
     pub fn IZY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let t: u16 = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         let lo: u16 = self.read(bus, t & 0x00FF) as u16;
         let hi: u16 = self.read(bus, (t + 1) & 0x00FF) as u16;
 
@@ -252,7 +252,7 @@ impl Cpu6502 {
     // Relativo, diferente dos demais
     pub fn REL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.addr_rel = self.read(bus, self.pc) as u16;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         if (self.addr_rel & 0x80) != 0 {
             self.addr_rel |= 0xFF00;
         }
@@ -506,14 +506,14 @@ impl Cpu6502 {
     // Funcão: Coloca o valor do acumulador no stack
     pub fn PHA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.write(bus, 0x100 + self.stkp as u16, self.a);
-        self.stkp -= 1;
+        self.stkp = self.stkp.wrapping_sub(1);
         0
     }
 
     // PLA: Pull Accumulator
     // Funcão: Pega o valor do stack e coloca no acumulador
     pub fn PLA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.stkp += 1;
+        self.stkp = self.stkp.wrapping_add(1);
         self.a = self.read(bus, 0x100 + self.stkp as u16);
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
@@ -566,7 +566,7 @@ impl Cpu6502 {
 
     // BRK: Force Interrupt
     pub fn BRK(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         
         self.setFlag(FLAGS6502::I, true);
         self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);

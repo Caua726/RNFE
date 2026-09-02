@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-04 (NROM)
-Estado: concluída
-Próximo: F0-05 — harness de testes
+Tarefa: F0-05 (harness)
+Estado: concluída — 120 ROMs na tabela: 30 Pass / 90 KnownFail; nestest VERIFIED_LINES=5004
+Próximo: F0-06 — status, bench, snapshots, linha de base
 
 ## Linha de base
 (preenchida em F0-06)
@@ -31,7 +31,7 @@ Próximo: F0-05 — harness de testes
 - [x] F0-02 [S] workspace: crates/rnfe-core (9 módulos + mappers), crates/rnfe-gui (display/ui), crates/rnfe-desktop; perfis; `default-members` sem wgpu; .cargo/config.toml
 - [x] F0-03 core: `Cartridge::from_bytes` + `RomError`; `println!`→`log`; `diagnostic_report()->String`; `Buttons`; `Nes::new(cart)`; `run_frame/step_instruction/peek/set_controller/drain_audio/framebuffer` (RGBA8)
 - [x] F0-04 NROM: máscara 32 KB (`& 0x3FFF` extra) + PRG RAM `$6000-$7FFF`
-- [ ] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
+- [x] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
 - [ ] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
 - [ ] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
 - [ ] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
