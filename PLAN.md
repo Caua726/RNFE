@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F2-04 — VBL/NMI exatos
+Tarefa: F2-06 — avaliação de sprites como no hardware
 Estado: concluída
-Próximo: F2-06 — avaliação de sprites (overflow, sprite 0 em x<255), depois F2-05 e F2-07
+Próximo: F2-05 — open bus da PPU, $2007 durante render; depois F2-07 (paleta 512)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -66,7 +66,7 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - [x] F2-03 length counter halt/reload ordering
 - [x] F2-04 VBL/NMI exatos: (241,1), prevent_vbl, supressão, odd-frame em (261,339)
 - [ ] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
-- [ ] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255
+- [x] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255
 - [ ] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
 
 ## F3 — Mappers, saves, rewind (`fase-3-mappers-saves`) · marco M3

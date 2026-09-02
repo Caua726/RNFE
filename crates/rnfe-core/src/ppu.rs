@@ -106,6 +106,12 @@ pub struct Ppu {
     sprite_shifter_pattern_hi: [u8; 8],
     sprite_zero_hit_possible: bool,
     sprite_zero_being_rendered: bool,
+    /// Dot em que a avaliação (com o bug do hardware) setaria a flag de overflow nesta linha.
+    overflow_dot: Option<i16>,
+    /// "OAM secundário": sprites avaliados para a linha seguinte, copiados no dot 257.
+    next_sprites: [ObjectAttributeEntry; 8],
+    next_sprite_count: usize,
+    next_sprite_zero: bool,
 
     // Screen (no heap pra nao estourar a stack)
     pub screen: Box<[[u8; 4]; 256 * 240]>,
@@ -172,6 +178,10 @@ impl Ppu {
             sprite_shifter_pattern_hi: [0; 8],
             sprite_zero_hit_possible: false,
             sprite_zero_being_rendered: false,
+            overflow_dot: None,
+            next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
+            next_sprite_count: 0,
+            next_sprite_zero: false,
             screen: vec![[0u8; 4]; 256 * 240].into_boxed_slice().try_into().unwrap(),
             scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
@@ -188,7 +198,11 @@ impl Ppu {
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {
         match addr {
             0x0002 => self.status,
-            0x0004 => self.oam[self.oam_addr as usize],
+            0x0004 => {
+                let v = self.oam[self.oam_addr as usize];
+                // bits 2-4 do byte de atributo não existem no hardware
+                if self.oam_addr & 3 == 2 { v & 0xE3 } else { v }
+            }
             _ => 0,
         }
     }
@@ -205,7 +219,11 @@ impl Ppu {
                 }
                 data
             }
-            0x0004 => self.oam[self.oam_addr as usize],
+            0x0004 => {
+                let v = self.oam[self.oam_addr as usize];
+                // bits 2-4 do byte de atributo não existem no hardware
+                if self.oam_addr & 3 == 2 { v & 0xE3 } else { v }
+            }
             0x0007 => {
                 let mut data = self.ppu_data_buffer;
                 self.ppu_data_buffer = self.vram_read(self.vram_addr, cart);
@@ -238,8 +256,13 @@ impl Ppu {
                 self.oam_addr = data;
             }
             0x0004 => {
-                self.oam[self.oam_addr as usize] = data;
-                self.oam_addr = self.oam_addr.wrapping_add(1);
+                if self.rendering && self.scanline < 240 {
+                    // durante o render a escrita é ignorada, mas OAMADDR sobe 4 (bits altos)
+                    self.oam_addr = self.oam_addr.wrapping_add(4);
+                } else {
+                    self.oam[self.oam_addr as usize] = data;
+                    self.oam_addr = self.oam_addr.wrapping_add(1);
+                }
             }
             0x0005 => {
                 if self.address_latch == 0 {
@@ -415,104 +438,51 @@ impl Ppu {
                 self.transfer_address_y();
             }
 
-            // Foreground rendering
-            if self.cycle == 257 && self.scanline >= 0 {
-                self.sprite_count = 0;
-                for i in 0..8 {
-                    self.sprites_scanline[i] =
-                        ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF };
-                }
-                self.sprite_zero_hit_possible = false;
-
-                let mut oam_entry = 0;
-                while oam_entry < 64 && self.sprite_count < 9 {
-                    let diff = self.scanline - self.oam[(oam_entry * 4) as usize] as i16;
-                    if diff >= 0
-                        && diff < if (self.control & 0x20) != 0 { 16 } else { 8 }
-                        && self.sprite_count < 8
-                        && self.sprite_count < 8
-                    {
-                        if oam_entry == 0 {
-                            self.sprite_zero_hit_possible = true;
-                        }
-
-                        self.sprites_scanline[self.sprite_count] = ObjectAttributeEntry {
-                            y: self.oam[(oam_entry * 4) as usize],
-                            id: self.oam[(oam_entry * 4 + 1) as usize],
-                            attribute: self.oam[(oam_entry * 4 + 2) as usize],
-                            x: self.oam[(oam_entry * 4 + 3) as usize],
-                        };
-                        self.sprite_count += 1;
-                    }
-                    oam_entry += 1;
-                }
-                self.status |= if self.sprite_count >= 8 { 0x20 } else { 0 };
+            // Avaliação de sprites da próxima linha: o hardware faz entre os dots 65 e ~256;
+            // aqui é feita de uma vez no dot 65, com o mesmo algoritmo (inclusive o bug do
+            // overflow) e o dot em que a flag de overflow seria setada.
+            if self.cycle == 65 && self.scanline >= 0 && self.rendering {
+                self.evaluate_sprites();
+            }
+            if self.cycle == 257 {
+                self.sprites_scanline = self.next_sprites;
+                self.sprite_count = self.next_sprite_count;
+                self.sprite_zero_hit_possible = self.next_sprite_zero;
+            }
+            if self.scanline >= 0 && self.overflow_dot == Some(self.cycle) {
+                self.status |= 0x20;
+            }
+            // OAMADDR é zerado durante as buscas de sprite
+            if self.rendering && (257..=320).contains(&self.cycle) {
+                self.oam_addr = 0;
             }
 
-            if self.cycle == 340 {
+            // Busca dos padrões dos sprites da próxima linha (feita de uma vez no dot 340)
+            if self.cycle == 340 && self.scanline >= 0 {
+                let tall = (self.control & 0x20) != 0;
+                let last = if tall { 15u16 } else { 7 };
                 for i in 0..self.sprite_count {
-                    let mut sprite_pattern_bits_lo: u8;
-                    let mut sprite_pattern_bits_hi: u8;
-                    #[allow(clippy::needless_late_init)]
-                    let sprite_pattern_addr_lo: u16;
-                    #[allow(clippy::needless_late_init)]
-                    let sprite_pattern_addr_hi: u16;
-
-                    if (self.control & 0x20) == 0 {
-                        if (self.sprites_scanline[i].attribute & 0x80) == 0 {
-                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9)
-                                | (self.sprites_scanline[i].id as u16 * 16)
-                                | ((self.scanline - self.sprites_scanline[i].y as i16) as u16);
-                        } else {
-                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9)
-                                | (self.sprites_scanline[i].id as u16 * 16)
-                                | (7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16;
-                        }
+                    let sp = self.sprites_scanline[i];
+                    let mut row = (self.scanline - sp.y as i16) as u16 & last;
+                    if sp.attribute & 0x80 != 0 {
+                        row = last - row; // flip vertical
+                    }
+                    let addr = if tall {
+                        ((sp.id as u16 & 0x01) << 12)
+                            | ((sp.id as u16 & 0xFE) << 4)
+                            | ((row & 8) << 1)
+                            | (row & 7)
                     } else {
-                        if (self.sprites_scanline[i].attribute & 0x80) == 0 {
-                            if (self.scanline - self.sprites_scanline[i].y as i16) < 8 {
-                                sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
-                                    | ((self.sprites_scanline[i].id as u16 & 0xFE) << 4)
-                                    | ((self.scanline - self.sprites_scanline[i].y as i16) as u16 & 0x07);
-                            } else {
-                                sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
-                                    | (((self.sprites_scanline[i].id as u16 & 0xFE) + 1) << 4)
-                                    | ((self.scanline - self.sprites_scanline[i].y as i16) as u16 & 0x07);
-                            }
-                        } else {
-                            if (self.scanline - self.sprites_scanline[i].y as i16) < 8 {
-                                sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
-                                    | (((self.sprites_scanline[i].id as u16 & 0xFE) + 1) << 4)
-                                    | ((7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16
-                                        & 0x07);
-                            } else {
-                                sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
-                                    | ((self.sprites_scanline[i].id as u16 & 0xFE) << 4)
-                                    | ((7 - ((self.scanline - self.sprites_scanline[i].y as i16) & 0x07))
-                                        as u16);
-                            }
-                        }
+                        ((self.control as u16 & 0x08) << 9) | ((sp.id as u16) << 4) | row
+                    };
+                    let mut lo = self.vram_read(addr, cart);
+                    let mut hi = self.vram_read(addr + 8, cart);
+                    if sp.attribute & 0x40 != 0 {
+                        lo = lo.reverse_bits(); // flip horizontal
+                        hi = hi.reverse_bits();
                     }
-
-                    sprite_pattern_addr_hi = sprite_pattern_addr_lo + 8;
-                    sprite_pattern_bits_lo = self.vram_read(sprite_pattern_addr_lo, cart);
-                    sprite_pattern_bits_hi = self.vram_read(sprite_pattern_addr_hi, cart);
-
-                    if (self.sprites_scanline[i].attribute & 0x40) != 0 {
-                        fn flip_byte(b: u8) -> u8 {
-                            let mut b = b;
-                            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-                            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-                            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-                            b
-                        }
-
-                        sprite_pattern_bits_lo = flip_byte(sprite_pattern_bits_lo);
-                        sprite_pattern_bits_hi = flip_byte(sprite_pattern_bits_hi);
-                    }
-
-                    self.sprite_shifter_pattern_lo[i] = sprite_pattern_bits_lo;
-                    self.sprite_shifter_pattern_hi[i] = sprite_pattern_bits_hi;
+                    self.sprite_shifter_pattern_lo[i] = lo;
+                    self.sprite_shifter_pattern_hi[i] = hi;
                 }
             }
         }
@@ -531,7 +501,7 @@ impl Ppu {
         }
 
         // Shifters de sprite avançam durante a linha (o x de cada sprite conta até zero)
-        if visible && self.cycle >= 1 && self.cycle < 258 {
+        if visible && self.cycle >= 1 && self.cycle <= 256 {
             for i in 0..self.sprite_count {
                 if self.sprites_scanline[i].x > 0 {
                     self.sprites_scanline[i].x -= 1;
@@ -553,6 +523,61 @@ impl Ppu {
                 self.scanline = -1;
                 self.frame_complete = true;
                 self.odd_frame = !self.odd_frame;
+            }
+        }
+    }
+
+    /// Avaliação de sprites para a linha seguinte, a partir de `oam_addr` (desalinhamento
+    /// incluído). Cada leitura de OAM custa 2 dots a partir do 65; depois do 8º sprite o
+    /// hardware continua lendo com o índice `m` errado — é isso que gera a flag de overflow.
+    fn evaluate_sprites(&mut self) {
+        let height: i16 = if (self.control & 0x20) != 0 { 16 } else { 8 };
+        let in_range = |y: u8| {
+            let diff = self.scanline - y as i16;
+            diff >= 0 && diff < height
+        };
+        self.next_sprite_count = 0;
+        self.next_sprite_zero = false;
+        self.overflow_dot = None;
+        for e in self.next_sprites.iter_mut() {
+            *e = ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF };
+        }
+
+        let start = self.oam_addr as usize;
+        let mut reads: i16 = 0;
+        let mut n = 0usize;
+        // fase 1: até 8 sprites
+        while n < 64 && self.next_sprite_count < 8 {
+            let base = (start + n * 4) & 0xFF;
+            let y = self.oam[base];
+            reads += 1;
+            if in_range(y) {
+                reads += 3;
+                if n == 0 {
+                    self.next_sprite_zero = true;
+                }
+                self.next_sprites[self.next_sprite_count] = ObjectAttributeEntry {
+                    y,
+                    id: self.oam[(base + 1) & 0xFF],
+                    attribute: self.oam[(base + 2) & 0xFF],
+                    x: self.oam[(base + 3) & 0xFF],
+                };
+                self.next_sprite_count += 1;
+            }
+            n += 1;
+        }
+        // fase 2 (bug): lê OAM[n][m] como Y, incrementando m sem carry a cada erro
+        if self.next_sprite_count == 8 {
+            let mut m = 0usize;
+            while n < 64 {
+                let y = self.oam[(start + n * 4 + m) & 0xFF];
+                reads += 1;
+                if in_range(y) {
+                    self.overflow_dot = Some(65 + 2 * (reads - 1));
+                    break;
+                }
+                n += 1;
+                m = (m + 1) & 3;
             }
         }
     }
@@ -627,15 +652,11 @@ impl Ppu {
                 && (self.mask & 0x08) != 0
                 && (self.mask & 0x10) != 0
             {
-                if (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0 {
-                    // Left column clipping ativo, hit só a partir do pixel 8
-                    if self.cycle >= 9 && self.cycle < 258 {
-                        self.status |= 0x40;
-                    }
-                } else {
-                    if self.cycle >= 1 && self.cycle < 258 {
-                        self.status |= 0x40;
-                    }
+                // nunca no pixel 255; com clipping da coluna esquerda, só a partir do pixel 8
+                let x = self.cycle - 1;
+                let clipped = (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0;
+                if x != 255 && (!clipped || x >= 8) {
+                    self.status |= 0x40;
                 }
             }
         }
