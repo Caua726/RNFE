@@ -140,6 +140,8 @@ pub struct Cartridge {
     mapper: MapperKind,
     rom_hash: u64,
     wants_cpu_clock: bool,
+    /// PRG RAM padrão em `$6000-$7FFF` quando o mapper não trata o endereço.
+    prg_ram_fallback: bool,
 }
 
 impl Cartridge {
@@ -180,7 +182,8 @@ impl Cartridge {
             MapperKind::create(hdr.mapper, &data).ok_or(RomError::UnsupportedMapper(hdr.mapper))?;
         mapper.reset(&mut data);
         let wants_cpu_clock = mapper.wants_cpu_clock();
-        Ok(Cartridge { data, mapper, rom_hash, wants_cpu_clock })
+        let prg_ram_fallback = !mapper.manages_prg_ram();
+        Ok(Cartridge { data, mapper, rom_hash, wants_cpu_clock, prg_ram_fallback })
     }
 
     pub fn mapper_id(&self) -> u16 {
@@ -232,7 +235,9 @@ impl Cartridge {
     #[inline]
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
         match self.mapper.cpu_read(addr, &self.data) {
-            None if (0x6000..=0x7FFF).contains(&addr) => Some(self.data.prg_ram_at((addr & 0x1FFF) as usize)),
+            None if self.prg_ram_fallback && (0x6000..=0x7FFF).contains(&addr) => {
+                Some(self.data.prg_ram_at((addr & 0x1FFF) as usize))
+            }
             r => r,
         }
     }
@@ -242,7 +247,7 @@ impl Cartridge {
         if self.mapper.cpu_write(addr, data, &mut self.data) {
             return true;
         }
-        if (0x6000..=0x7FFF).contains(&addr) {
+        if self.prg_ram_fallback && (0x6000..=0x7FFF).contains(&addr) {
             self.data.prg_ram_set((addr & 0x1FFF) as usize, data);
             return true;
         }

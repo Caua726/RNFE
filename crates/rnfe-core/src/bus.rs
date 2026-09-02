@@ -67,8 +67,8 @@ impl Bus {
         for _ in DOTS_BEFORE_ACCESS..3 {
             self.ppu.step(&mut self.cartridge);
         }
-        if self.ppu.scanline_trigger {
-            self.ppu.scanline_trigger = false;
+        if self.ppu.a12_rise {
+            self.ppu.a12_rise = false;
             self.cartridge.a12_rise();
         }
         if self.mapper_clock {

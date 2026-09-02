@@ -168,6 +168,11 @@ pub trait Mapper {
     fn irq_pending(&self) -> bool {
         false
     }
+    /// O mapper cuida de `$6000-$7FFF` sozinho (habilita/protege a PRG RAM): o cartucho não
+    /// oferece a PRG RAM padrão quando `cpu_read` devolve `None`.
+    fn manages_prg_ram(&self) -> bool {
+        false
+    }
     /// Saída de áudio de expansão (somada ao mix da APU), em [-1, 1].
     fn audio_output(&self) -> f32 {
         0.0
@@ -300,6 +305,9 @@ impl Mapper for MapperKind {
     #[inline]
     fn audio_output(&self) -> f32 {
         dispatch!(self, m => m.audio_output())
+    }
+    fn manages_prg_ram(&self) -> bool {
+        dispatch!(self, m => m.manages_prg_ram())
     }
     fn reset(&mut self, data: &mut CartData) {
         dispatch!(self, m => m.reset(data))

@@ -80,6 +80,10 @@ impl Mapper for Fme7 {
         }
     }
 
+    fn manages_prg_ram(&self) -> bool {
+        true
+    }
+
     #[inline]
     fn chr_offset(&self, addr: u16) -> usize {
         self.chr_banks[(addr >> 10) as usize & 7] as usize * 0x0400 + (addr & 0x03FF) as usize

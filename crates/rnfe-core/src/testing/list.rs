@@ -30,6 +30,9 @@ pub struct TestRom {
     pub style: Style,
     pub expect: Expect,
     pub max_frames: u32,
+    /// Se > 0, o header é convertido para NES 2.0 com este submapper antes de carregar
+    /// (as ROMs do blargg são iNES; é o único jeito de pedir a revisão A do MMC3).
+    pub submapper: u8,
 }
 
 const fn t(
@@ -40,7 +43,20 @@ const fn t(
     expect: Expect,
     max_frames: u32,
 ) -> TestRom {
-    TestRom { suite, path, area, style, expect, max_frames }
+    TestRom { suite, path, area, style, expect, max_frames, submapper: 0 }
+}
+
+/// Como `t`, forçando um submapper NES 2.0.
+const fn ts(
+    suite: &'static str,
+    path: &'static str,
+    area: &'static str,
+    style: Style,
+    expect: Expect,
+    max_frames: u32,
+    submapper: u8,
+) -> TestRom {
+    TestRom { suite, path, area, style, expect, max_frames, submapper }
 }
 
 use Expect::{KnownFail as KF, Pass};
@@ -167,23 +183,16 @@ pub const TESTS: &[TestRom] = &[
     // `dmc_tests/*.nes` (buffer_retained, latency, status, status_irq) não têm veredito legível:
     // tocam uma amostra e ficam num tom (`JMP *`); só avaliáveis de ouvido. Fora da tabela.
     // ---------------------------------------------------------------- mappers
-    t(
-        "mmc3",
-        "mmc3_test_2/rom_singles/1-clocking.nes",
-        "mapper",
-        Mem,
-        KF("IRQ por pulso fixo, não por A12 (F3-02)"),
-        1000,
-    ),
-    t("mmc3", "mmc3_test_2/rom_singles/2-details.nes", "mapper", Mem, KF("A12 (F3-02)"), 1000),
-    t("mmc3", "mmc3_test_2/rom_singles/3-A12_clocking.nes", "mapper", Mem, KF("A12 (F3-02)"), 1000),
-    t("mmc3", "mmc3_test_2/rom_singles/4-scanline_timing.nes", "mapper", Mem, KF("A12 (F3-02)"), 1000),
-    t("mmc3", "mmc3_test_2/rom_singles/5-MMC3.nes", "mapper", Mem, KF("A12 (F3-02)"), 1000),
-    t("mmc3", "mmc3_test_2/rom_singles/6-MMC3_alt.nes", "mapper", Mem, KF("variante A (F3-02)"), 1000),
-    t("mmc3_irq", "mmc3_irq_tests/1.Clocking.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
-    t("mmc3_irq", "mmc3_irq_tests/2.Details.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
-    t("mmc3_irq", "mmc3_irq_tests/3.A12_clocking.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
+    t("mmc3", "mmc3_test_2/rom_singles/1-clocking.nes", "mapper", Mem, Pass, 1000),
+    t("mmc3", "mmc3_test_2/rom_singles/2-details.nes", "mapper", Mem, Pass, 1000),
+    t("mmc3", "mmc3_test_2/rom_singles/3-A12_clocking.nes", "mapper", Mem, Pass, 1000),
+    t("mmc3", "mmc3_test_2/rom_singles/4-scanline_timing.nes", "mapper", Mem, Pass, 1000),
+    t("mmc3", "mmc3_test_2/rom_singles/5-MMC3.nes", "mapper", Mem, Pass, 1000),
+    ts("mmc3", "mmc3_test_2/rom_singles/6-MMC3_alt.nes", "mapper", Mem, Pass, 1000, 4),
+    t("mmc3_irq", "mmc3_irq_tests/1.Clocking.nes", "mapper", Screen, Pass, 600),
+    t("mmc3_irq", "mmc3_irq_tests/2.Details.nes", "mapper", Screen, Pass, 600),
+    t("mmc3_irq", "mmc3_irq_tests/3.A12_clocking.nes", "mapper", Screen, Pass, 600),
     t("mmc3_irq", "mmc3_irq_tests/4.Scanline_timing.nes", "mapper", Screen, Pass, 600),
-    t("mmc3_irq", "mmc3_irq_tests/5.MMC3_rev_A.nes", "mapper", Screen, KF("variante A (F3-02)"), 600),
-    t("mmc3_irq", "mmc3_irq_tests/6.MMC3_rev_B.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
+    ts("mmc3_irq", "mmc3_irq_tests/5.MMC3_rev_A.nes", "mapper", Screen, Pass, 600, 4),
+    t("mmc3_irq", "mmc3_irq_tests/6.MMC3_rev_B.nes", "mapper", Screen, Pass, 600),
 ];

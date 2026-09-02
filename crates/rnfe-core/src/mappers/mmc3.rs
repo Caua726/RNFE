@@ -6,20 +6,29 @@ pub struct Mmc3 {
     bank_select: u8,
     regs: [u8; 8],
     irq_counter: u8,
-    irq_reload: u8,
+    irq_latch: u8,
+    /// `$C001` escrito: o próximo clock recarrega em vez de decrementar.
+    irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    /// `$A001`: bit 7 habilita a PRG RAM, bit 6 protege contra escrita.
+    ram_ctrl: u8,
+    /// Revisão A (NEC, submapper 4.4): IRQ só na transição para 0, não a cada clock em 0.
+    rev_a: bool,
 }
 
 impl Mmc3 {
-    pub fn new(_data: &CartData) -> Self {
+    pub fn new(data: &CartData) -> Self {
         Mmc3 {
             bank_select: 0,
             regs: [0, 2, 4, 5, 6, 7, 0, 1],
             irq_counter: 0,
-            irq_reload: 0,
+            irq_latch: 0,
+            irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            ram_ctrl: 0x80,
+            rev_a: data.submapper == 4,
         }
     }
 }
@@ -28,7 +37,11 @@ impl Mapper for Mmc3 {
     #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
-            return None;
+            return if addr >= 0x6000 && self.ram_ctrl & 0x80 != 0 {
+                Some(data.prg_ram_at((addr & 0x1FFF) as usize))
+            } else {
+                None
+            };
         }
         let swap = self.bank_select & 0x40 != 0;
         let last = data.prg_8k() - 1;
@@ -55,11 +68,17 @@ impl Mapper for Mmc3 {
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
         if addr < 0x8000 {
+            if addr >= 0x6000 {
+                if self.ram_ctrl & 0xC0 == 0x80 {
+                    data.prg_ram_set((addr & 0x1FFF) as usize, val);
+                }
+                return true;
+            }
             return false;
         }
-        match (addr & 0xE001, addr & 1) {
-            (0x8000, _) => self.bank_select = val,
-            (0x8001, _) => {
+        match addr & 0xE001 {
+            0x8000 => self.bank_select = val,
+            0x8001 => {
                 let r = (self.bank_select & 0x07) as usize;
                 self.regs[r] = match r {
                     0 | 1 => val & 0xFE,
@@ -67,18 +86,26 @@ impl Mapper for Mmc3 {
                     _ => val,
                 };
             }
-            (0xA000, _) => {
+            0xA000 => {
                 data.mirror = if val & 0x01 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
             }
-            (0xA001, _) => {} // proteção de PRG RAM: F3-02
-            (0xC000, _) => self.irq_reload = val,
-            (0xC001, _) => self.irq_counter = 0,
-            (0xE000, _) => {
+            0xA001 => self.ram_ctrl = val,
+            0xC000 => self.irq_latch = val,
+            0xC001 => {
+                // limpa o contador agora; recarrega no próximo clock (sem IRQ)
+                self.irq_counter = 0;
+                self.irq_reload = true;
+            }
+            0xE000 => {
                 self.irq_enabled = false;
-                self.irq_pending = false;
+                self.irq_pending = false; // ack
             }
             _ => self.irq_enabled = true,
         }
+        true
+    }
+
+    fn manages_prg_ram(&self) -> bool {
         true
     }
 
@@ -96,14 +123,18 @@ impl Mapper for Mmc3 {
     }
 
     fn a12_rise(&mut self) {
-        if self.irq_counter == 0 {
-            self.irq_counter = self.irq_reload;
+        let before = self.irq_counter;
+        if before == 0 || self.irq_reload {
+            self.irq_counter = self.irq_latch;
         } else {
             self.irq_counter -= 1;
         }
-        if self.irq_counter == 0 && self.irq_enabled {
+        // Rev B (Sharp): IRQ sempre que o contador está em 0 após o clock (inclusive recarregado
+        // com 0, a cada clock). Rev A (NEC): só quando passou a 0 agora, ou recarregou após $C001.
+        if self.irq_counter == 0 && self.irq_enabled && (!self.rev_a || before != 0 || self.irq_reload) {
             self.irq_pending = true;
         }
+        self.irq_reload = false;
     }
 
     #[inline]
@@ -115,17 +146,22 @@ impl Mapper for Mmc3 {
         self.bank_select = 0;
         self.regs = [0, 2, 4, 5, 6, 7, 0, 1];
         self.irq_counter = 0;
-        self.irq_reload = 0;
+        self.irq_latch = 0;
+        self.irq_reload = false;
         self.irq_enabled = false;
         self.irq_pending = false;
+        self.ram_ctrl = 0x80;
     }
 
     fn state_string(&self) -> String {
         format!(
-            "  MMC3 bank_select: ${:02X}  regs: {:?}\n  MMC3 IRQ: counter={} reload={} enabled={} pending={}\n",
+            "  MMC3 bank_select: ${:02X}  regs: {:?}  $A001: ${:02X}  rev {}\n  MMC3 IRQ: counter={} latch={} reload={} enabled={} pending={}\n",
             self.bank_select,
             self.regs,
+            self.ram_ctrl,
+            if self.rev_a { "A" } else { "B" },
             self.irq_counter,
+            self.irq_latch,
             self.irq_reload,
             self.irq_enabled,
             self.irq_pending
