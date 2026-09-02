@@ -4,6 +4,7 @@ Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
 ## Não publicado — F2 APU e PPU exatos
 
+- F2-07 PPU: framebuffer por índice de paleta (9 bits: ênfase + cor), `PALETTE_RGBA` de 512 cores gerada em `const fn`, RGBA convertido sob demanda em `Nes::framebuffer()`, `framebuffer_indexed()` para frontends com paleta na GPU; grayscale e ênfase no render; backdrop mostra `palette[v]` com render desligado (full_palette exibe as 512 cores). Exemplo `ppu_dump`.
 - F2-05 PPU: open bus ("decay register" por bit, ~600 ms), `$2007` durante o render incrementa X e Y, paleta lida com bits altos do open bus; PRG RAM de 8 KB em `$6000` para todo mapper. ppu_open_bus, cpu_exec_space_ppuio, cpu_dummy_writes_ppumem e test_ppu_read_buffer (Bisqwit) passam.
 - F2-06 PPU: avaliação de sprites igual ao hardware (a partir de OAMADDR, bug do índice `m` no 9º sprite, dot exato da flag de overflow, OAM secundário copiado no dot 257, OAMADDR zerado nos dots 257–320), sprite 0 nunca em x=255, sprites deixam de aparecer 1 px à esquerda, `$2004` mascara o byte de atributo e só bumpa OAMADDR durante o render. sprite_hit 11/11, sprite_overflow 5/5, oam_stress.
 - F2-04 PPU: `$2002` lido um dot antes do VBL suprime a flag/NMI do frame; dot pulado em (261,339→0,0) nos frames ímpares; `$2001` liga/desliga o render com 2 dots de atraso. ppu_vbl_nmi 10/10, vbl_nmi_timing 7/7.

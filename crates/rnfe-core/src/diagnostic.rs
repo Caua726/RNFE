@@ -148,7 +148,7 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
     let _ = writeln!(o, "\n[SCREEN]");
     let mut color_counts = std::collections::HashMap::new();
     for pixel in bus.ppu.screen.iter() {
-        *color_counts.entry(*pixel).or_insert(0u32) += 1;
+        *color_counts.entry(*pixel & 0x3F).or_insert(0u32) += 1;
     }
     let total = (256 * 240) as u32;
     let mut sorted: Vec<_> = color_counts.iter().collect();
@@ -156,16 +156,7 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
     let _ = writeln!(o, "  Unique colors: {}", sorted.len());
     for (i, (color, count)) in sorted.iter().take(5).enumerate() {
         let pct = **count as f32 / total as f32 * 100.0;
-        let _ = writeln!(
-            o,
-            "  {}. RGB({},{},{}) = {} pixels ({:.1}%)",
-            i + 1,
-            color[0],
-            color[1],
-            color[2],
-            count,
-            pct
-        );
+        let _ = writeln!(o, "  {}. cor ${:02X} = {} pixels ({:.1}%)", i + 1, color, count, pct);
     }
     if sorted.len() <= 2 {
         let _ = writeln!(o, "  WARNING: Screen has very few colors, rendering may be broken!");

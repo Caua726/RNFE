@@ -1,4 +1,4 @@
-/// Paleta NTSC de 64 cores (RGBA8); ênfase e cinza entram em F2-07.
+/// Paleta NTSC base de 64 cores (RGBA8).
 const NES_PALETTE: [[u8; 4]; 64] = [
     [84, 84, 84, 255],
     [0, 30, 116, 255],
@@ -73,6 +73,32 @@ const RENDER_DELAY: u8 = 2;
 /// Frames até um bit do open bus da PPU decair (~600 ms).
 const IO_DECAY_FRAMES: u8 = 36;
 
+/// Paleta completa: índice de 9 bits = `ênfase (bits 6-8) | cor (bits 0-5)`, como o PPU grava
+/// no framebuffer. A ênfase escurece os canais NÃO enfatizados em ~16 % por bit ligado.
+pub static PALETTE_RGBA: [[u8; 4]; 512] = build_palette();
+
+const fn build_palette() -> [[u8; 4]; 512] {
+    let mut out = [[0u8; 4]; 512];
+    let mut i = 0;
+    while i < 512 {
+        let base = NES_PALETTE[i & 0x3F];
+        let emph = (i >> 6) & 7; // bit0 = vermelho, bit1 = verde, bit2 = azul
+        let mut c = [base[0] as u32, base[1] as u32, base[2] as u32];
+        if emph != 0 {
+            let mut ch = 0;
+            while ch < 3 {
+                if emph & (1 << ch) == 0 {
+                    c[ch] = c[ch] * 215 / 256;
+                }
+                ch += 1;
+            }
+        }
+        out[i] = [c[0] as u8, c[1] as u8, c[2] as u8, 255];
+        i += 1;
+    }
+    out
+}
+
 pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
@@ -115,8 +141,8 @@ pub struct Ppu {
     next_sprite_count: usize,
     next_sprite_zero: bool,
 
-    // Screen (no heap pra nao estourar a stack)
-    pub screen: Box<[[u8; 4]; 256 * 240]>,
+    /// Framebuffer por índice de paleta (`ênfase << 6 | cor`), 256×240. RGBA via `PALETTE_RGBA`.
+    pub screen: Box<[u16; 256 * 240]>,
 
     // Timing
     pub scanline: i16,
@@ -188,7 +214,7 @@ impl Ppu {
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             next_sprite_count: 0,
             next_sprite_zero: false,
-            screen: vec![[0u8; 4]; 256 * 240].into_boxed_slice().try_into().unwrap(),
+            screen: vec![0u16; 256 * 240].into_boxed_slice().try_into().unwrap(),
             scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
             frame_complete: false,
@@ -711,10 +737,17 @@ impl Ppu {
             }
         }
 
-        let color = self.get_color_from_palette_ram(palette, pixel);
+        let color = if !self.rendering && (self.vram_addr & 0x3F00) == 0x3F00 {
+            // Render desligado com `v` apontando para a paleta: o backdrop mostra essa entrada
+            // (é assim que demos como full_palette exibem as 512 cores)
+            self.palette_table[Self::palette_index(self.vram_addr)]
+        } else {
+            self.color_from_palette_ram(palette, pixel)
+        };
+        let color = color & if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
         let x = (self.cycle - 1) as usize;
         let y = self.scanline as usize;
-        self.screen[y * 256 + x] = color;
+        self.screen[y * 256 + x] = ((self.mask as u16 & 0xE0) << 1) | color as u16;
     }
 
     fn update_shifters(&mut self) {
@@ -781,32 +814,13 @@ impl Ppu {
         }
     }
 
-    fn get_color_from_palette_ram(&self, palette: u8, pixel: u8) -> [u8; 4] {
-        // Se pixel é 0, usar sempre cor de background (palette 0, pixel 0)
-        if pixel == 0 {
-            let color_index = self.palette_table[0] & 0x3F;
-            return self.get_nes_color(color_index);
-        }
-
-        let addr = (palette as u16 * 4 + pixel as u16) & 0x001F;
-        let addr = if addr == 0x0010 {
-            0x0000
-        } else if addr == 0x0014 {
-            0x0004
-        } else if addr == 0x0018 {
-            0x0008
-        } else if addr == 0x001C {
-            0x000C
-        } else {
-            addr
-        };
-        let color_index = self.palette_table[addr as usize] & 0x3F;
-        self.get_nes_color(color_index)
-    }
-
+    /// Cor (0-63) da paleta RAM para o par (paleta, pixel); pixel 0 é sempre o backdrop.
     #[inline]
-    fn get_nes_color(&self, color_index: u8) -> [u8; 4] {
-        NES_PALETTE[(color_index & 0x3F) as usize]
+    fn color_from_palette_ram(&self, palette: u8, pixel: u8) -> u8 {
+        if pixel == 0 {
+            return self.palette_table[0];
+        }
+        self.palette_table[Self::palette_index((palette as u16) << 2 | pixel as u16)]
     }
 
     /// Nível da saída /NMI da PPU: VBL ligado e NMI habilitado em `$2000`.

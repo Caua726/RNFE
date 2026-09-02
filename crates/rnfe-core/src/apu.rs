@@ -22,6 +22,9 @@ const TRIANGLE_TABLE: [u8; 32] = [
     15,
 ];
 
+/// Clock da CPU NTSC (Hz).
+const CPU_HZ: f64 = 1_789_773.0;
+
 /// Períodos do ruído em ciclos de CPU (NTSC).
 const NOISE_PERIOD_TABLE: [u16; 16] =
     [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
@@ -477,6 +480,8 @@ pub struct Apu {
     // Buffer de áudio
     pub sample_buffer: Vec<f32>,
     pub sample_rate: f32,
+    /// Amostras por ciclo de CPU (`sample_rate / CPU_HZ`), pré-calculado.
+    sample_step: f64,
     sample_clock: f64,
 
     // Filtros high-pass (NES tem dois: 90 Hz e 440 Hz)
@@ -510,6 +515,7 @@ impl Apu {
             cycle: 0,
             sample_buffer: Vec::with_capacity(1024),
             sample_rate: 44100.0,
+            sample_step: 44100.0 / CPU_HZ,
             sample_clock: 0.0,
             hp1_prev_in: 0.0,
             hp1_prev_out: 0.0,
@@ -555,6 +561,7 @@ impl Apu {
 
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.sample_rate = rate;
+        self.sample_step = rate as f64 / CPU_HZ;
     }
 
     /// Nível da linha IRQ da APU (frame counter ou DMC).
@@ -789,7 +796,7 @@ impl Apu {
         self.dmc.clock_timer();
 
         // --- amostragem
-        self.sample_clock += self.sample_rate as f64 / 1_789_773.0;
+        self.sample_clock += self.sample_step;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
             let raw = self.mix();
