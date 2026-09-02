@@ -1,0 +1,19 @@
+[package]
+name = "rnfe-web"
+description = "RNFE no navegador: wasm32 + canvas (WebGPU ou WebGL2), toque, som e saves no localStorage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rnfe-web"
+path = "src/main.rs"
+
+[dependencies]
+rnfe-gui.workspace = true
+
+[lints]
+workspace = true

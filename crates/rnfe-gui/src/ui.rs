@@ -1,28 +1,27 @@
+//! Desenho em software no overlay RGBA: texto (fontdue), barra de menu, botões, toque.
+#![allow(clippy::too_many_arguments)]
+
 use fontdue::Font;
+use rnfe_core::Buttons;
+use rnfe_frontend::touch::{Circle, Rect, TouchLayout};
+use std::collections::HashMap;
 
 const FONT_DATA: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
 pub const MENUBAR_HEIGHT: i32 = 28;
-pub const SIDEBAR_WIDTH: i32 = 180;
 const MENU_FONT_SIZE: f32 = 14.0;
 const MENU_PAD_X: i32 = 12;
 const DROPDOWN_ITEM_H: i32 = 26;
 const DROPDOWN_PAD_X: i32 = 16;
-const SIDEBAR_ITEM_H: i32 = 36;
-const SIDEBAR_PAD_X: i32 = 18;
-const SIDEBAR_FONT_SIZE: f32 = 14.0;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuAction {
     None,
     OpenRom,
     Reset,
+    SaveState,
+    LoadState,
     Quit,
-}
-
-pub struct Ui {
-    font: Font,
-    pub open_menu: Option<usize>, // qual menu tá aberto (0=File, 1=Settings)
 }
 
 struct MenuItem {
@@ -32,32 +31,53 @@ struct MenuItem {
 
 const MENUS: &[MenuItem] = &[MenuItem {
     label: "File",
-    items: &[("Open ROM", MenuAction::OpenRom), ("Reset", MenuAction::Reset), ("Quit", MenuAction::Quit)],
+    items: &[
+        ("Open ROM (O)", MenuAction::OpenRom),
+        ("Reset (R)", MenuAction::Reset),
+        ("Save state (F5)", MenuAction::SaveState),
+        ("Load state (F7)", MenuAction::LoadState),
+        ("Quit", MenuAction::Quit),
+    ],
 }];
+
+/// Glifo rasterizado (cache por (char, tamanho×4)).
+struct Glyph {
+    metrics: fontdue::Metrics,
+    bitmap: Vec<u8>,
+}
+
+pub struct Ui {
+    font: Font,
+    cache: HashMap<(char, u32), Glyph>,
+    pub open_menu: Option<usize>,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Ui {
     pub fn new() -> Self {
-        let font = Font::from_bytes(FONT_DATA, fontdue::FontSettings::default()).unwrap();
-        Ui { font, open_menu: None }
+        let font = Font::from_bytes(FONT_DATA, fontdue::FontSettings::default()).expect("fonte embutida");
+        Ui { font, cache: HashMap::new(), open_menu: None }
     }
 
-    pub fn draw_text_centered(
-        &self,
-        fb: &mut [u8],
-        w: u32,
-        h: u32,
-        text: &str,
-        size: f32,
-        y: i32,
-        color: [u8; 4],
-    ) {
-        let tw = self.text_width(text, size);
-        let x = (w as i32 - tw) / 2;
-        self.draw_text(fb, w, h, text, size, x, y, color);
+    fn glyph(&mut self, ch: char, size: f32) -> &Glyph {
+        let key = (ch, (size * 4.0) as u32);
+        self.cache.entry(key).or_insert_with(|| {
+            let (metrics, bitmap) = self.font.rasterize(ch, size);
+            Glyph { metrics, bitmap }
+        })
+    }
+
+    pub fn text_width(&mut self, text: &str, size: f32) -> i32 {
+        text.chars().map(|c| self.glyph(c, size).metrics.advance_width as i32).sum()
     }
 
     pub fn draw_text(
-        &self,
+        &mut self,
         fb: &mut [u8],
         w: u32,
         h: u32,
@@ -69,44 +89,55 @@ impl Ui {
     ) {
         let mut cursor_x = x;
         for ch in text.chars() {
-            let (metrics, bitmap) = self.font.rasterize(ch, size);
-            let gx = cursor_x + metrics.xmin;
-            let gy = y + (size as i32 - metrics.ymin - metrics.height as i32);
-
-            for row in 0..metrics.height {
-                for col in 0..metrics.width {
-                    let alpha = bitmap[row * metrics.width + col];
+            let g = self.glyph(ch, size);
+            let m = g.metrics;
+            let gx = cursor_x + m.xmin;
+            let gy = y + (size as i32 - m.ymin - m.height as i32);
+            for row in 0..m.height {
+                let py = gy + row as i32;
+                if py < 0 || py >= h as i32 {
+                    continue;
+                }
+                for col in 0..m.width {
+                    let alpha = g.bitmap[row * m.width + col];
                     if alpha == 0 {
                         continue;
                     }
                     let px = gx + col as i32;
-                    let py = gy + row as i32;
-                    if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
+                    if px < 0 || px >= w as i32 {
                         continue;
                     }
                     let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    let a = alpha as f32 / 255.0;
-                    fb[idx] = (fb[idx] as f32 * (1.0 - a) + color[0] as f32 * a) as u8;
-                    fb[idx + 1] = (fb[idx + 1] as f32 * (1.0 - a) + color[1] as f32 * a) as u8;
-                    fb[idx + 2] = (fb[idx + 2] as f32 * (1.0 - a) + color[2] as f32 * a) as u8;
-                    fb[idx + 3] = 255;
+                    blend(&mut fb[idx..idx + 4], color, alpha);
                 }
             }
-            cursor_x += metrics.advance_width as i32;
+            cursor_x += m.advance_width as i32;
         }
     }
 
-    pub fn text_width(&self, text: &str, size: f32) -> i32 {
-        let mut w = 0;
-        for ch in text.chars() {
-            let (metrics, _) = self.font.rasterize(ch, size);
-            w += metrics.advance_width as i32;
-        }
-        w
+    pub fn draw_text_centered(
+        &mut self,
+        fb: &mut [u8],
+        w: u32,
+        h: u32,
+        text: &str,
+        size: f32,
+        y: i32,
+        color: [u8; 4],
+    ) {
+        let tw = self.text_width(text, size);
+        self.draw_text(fb, w, h, text, size, (w as i32 - tw) / 2, y, color);
+    }
+
+    pub fn button_rect(&mut self, text: &str, size: f32, cx: i32, cy: i32) -> (i32, i32, i32, i32) {
+        let tw = self.text_width(text, size);
+        let bw = tw + 40;
+        let bh = size as i32 + 20;
+        (cx - bw / 2, cy - bh / 2, bw, bh)
     }
 
     pub fn draw_button(
-        &self,
+        &mut self,
         fb: &mut [u8],
         w: u32,
         h: u32,
@@ -117,105 +148,51 @@ impl Ui {
         color: [u8; 4],
         border: [u8; 4],
     ) {
+        let (bx, by, bw, bh) = self.button_rect(text, size, cx, cy);
+        fill_rect(fb, w, h, bx, by, bw, 1, border);
+        fill_rect(fb, w, h, bx, by + bh - 1, bw, 1, border);
+        fill_rect(fb, w, h, bx, by, 1, bh, border);
+        fill_rect(fb, w, h, bx + bw - 1, by, 1, bh, border);
         let tw = self.text_width(text, size);
-        let pad_x = 20;
-        let pad_y = 10;
-        let bw = tw + pad_x * 2;
-        let bh = size as i32 + pad_y * 2;
-        let bx = cx - bw / 2;
-        let by = cy - bh / 2;
-        let w_i = w as i32;
-        let h_i = h as i32;
-
-        for px in bx..bx + bw {
-            for &py in &[by, by + bh - 1] {
-                if px >= 0 && py >= 0 && px < w_i && py < h_i {
-                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    fb[idx..idx + 4].copy_from_slice(&border);
-                }
-            }
-        }
-        for py in by..by + bh {
-            for &px in &[bx, bx + bw - 1] {
-                if px >= 0 && py >= 0 && px < w_i && py < h_i {
-                    let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                    fb[idx..idx + 4].copy_from_slice(&border);
-                }
-            }
-        }
-
-        let tx = cx - tw / 2;
-        let ty = by + pad_y;
-        self.draw_text(fb, w, h, text, size, tx, ty, color);
+        self.draw_text(fb, w, h, text, size, cx - tw / 2, by + 10, color);
     }
 
-    pub fn button_rect(&self, text: &str, size: f32, cx: i32, cy: i32) -> (i32, i32, i32, i32) {
-        let tw = self.text_width(text, size);
-        let pad_x = 20;
-        let pad_y = 10;
-        let bw = tw + pad_x * 2;
-        let bh = size as i32 + pad_y * 2;
-        (cx - bw / 2, cy - bh / 2, bw, bh)
+    /// Caixa de mensagem temporária, no rodapé.
+    pub fn draw_toast(&mut self, fb: &mut [u8], w: u32, h: u32, msg: &str) {
+        let tw = self.text_width(msg, 16.0);
+        let tx = (w as i32 - tw) / 2;
+        let ty = h as i32 - 50;
+        fill_rect(fb, w, h, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+        self.draw_text(fb, w, h, msg, 16.0, tx, ty, [255, 255, 255, 255]);
     }
 
-    pub fn fill_rect_pub(
-        &self,
-        fb: &mut [u8],
-        w: u32,
-        h: u32,
-        rx: i32,
-        ry: i32,
-        rw: i32,
-        rh: i32,
-        color: [u8; 4],
-    ) {
-        self.fill_rect(fb, w, h, rx, ry, rw, rh, color);
-    }
-
-    fn fill_rect(&self, fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
-        let w_i = w as i32;
-        let h_i = h as i32;
-        for py in ry.max(0)..((ry + rh).min(h_i)) {
-            for px in rx.max(0)..((rx + rw).min(w_i)) {
-                let idx = ((py as u32 * w + px as u32) * 4) as usize;
-                fb[idx..idx + 4].copy_from_slice(&color);
-            }
-        }
-    }
-
-    // Desenha a barra de menu no topo
-    pub fn draw_menubar(&self, fb: &mut [u8], w: u32, h: u32, mx: i32, my: i32) {
-        // Fundo da barra
-        self.fill_rect(fb, w, h, 0, 0, w as i32, MENUBAR_HEIGHT, [22, 22, 28, 255]);
-        // Linha inferior
-        self.fill_rect(fb, w, h, 0, MENUBAR_HEIGHT - 1, w as i32, 1, [40, 40, 50, 255]);
-
+    pub fn draw_menubar(&mut self, fb: &mut [u8], w: u32, h: u32, mx: i32, my: i32) {
+        fill_rect(fb, w, h, 0, 0, w as i32, MENUBAR_HEIGHT, [22, 22, 28, 255]);
+        fill_rect(fb, w, h, 0, MENUBAR_HEIGHT - 1, w as i32, 1, [40, 40, 50, 255]);
         let mut x = 0;
         for (i, menu) in MENUS.iter().enumerate() {
             let tw = self.text_width(menu.label, MENU_FONT_SIZE);
             let item_w = tw + MENU_PAD_X * 2;
-
-            let hover = mx >= x && mx < x + item_w && my >= 0 && my < MENUBAR_HEIGHT;
+            let hover = mx >= x && mx < x + item_w && (0..MENUBAR_HEIGHT).contains(&my);
             let active = self.open_menu == Some(i);
-
             if hover || active {
-                self.fill_rect(fb, w, h, x, 0, item_w, MENUBAR_HEIGHT, [40, 40, 55, 255]);
+                fill_rect(fb, w, h, x, 0, item_w, MENUBAR_HEIGHT, [40, 40, 55, 255]);
             }
-
-            let text_color = if hover || active { [255, 255, 255, 255] } else { [170, 170, 170, 255] };
-            self.draw_text(fb, w, h, menu.label, MENU_FONT_SIZE, x + MENU_PAD_X, 7, text_color);
-
-            // Dropdown
+            let color = if hover || active { [255, 255, 255, 255] } else { [170, 170, 170, 255] };
+            self.draw_text(fb, w, h, menu.label, MENU_FONT_SIZE, x + MENU_PAD_X, 7, color);
             if active {
                 self.draw_dropdown(fb, w, h, x, menu.items, mx, my);
             }
-
             x += item_w;
         }
     }
 
+    fn dropdown_width(&mut self, items: &[(&str, MenuAction)]) -> i32 {
+        items.iter().map(|(l, _)| self.text_width(l, MENU_FONT_SIZE)).max().unwrap_or(0) + DROPDOWN_PAD_X * 2
+    }
+
     fn draw_dropdown(
-        &self,
+        &mut self,
         fb: &mut [u8],
         w: u32,
         h: u32,
@@ -224,179 +201,195 @@ impl Ui {
         mx: i32,
         my: i32,
     ) {
-        let mut max_w = 0;
-        for (label, _) in items {
-            let tw = self.text_width(label, MENU_FONT_SIZE);
-            if tw > max_w {
-                max_w = tw;
-            }
-        }
-        let dropdown_w = max_w + DROPDOWN_PAD_X * 2;
-        let dropdown_h = items.len() as i32 * DROPDOWN_ITEM_H;
+        let dw = self.dropdown_width(items);
+        let dh = items.len() as i32 * DROPDOWN_ITEM_H;
         let dy = MENUBAR_HEIGHT;
-
-        // Fundo do dropdown
-        self.fill_rect(fb, w, h, x, dy, dropdown_w, dropdown_h, [28, 28, 36, 255]);
-        // Borda
-        self.fill_rect(fb, w, h, x, dy, dropdown_w, 1, [50, 50, 60, 255]);
-        self.fill_rect(fb, w, h, x, dy + dropdown_h - 1, dropdown_w, 1, [50, 50, 60, 255]);
-        self.fill_rect(fb, w, h, x, dy, 1, dropdown_h, [50, 50, 60, 255]);
-        self.fill_rect(fb, w, h, x + dropdown_w - 1, dy, 1, dropdown_h, [50, 50, 60, 255]);
-
+        fill_rect(fb, w, h, x, dy, dw, dh, [28, 28, 36, 255]);
+        fill_rect(fb, w, h, x, dy, dw, 1, [50, 50, 60, 255]);
+        fill_rect(fb, w, h, x, dy + dh - 1, dw, 1, [50, 50, 60, 255]);
+        fill_rect(fb, w, h, x, dy, 1, dh, [50, 50, 60, 255]);
+        fill_rect(fb, w, h, x + dw - 1, dy, 1, dh, [50, 50, 60, 255]);
         for (i, (label, _)) in items.iter().enumerate() {
             let iy = dy + i as i32 * DROPDOWN_ITEM_H;
-            let hover = mx >= x && mx < x + dropdown_w && my >= iy && my < iy + DROPDOWN_ITEM_H;
-
+            let hover = mx >= x && mx < x + dw && my >= iy && my < iy + DROPDOWN_ITEM_H;
             if hover {
-                self.fill_rect(fb, w, h, x + 1, iy, dropdown_w - 2, DROPDOWN_ITEM_H, [50, 70, 120, 255]);
+                fill_rect(fb, w, h, x + 1, iy, dw - 2, DROPDOWN_ITEM_H, [50, 70, 120, 255]);
             }
-
             let color = if hover { [255, 255, 255, 255] } else { [170, 170, 170, 255] };
             self.draw_text(fb, w, h, label, MENU_FONT_SIZE, x + DROPDOWN_PAD_X, iy + 6, color);
         }
     }
 
-    // Retorna a posição X de cada menu item na barra
-    fn menu_item_x(&self, index: usize) -> (i32, i32) {
-        let mut x = 0;
-        for (i, menu) in MENUS.iter().enumerate() {
-            let tw = self.text_width(menu.label, MENU_FONT_SIZE);
-            let item_w = tw + MENU_PAD_X * 2;
-            if i == index {
-                return (x, item_w);
-            }
-            x += item_w;
-        }
-        (0, 0)
-    }
-
-    // Processa click do mouse, retorna a ação se clicou num item
+    /// Clique/toque na barra de menu ou no dropdown aberto.
     pub fn handle_click(&mut self, mx: i32, my: i32) -> MenuAction {
-        // Click na barra?
-        if my >= 0 && my < MENUBAR_HEIGHT {
+        if (0..MENUBAR_HEIGHT).contains(&my) {
             let mut x = 0;
             for (i, menu) in MENUS.iter().enumerate() {
-                let tw = self.text_width(menu.label, MENU_FONT_SIZE);
-                let item_w = tw + MENU_PAD_X * 2;
+                let item_w = self.text_width(menu.label, MENU_FONT_SIZE) + MENU_PAD_X * 2;
                 if mx >= x && mx < x + item_w {
-                    if self.open_menu == Some(i) {
-                        self.open_menu = None;
-                    } else {
-                        self.open_menu = Some(i);
-                    }
+                    self.open_menu = if self.open_menu == Some(i) { None } else { Some(i) };
                     return MenuAction::None;
                 }
                 x += item_w;
             }
         }
-
-        // Click no dropdown?
-        if let Some(menu_idx) = self.open_menu {
-            let menu = &MENUS[menu_idx];
-            let (x, _) = self.menu_item_x(menu_idx);
-            let mut max_w = 0;
-            for (label, _) in menu.items {
-                let tw = self.text_width(label, MENU_FONT_SIZE);
-                if tw > max_w {
-                    max_w = tw;
-                }
+        if let Some(mi) = self.open_menu {
+            let menu = &MENUS[mi];
+            let mut x = 0;
+            for m in &MENUS[..mi] {
+                x += self.text_width(m.label, MENU_FONT_SIZE) + MENU_PAD_X * 2;
             }
-            let dropdown_w = max_w + DROPDOWN_PAD_X * 2;
-            let dy = MENUBAR_HEIGHT;
-
+            let dw = self.dropdown_width(menu.items);
             for (i, (_, action)) in menu.items.iter().enumerate() {
-                let iy = dy + i as i32 * DROPDOWN_ITEM_H;
-                if mx >= x && mx < x + dropdown_w && my >= iy && my < iy + DROPDOWN_ITEM_H {
+                let iy = MENUBAR_HEIGHT + i as i32 * DROPDOWN_ITEM_H;
+                if mx >= x && mx < x + dw && my >= iy && my < iy + DROPDOWN_ITEM_H {
                     self.open_menu = None;
                     return *action;
                 }
             }
-
-            // Clicou fora, fechar
             self.open_menu = None;
         }
-
         MenuAction::None
     }
 
-    pub fn draw_sidebar(&self, fb: &mut [u8], w: u32, h: u32, mx: i32, my: i32) {
-        let sh = h as i32;
-
-        // Fundo da sidebar
-        self.fill_rect(fb, w, h, 0, MENUBAR_HEIGHT, SIDEBAR_WIDTH, sh - MENUBAR_HEIGHT, [18, 18, 24, 255]);
-        // Borda direita
-        self.fill_rect(
+    /// Controles de toque translúcidos; botões pressionados ficam mais claros.
+    pub fn draw_touch_controls(
+        &mut self,
+        fb: &mut [u8],
+        w: u32,
+        h: u32,
+        layout: &TouchLayout,
+        pressed: Buttons,
+    ) {
+        let base = [255, 255, 255, 70];
+        let hot = [255, 255, 255, 150];
+        let col = |b: Buttons| if pressed.0 & b.0 != 0 { hot } else { base };
+        // d-pad: cruz de dois retângulos + anel
+        let d = &layout.dpad;
+        let arm = d.r * 0.36;
+        fill_rect_f(fb, w, h, d.cx - arm, d.cy - d.r, arm * 2.0, d.r * 2.0, col(Buttons::UP | Buttons::DOWN));
+        fill_rect_f(
             fb,
             w,
             h,
-            SIDEBAR_WIDTH - 1,
-            MENUBAR_HEIGHT,
-            1,
-            sh - MENUBAR_HEIGHT,
-            [40, 40, 50, 255],
+            d.cx - d.r,
+            d.cy - arm,
+            d.r * 2.0,
+            arm * 2.0,
+            col(Buttons::LEFT | Buttons::RIGHT),
         );
-
-        let items: &[(&str, &str, MenuAction)] = &[
-            (">>", "Open ROM", MenuAction::OpenRom),
-            ("↺", "Reset", MenuAction::Reset),
-            ("×", "Quit", MenuAction::Quit),
-        ];
-
-        let mut y = MENUBAR_HEIGHT + 12;
-
-        // Seção "File"
-        self.draw_text(fb, w, h, "FILE", 11.0, SIDEBAR_PAD_X, y, [70, 70, 80, 255]);
-        y += 22;
-
-        for (icon, label, _) in items {
-            let hover = mx >= 0 && mx < SIDEBAR_WIDTH && my >= y && my < y + SIDEBAR_ITEM_H;
-
-            if hover {
-                self.fill_rect(fb, w, h, 1, y, SIDEBAR_WIDTH - 2, SIDEBAR_ITEM_H, [35, 35, 50, 255]);
+        for (b, dx, dy) in [
+            (Buttons::UP, 0.0, -0.7),
+            (Buttons::DOWN, 0.0, 0.7),
+            (Buttons::LEFT, -0.7, 0.0),
+            (Buttons::RIGHT, 0.7, 0.0),
+        ] {
+            if pressed.0 & b.0 != 0 {
+                fill_circle(
+                    fb,
+                    w,
+                    h,
+                    &Circle { cx: d.cx + dx * d.r, cy: d.cy + dy * d.r, r: arm * 0.8 },
+                    hot,
+                );
             }
-
-            let color = if hover { [240, 240, 240, 255] } else { [160, 160, 160, 255] };
-            let icon_color = if hover { [100, 160, 255, 255] } else { [80, 80, 100, 255] };
-
-            self.draw_text(fb, w, h, icon, SIDEBAR_FONT_SIZE, SIDEBAR_PAD_X, y + 10, icon_color);
-            self.draw_text(fb, w, h, label, SIDEBAR_FONT_SIZE, SIDEBAR_PAD_X + 28, y + 10, color);
-
-            y += SIDEBAR_ITEM_H;
         }
+        fill_circle(fb, w, h, &layout.a, col(Buttons::A));
+        fill_circle(fb, w, h, &layout.b, col(Buttons::B));
+        fill_rect_r(fb, w, h, &layout.start, col(Buttons::START));
+        fill_rect_r(fb, w, h, &layout.select, col(Buttons::SELECT));
+        fill_rect_r(fb, w, h, &layout.menu, [255, 255, 255, 50]);
+        let label = |ui: &mut Ui, fb: &mut [u8], text: &str, cx: f32, cy: f32, size: f32| {
+            let tw = ui.text_width(text, size);
+            ui.draw_text(
+                fb,
+                w,
+                h,
+                text,
+                size,
+                cx as i32 - tw / 2,
+                cy as i32 - size as i32 / 2,
+                [255, 255, 255, 200],
+            );
+        };
+        let fs = (layout.a.r * 0.9).max(10.0);
+        label(self, fb, "A", layout.a.cx, layout.a.cy, fs);
+        label(self, fb, "B", layout.b.cx, layout.b.cy, fs);
+        let ps = (layout.start.h * 0.6).max(9.0);
+        label(
+            self,
+            fb,
+            "START",
+            layout.start.x + layout.start.w / 2.0,
+            layout.start.y + layout.start.h / 2.0,
+            ps,
+        );
+        label(
+            self,
+            fb,
+            "SELECT",
+            layout.select.x + layout.select.w / 2.0,
+            layout.select.y + layout.select.h / 2.0,
+            ps,
+        );
+        label(self, fb, "MENU", layout.menu.x + layout.menu.w / 2.0, layout.menu.y + layout.menu.h / 2.0, ps);
+    }
+}
 
-        // Separador
-        y += 6;
-        self.fill_rect(fb, w, h, SIDEBAR_PAD_X, y, SIDEBAR_WIDTH - SIDEBAR_PAD_X * 2, 1, [40, 40, 50, 255]);
-        y += 12;
+#[inline]
+fn blend(dst: &mut [u8], color: [u8; 4], alpha: u8) {
+    let a = alpha as u32 * color[3] as u32 / 255;
+    if a == 0 {
+        return;
+    }
+    for i in 0..3 {
+        dst[i] = ((dst[i] as u32 * (255 - a) + color[i] as u32 * a) / 255) as u8;
+    }
+    dst[3] = dst[3].max(a as u8);
+}
 
-        // Seção "Controls"
-        self.draw_text(fb, w, h, "CONTROLS", 11.0, SIDEBAR_PAD_X, y, [70, 70, 80, 255]);
-        y += 22;
-
-        let controls = [("Z", "A"), ("X", "B"), ("Tab", "Select"), ("Enter", "Start"), ("Arrows", "D-Pad")];
-
-        for (key, action) in &controls {
-            self.draw_text(fb, w, h, key, 12.0, SIDEBAR_PAD_X + 4, y + 4, [100, 160, 255, 255]);
-            self.draw_text(fb, w, h, action, 12.0, SIDEBAR_PAD_X + 60, y + 4, [120, 120, 120, 255]);
-            y += 22;
+pub fn fill_rect(fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
+    for py in ry.max(0)..(ry + rh).min(h as i32) {
+        for px in rx.max(0)..(rx + rw).min(w as i32) {
+            let idx = ((py as u32 * w + px as u32) * 4) as usize;
+            if color[3] == 255 {
+                fb[idx..idx + 4].copy_from_slice(&color);
+            } else {
+                blend(&mut fb[idx..idx + 4], color, 255);
+            }
         }
     }
+}
 
-    pub fn handle_sidebar_click(&mut self, mx: i32, my: i32) -> MenuAction {
-        if mx < 0 || mx >= SIDEBAR_WIDTH {
-            return MenuAction::None;
-        }
+fn fill_rect_f(fb: &mut [u8], w: u32, h: u32, x: f32, y: f32, rw: f32, rh: f32, color: [u8; 4]) {
+    fill_rect(fb, w, h, x as i32, y as i32, rw as i32, rh as i32, color);
+}
 
-        let items: &[MenuAction] = &[MenuAction::OpenRom, MenuAction::Reset, MenuAction::Quit];
+fn fill_rect_r(fb: &mut [u8], w: u32, h: u32, r: &Rect, color: [u8; 4]) {
+    fill_rect_f(fb, w, h, r.x, r.y, r.w, r.h, color);
+}
 
-        let mut y = MENUBAR_HEIGHT + 12 + 22; // skip seção header
-        for action in items {
-            if my >= y && my < y + SIDEBAR_ITEM_H {
-                return *action;
+fn fill_circle(fb: &mut [u8], w: u32, h: u32, c: &Circle, color: [u8; 4]) {
+    let r2 = c.r * c.r;
+    let y0 = (c.cy - c.r).max(0.0) as i32;
+    let y1 = ((c.cy + c.r) as i32 + 1).min(h as i32);
+    let x0 = (c.cx - c.r).max(0.0) as i32;
+    let x1 = ((c.cx + c.r) as i32 + 1).min(w as i32);
+    for py in y0..y1 {
+        let dy = py as f32 + 0.5 - c.cy;
+        for px in x0..x1 {
+            let dx = px as f32 + 0.5 - c.cx;
+            if dx * dx + dy * dy <= r2 {
+                let idx = ((py as u32 * w + px as u32) * 4) as usize;
+                blend(&mut fb[idx..idx + 4], color, 255);
             }
-            y += SIDEBAR_ITEM_H;
         }
+    }
+}
 
-        MenuAction::None
+/// Fundo opaco (tela inicial / pausa).
+pub fn clear(fb: &mut [u8], color: [u8; 4]) {
+    for px in fb.chunks_exact_mut(4) {
+        px.copy_from_slice(&color);
     }
 }

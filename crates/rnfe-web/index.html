@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0c10">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>RNFE — emulador de Famicom/NES</title>
+  <link data-trunk rel="rust" data-bin="rnfe-web" data-wasm-opt="z" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #0c0c10; height: 100%; overflow: hidden; }
+    body { display: flex; align-items: stretch; justify-content: stretch; }
+    #rnfe { width: 100vw; height: 100vh; display: block; touch-action: none; outline: none;
+            -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    #hint { position: fixed; left: 0; right: 0; bottom: 6px; text-align: center; color: #555; font: 12px system-ui, sans-serif; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="rnfe" tabindex="0"></canvas>
+  <div id="hint">RNFE · toque para abrir uma ROM · Z/X Enter Tab setas · F5/F7 state · Backspace rewind</div>
+  <script>
+    // Some o aviso após o primeiro gesto; o canvas recebe foco para o teclado funcionar.
+    const c = document.getElementById('rnfe');
+    const hide = () => { document.getElementById('hint').style.display = 'none'; c.focus(); };
+    c.addEventListener('pointerdown', hide, { once: true });
+    window.addEventListener('keydown', hide, { once: true });
+  </script>
+</body>
+</html>

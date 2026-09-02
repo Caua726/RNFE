@@ -2,6 +2,14 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F4 Web
+
+- F4-05 Gamepad: gilrs (desktop) / Gamepad API (web) — botões, d-pad e analógico esquerdo.
+- F4-04 CI: job `web` (clippy em wasm32 + `trunk build`, tamanho do wasm no resumo) e job `pages` (GitHub Pages a cada push em `main`); clippy do desktop passa a ser erro; README com web, controles de toque/gamepad, saves.
+- F4-03 Toque: `TouchLayout` (retrato/paisagem, d-pad por ângulo com zona morta, A/B, Start/Select, MENU) e `TouchState` multi-toque em `rnfe-frontend` (testes de hit-test); overlay translúcido desenhado após o primeiro toque.
+- F4-02 Web: crate `rnfe-web` (wasm32) + `index.html` + `Trunk.toml`; `WebStorage` (localStorage, base64 sem dependência); wgpu com fallback WebGL2; áudio criado no primeiro gesto; ROM por `rfd::AsyncFileDialog`. `cargo clippy --target wasm32-unknown-unknown` limpo no celular.
+- F4-01 `rnfe-gui` reescrito em `app/gpu/audio/platform/ui`: `Arc<Window>` (sem `Box::leak`), GPU assíncrona, `about_to_wait` + `WaitUntil` com `FramePacer` (sem `thread::sleep`), `AudioRing` SPSC sem `unsafe`/`Mutex`, `set_controller` 1×/frame, `web_time`, `UserEvent{GpuReady,RomLoaded,RomLoadFailed}`, cache de glifos, `Launch { nes, storage }`; save states (F5/F7), rewind (Backspace), turbo (Espaço), menu com state. `rnfe-desktop` fino com `env_logger`.
+
 ## Não publicado — F3 Mappers, saves e rewind
 
 - F3-07 Rewind: `rnfe_frontend::Rewind` (anel de states a cada 5 frames, limite de memória, padrão 32 MB); no tty Backspace volta no tempo, 1/2 salvam/carregam state em `state/<hash>/1.rnfs`.
