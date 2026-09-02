@@ -82,7 +82,7 @@ pub const TESTS: &[TestRom] = &[
         "cpu_interrupts_v2/rom_singles/1-cli_latency.nes",
         "cpu",
         Mem,
-        KF("sem IRQ do frame counter nem polling (F1-07/F2-01)"),
+        KF("IRQ do frame counter da APU (F2-01)"),
         1000,
     ),
     t(
@@ -90,7 +90,7 @@ pub const TESTS: &[TestRom] = &[
         "cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes",
         "cpu",
         Mem,
-        KF("polling de interrupção (F1-07)"),
+        KF("a IRQ do teste vem do frame counter da APU (F2-01)"),
         1000,
     ),
     t(
@@ -98,7 +98,7 @@ pub const TESTS: &[TestRom] = &[
         "cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes",
         "cpu",
         Mem,
-        KF("polling de interrupção (F1-07)"),
+        KF("a IRQ do teste vem do frame counter da APU (F2-01)"),
         1000,
     ),
     t(
@@ -106,7 +106,7 @@ pub const TESTS: &[TestRom] = &[
         "cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
         "cpu",
         Mem,
-        KF("polling de interrupção (F1-07)"),
+        KF("a IRQ do teste vem do frame counter da APU (F2-01)"),
         1000,
     ),
     t(
@@ -114,12 +114,19 @@ pub const TESTS: &[TestRom] = &[
         "cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
         "cpu",
         Mem,
-        KF("polling de interrupção (F1-07)"),
+        KF("a IRQ do teste vem do frame counter da APU (F2-01)"),
         1000,
     ),
     t("cpu_dummy", "cpu_dummy_reads/cpu_dummy_reads.nes", "cpu", Screen, Pass, 600),
     t("cpu_dummy", "cpu_dummy_writes/cpu_dummy_writes_oam.nes", "cpu", Mem, Pass, 2000),
-    t("cpu_dummy", "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes", "cpu", Mem, KF("a verificar"), 2000),
+    t(
+        "cpu_dummy",
+        "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes",
+        "cpu",
+        Mem,
+        KF("open bus da PPU (F2-05)"),
+        2000,
+    ),
     t(
         "cpu_exec_space",
         "cpu_exec_space/test_cpu_exec_space_ppuio.nes",

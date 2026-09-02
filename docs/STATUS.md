@@ -1,9 +1,9 @@
 # Status do RNFE
 
-Gerado por `cargo run -p rnfe-core --release --bin status` · commit `600d960`.
+Gerado por `cargo run -p rnfe-core --release --bin status` · commit `3ab59a1`.
 Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo test`.
 
-**nestest:** 5004/8991 linhas idênticas ao log (registradores e ciclos); primeira divergência na linha 5005
+**nestest:** 8991/8991 linhas idênticas ao log (registradores e ciclos)
 
 ## cpu
 
@@ -11,11 +11,11 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 |---|---|---|---|---|
 | `instr_test-v5/rom_singles/01-basics.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/02-implied.nes` | $6000 | Pass | ✅ |  |
-| `instr_test-v5/rom_singles/03-immediate.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais (F1-01/F1-02) — código 0x01: Failed |
-| `instr_test-v5/rom_singles/04-zero_page.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais (F1-01/F1-02) — código 0x01: Failed |
-| `instr_test-v5/rom_singles/05-zp_xy.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais (F1-01/F1-02) — código 0x01: Failed |
-| `instr_test-v5/rom_singles/06-absolute.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais (F1-01/F1-02) — código 0x01: Failed |
-| `instr_test-v5/rom_singles/07-abs_xy.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais (F1-01/F1-02) — código 0x01: Failed |
+| `instr_test-v5/rom_singles/03-immediate.nes` | $6000 | Pass | ✅ |  |
+| `instr_test-v5/rom_singles/04-zero_page.nes` | $6000 | Pass | ✅ |  |
+| `instr_test-v5/rom_singles/05-zp_xy.nes` | $6000 | Pass | ✅ |  |
+| `instr_test-v5/rom_singles/06-absolute.nes` | $6000 | Pass | ✅ |  |
+| `instr_test-v5/rom_singles/07-abs_xy.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/08-ind_x.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/09-ind_y.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/10-branches.nes` | $6000 | Pass | ✅ |  |
@@ -23,22 +23,22 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 | `instr_test-v5/rom_singles/12-jmp_jsr.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/13-rts.nes` | $6000 | Pass | ✅ |  |
 | `instr_test-v5/rom_singles/14-rti.nes` | $6000 | Pass | ✅ |  |
-| `instr_test-v5/rom_singles/15-brk.nes` | $6000 | KnownFail | ❌ | BRK: I setado antes do push, B nunca limpo (F1-03) — código 0x01: Failed |
-| `instr_test-v5/rom_singles/16-special.nes` | $6000 | KnownFail | ❌ | a verificar — código 0x05: Failed #5 |
-| `instr_timing/rom_singles/1-instr_timing.nes` | $6000 | KnownFail | ❌ | opcodes não-oficiais e dummy reads (F1-01/F1-06) — código 0x03: Failed #3 |
+| `instr_test-v5/rom_singles/15-brk.nes` | $6000 | Pass | ✅ |  |
+| `instr_test-v5/rom_singles/16-special.nes` | $6000 | Pass | ✅ |  |
+| `instr_timing/rom_singles/1-instr_timing.nes` | $6000 | Pass | ✅ |  |
 | `instr_timing/rom_singles/2-branch_timing.nes` | $6000 | Pass | ✅ |  |
 | `instr_misc/rom_singles/01-abs_x_wrap.nes` | $6000 | Pass | ✅ |  |
 | `instr_misc/rom_singles/02-branch_wrap.nes` | $6000 | Pass | ✅ |  |
-| `instr_misc/rom_singles/03-dummy_reads.nes` | $6000 | KnownFail | ❌ | sem dummy reads (F1-06) — código 0x03: Failed #3 |
+| `instr_misc/rom_singles/03-dummy_reads.nes` | $6000 | Pass | ✅ |  |
 | `instr_misc/rom_singles/04-dummy_reads_apu.nes` | $6000 | KnownFail | ❌ | sem dummy reads + $4015 (F2-02) — código 0x02: Failed #2 |
-| `cpu_interrupts_v2/rom_singles/1-cli_latency.nes` | $6000 | KnownFail | ❌ | sem IRQ do frame counter nem polling (F1-07/F2-01) — código 0x03: Failed #3 |
-| `cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes` | $6000 | KnownFail | ❌ | polling de interrupção (F1-07) — código 0x01: Failed |
-| `cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes` | $6000 | KnownFail | ❌ | polling de interrupção (F1-07) — código 0x01: Failed |
-| `cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes` | $6000 | KnownFail | ❌ | polling de interrupção (F1-07) — código 0x01: Failed |
-| `cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes` | $6000 | KnownFail | ❌ | polling de interrupção (F1-07) — 1000 frames sem veredito; última linha: 00 |
-| `cpu_dummy_reads/cpu_dummy_reads.nes` | tela | KnownFail | ❌ | sem dummy reads (F1-06) — Error 3 |
-| `cpu_dummy_writes/cpu_dummy_writes_oam.nes` | $6000 | KnownFail | ❌ | a verificar — código 0x05: Failed #5 |
-| `cpu_dummy_writes/cpu_dummy_writes_ppumem.nes` | $6000 | KnownFail | ❌ | a verificar — código 0x09: Failed #9 |
+| `cpu_interrupts_v2/rom_singles/1-cli_latency.nes` | $6000 | KnownFail | ❌ | IRQ do frame counter da APU (F2-01) — código 0x03: Failed #3 |
+| `cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes` | $6000 | KnownFail | ❌ | a IRQ do teste vem do frame counter da APU (F2-01) — código 0x01: Failed |
+| `cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes` | $6000 | KnownFail | ❌ | a IRQ do teste vem do frame counter da APU (F2-01) — código 0x01: Failed |
+| `cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes` | $6000 | KnownFail | ❌ | a IRQ do teste vem do frame counter da APU (F2-01) — código 0x01: Failed |
+| `cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes` | $6000 | KnownFail | ❌ | a IRQ do teste vem do frame counter da APU (F2-01) — 1000 frames sem veredito; última linha: 00 |
+| `cpu_dummy_reads/cpu_dummy_reads.nes` | tela | Pass | ✅ |  |
+| `cpu_dummy_writes/cpu_dummy_writes_oam.nes` | $6000 | Pass | ✅ |  |
+| `cpu_dummy_writes/cpu_dummy_writes_ppumem.nes` | $6000 | KnownFail | ❌ | open bus da PPU (F2-05) — código 0x09: Failed #9 |
 ## bus
 
 | ROM | Estilo | Esperado | Resultado | Detalhe |
@@ -50,7 +50,7 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 | ROM | Estilo | Esperado | Resultado | Detalhe |
 |---|---|---|---|---|
 | `cpu_reset/ram_after_reset.nes` | $6000 | Pass | ✅ |  |
-| `cpu_reset/registers.nes` | $6000 | KnownFail | ❌ | reset: I=1, SP-=3 (F1-03) — código 0x02: Failed #2 |
+| `cpu_reset/registers.nes` | $6000 | Pass | ✅ |  |
 | `branch_timing_tests/1.Branch_Basics.nes` | tela | Pass | ✅ |  |
 | `branch_timing_tests/2.Backward_Branch.nes` | tela | Pass | ✅ |  |
 | `branch_timing_tests/3.Forward_Branch.nes` | tela | Pass | ✅ |  |
@@ -61,7 +61,7 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 | `ppu_vbl_nmi/rom_singles/01-vbl_basics.nes` | $6000 | Pass | ✅ |  |
 | `ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes` | $6000 | KnownFail | ❌ | VBL fora do dot exato (F2-04) — código 0x01: Failed |
 | `ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes` | $6000 | Pass | ✅ |  |
-| `ppu_vbl_nmi/rom_singles/04-nmi_control.nes` | $6000 | KnownFail | ❌ | NMI (F2-04) — código 0x0b: Failed #11 |
+| `ppu_vbl_nmi/rom_singles/04-nmi_control.nes` | $6000 | Pass | ✅ |  |
 | `ppu_vbl_nmi/rom_singles/05-nmi_timing.nes` | $6000 | KnownFail | ❌ | NMI (F2-04) — código 0x01: Failed |
 | `ppu_vbl_nmi/rom_singles/06-suppression.nes` | $6000 | KnownFail | ❌ | supressão de NMI (F2-04) — código 0x01: Failed |
 | `ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes` | $6000 | KnownFail | ❌ | NMI (F2-04) — código 0x01: Failed |
@@ -72,9 +72,9 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 | `vbl_nmi_timing/2.vbl_timing.nes` | tela | KnownFail | ❌ | VBL timing (F2-04) — FAILED #8 |
 | `vbl_nmi_timing/3.even_odd_frames.nes` | tela | KnownFail | ❌ | a verificar — FAILED #3 |
 | `vbl_nmi_timing/4.vbl_clear_timing.nes` | tela | Pass | ✅ |  |
-| `vbl_nmi_timing/5.nmi_suppression.nes` | tela | KnownFail | ❌ | supressão (F2-04) — FAILED #3 |
-| `vbl_nmi_timing/6.nmi_disable.nes` | tela | KnownFail | ❌ | a verificar — FAILED #2 |
-| `vbl_nmi_timing/7.nmi_timing.nes` | tela | KnownFail | ❌ | NMI (F2-04) — FAILED #2 |
+| `vbl_nmi_timing/5.nmi_suppression.nes` | tela | KnownFail | ❌ | supressão (F2-04) — FAILED #6 |
+| `vbl_nmi_timing/6.nmi_disable.nes` | tela | KnownFail | ❌ | a verificar — FAILED #4 |
+| `vbl_nmi_timing/7.nmi_timing.nes` | tela | KnownFail | ❌ | NMI (F2-04) — FAILED #4 |
 | `sprite_hit_tests_2005.10.05/01.basics.nes` | tela | Pass | ✅ |  |
 | `sprite_hit_tests_2005.10.05/02.alignment.nes` | tela | KnownFail | ❌ | Failed #4 (F2-06) — FAILED #4 |
 | `sprite_hit_tests_2005.10.05/03.corners.nes` | tela | KnownFail | ❌ | a verificar — FAILED #2 |
@@ -146,8 +146,8 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 | `mmc3_irq_tests/1.Clocking.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #3 |
 | `mmc3_irq_tests/2.Details.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #2 |
 | `mmc3_irq_tests/3.A12_clocking.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #4 |
-| `mmc3_irq_tests/4.Scanline_timing.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #2 |
+| `mmc3_irq_tests/4.Scanline_timing.nes` | tela | Pass | ✅ |  |
 | `mmc3_irq_tests/5.MMC3_rev_A.nes` | tela | KnownFail | ❌ | variante A (F3-02) — FAILED #2 |
 | `mmc3_irq_tests/6.MMC3_rev_B.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #2 |
 
-## Resumo: 30 ✅ · 90 ❌ esperados · 0 ⚠️ · 0 🔴 · 0 ⏭ (de 120 ROMs)
+## Resumo: 44 ✅ · 76 ❌ esperados · 0 ⚠️ · 0 🔴 · 0 ⏭ (de 120 ROMs)
