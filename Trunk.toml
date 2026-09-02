@@ -1,0 +1,10 @@
+# Build web: `trunk build --release` (ou `trunk serve`) na raiz do repo.
+[build]
+target = "crates/rnfe-web/index.html"
+dist = "dist"
+public_url = "/RNFE/"
+release = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
