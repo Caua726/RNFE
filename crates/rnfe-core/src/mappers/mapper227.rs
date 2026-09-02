@@ -3,7 +3,8 @@
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Mapper227 {
     reg: u16,
 }

@@ -110,4 +110,9 @@ impl Nes {
         self.bus.reset();
         self.cpu.reset(&mut self.bus);
     }
+
+    /// O framebuffer RGBA precisa ser reconvertido (estado restaurado).
+    pub(crate) fn mark_dirty(&mut self) {
+        self.rgba_dirty = true;
+    }
 }

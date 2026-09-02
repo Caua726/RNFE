@@ -1,7 +1,8 @@
 //! Mapper 002 (UxROM): 16 KB comutáveis em `$8000`, último banco fixo em `$C000`, CHR RAM.
 use super::{CartData, Mapper};
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Uxrom {
     bank: u8,
 }

@@ -1,7 +1,8 @@
 //! Mapper 003 (CNROM): PRG fixo, CHR ROM comutável em blocos de 8 KB.
 use super::{CartData, Mapper};
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Cnrom {
     chr_bank: u8,
 }

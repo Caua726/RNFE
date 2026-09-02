@@ -101,7 +101,10 @@ const fn build_palette() -> [[u8; 4]; 512] {
     out
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Ppu {
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::nt"))]
     pub nametable: [[u8; 1024]; 4],
     pub palette_table: [u8; 32],
 
@@ -128,6 +131,7 @@ pub struct Ppu {
     bg_shifter_attr_hi: u16,
 
     // Sprite rendering
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::bytes"))]
     pub oam: [u8; 256],
     oam_addr: u8,
     sprites_scanline: [ObjectAttributeEntry; 8],
@@ -144,6 +148,7 @@ pub struct Ppu {
     next_sprite_zero: bool,
 
     /// Framebuffer por índice de paleta (`ênfase << 6 | cor`), 256×240. RGBA via `PALETTE_RGBA`.
+    #[cfg_attr(feature = "serde", serde(skip, default = "blank_screen"))]
     pub screen: Box<[u16; 256 * 240]>,
 
     // Timing
@@ -175,12 +180,17 @@ pub struct Ppu {
     render_delay: u8,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy)]
 struct ObjectAttributeEntry {
     y: u8,
     id: u8,
     attribute: u8,
     x: u8,
+}
+
+fn blank_screen() -> Box<[u16; 256 * 240]> {
+    vec![0u16; 256 * 240].into_boxed_slice().try_into().unwrap()
 }
 
 impl Default for Ppu {
@@ -222,7 +232,7 @@ impl Ppu {
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             next_sprite_count: 0,
             next_sprite_zero: false,
-            screen: vec![0u16; 256 * 240].into_boxed_slice().try_into().unwrap(),
+            screen: blank_screen(),
             scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
             frame_complete: false,
@@ -238,6 +248,20 @@ impl Ppu {
             render_next: false,
             render_delay: 0,
         }
+    }
+
+    /// Cópia do estado para save state, sem duplicar o framebuffer.
+    #[cfg(feature = "serde")]
+    pub(crate) fn clone_state(&self) -> Ppu {
+        let mut p = Ppu { screen: blank_screen(), ..self.clone_without_screen() };
+        p.frame_complete = false;
+        p
+    }
+
+    #[cfg(feature = "serde")]
+    fn clone_without_screen(&self) -> Ppu {
+        // clone() copia o Box do framebuffer (123 KB) — aceitável para um save state
+        self.clone()
     }
 
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {

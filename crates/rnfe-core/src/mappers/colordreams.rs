@@ -1,7 +1,8 @@
 //! Mapper 011 (Color Dreams): bits 0-1 = banco de PRG (32 KB), bits 4-5 = banco de CHR (8 KB).
 use super::{CartData, Mapper};
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct ColorDreams {
     prg_bank: u8,
     chr_bank: u8,

@@ -31,6 +31,7 @@ impl fmt::Display for RomError {
 
 impl std::error::Error for RomError {}
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mirror {
     Horizontal,
@@ -314,6 +315,45 @@ impl Cartridge {
         );
         s.push_str(&self.mapper.state_string());
         s
+    }
+
+    /// Estado sem a ROM (feature `serde`).
+    #[cfg(feature = "serde")]
+    pub fn state(&self) -> crate::state::CartState {
+        crate::state::CartState {
+            prg_ram: self.data.prg_ram.clone(),
+            chr_ram: self.data.chr_is_ram.then(|| self.data.chr.clone()),
+            mirror: self.data.mirror,
+            mapper: self.mapper.clone(),
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn restore(&mut self, st: crate::state::CartState) -> Result<(), crate::state::StateError> {
+        use crate::state::StateError;
+        if st.prg_ram.len() != self.data.prg_ram.len() {
+            return Err(StateError::Corrupt(format!(
+                "PRG RAM de {} bytes, cartucho tem {}",
+                st.prg_ram.len(),
+                self.data.prg_ram.len()
+            )));
+        }
+        match (&st.chr_ram, self.data.chr_is_ram) {
+            (Some(c), true) if c.len() == self.data.chr.len() => {}
+            (None, false) => {}
+            _ => return Err(StateError::Corrupt("CHR RAM não bate com o cartucho".into())),
+        }
+        if core::mem::discriminant(&st.mapper) != core::mem::discriminant(&self.mapper) {
+            return Err(StateError::Corrupt("mapper diferente".into()));
+        }
+        self.data.prg_ram = st.prg_ram;
+        if let Some(c) = st.chr_ram {
+            self.data.chr = c;
+        }
+        self.data.mirror = st.mirror;
+        self.data.prg_ram_dirty = true;
+        self.mapper = st.mapper;
+        Ok(())
     }
 
     /// CHR pelo mapeamento atual, sem efeitos colaterais (debug).

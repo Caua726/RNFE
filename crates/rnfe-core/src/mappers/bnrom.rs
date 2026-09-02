@@ -1,7 +1,8 @@
 //! Mapper 034 (BNROM): 32 KB de PRG comutáveis, CHR RAM.
 use super::{CartData, Mapper};
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Bnrom {
     prg_bank: u8,
 }

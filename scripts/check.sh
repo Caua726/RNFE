@@ -4,5 +4,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo fmt --all
-cargo clippy -p rnfe-core --all-targets -- -D warnings
-cargo test -p rnfe-core "$@"
+cargo clippy -p rnfe-core -p rnfe-frontend -p rnfe-tty --all-targets --features rnfe-core/serde -- -D warnings
+cargo test -p rnfe-core -p rnfe-frontend --features rnfe-core/serde "$@"

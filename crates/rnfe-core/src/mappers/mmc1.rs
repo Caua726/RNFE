@@ -5,6 +5,8 @@
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Mmc1 {
     shift: u8,
     shift_count: u8,

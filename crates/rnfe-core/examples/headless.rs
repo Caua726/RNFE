@@ -28,4 +28,6 @@ fn main() {
         nes.peek(0x02),
         nes.peek(0x03)
     );
+    #[cfg(feature = "serde")]
+    println!("save state: {} bytes", nes.save_state().len());
 }

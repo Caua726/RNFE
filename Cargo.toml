@@ -17,6 +17,8 @@ rnfe-core = { path = "crates/rnfe-core" }
 rnfe-gui = { path = "crates/rnfe-gui" }
 rnfe-frontend = { path = "crates/rnfe-frontend" }
 log = "0.4"
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 wgpu = "24"
 winit = "0.30.12"
 pollster = "0.4"

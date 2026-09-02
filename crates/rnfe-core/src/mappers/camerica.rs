@@ -2,7 +2,8 @@
 //! último banco fixo em `$C000`.
 use super::{CartData, Mapper};
 
-#[derive(Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Camerica {
     prg_bank: u8,
 }

@@ -1,6 +1,8 @@
 //! Mapper 206 (DxROM / Namco 108): o antepassado do MMC3, sem IRQ e sem controle de mirroring.
 use super::{CartData, Mapper};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Dxrom {
     bank_select: u8,
     prg_banks: [u8; 2],

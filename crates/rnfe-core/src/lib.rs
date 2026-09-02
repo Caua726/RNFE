@@ -14,6 +14,8 @@ pub mod diagnostic;
 pub mod mappers;
 pub mod nes;
 pub mod ppu;
+#[cfg(feature = "serde")]
+pub mod state;
 pub mod storage;
 
 #[doc(hidden)]
@@ -23,6 +25,8 @@ pub mod testing;
 pub use buttons::Buttons;
 pub use cartridge::{Cartridge, Mirror, RomError, RomHeader};
 pub use nes::Nes;
+#[cfg(feature = "serde")]
+pub use state::StateError;
 pub use storage::{MemoryStorage, Storage, StorageError};
 
 /// Largura da imagem gerada pela PPU, em pixels.

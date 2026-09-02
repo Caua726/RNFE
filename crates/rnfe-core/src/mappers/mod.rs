@@ -187,6 +187,8 @@ pub trait Mapper {
 }
 
 /// Todos os mappers suportados. `id` do iNES/NES 2.0 → variante.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub enum MapperKind {
     Nrom(nrom::Nrom),
     Mmc1(mmc1::Mmc1),

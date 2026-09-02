@@ -180,6 +180,31 @@ impl Bus {
         }
     }
 
+    /// Estado do bus para save state (feature `serde`).
+    #[cfg(feature = "serde")]
+    pub fn state(&self) -> crate::state::BusState {
+        crate::state::BusState {
+            ram: self.ram,
+            cpu_cycles: self.cpu_cycles,
+            oam_dma_page: self.oam_dma_page,
+            open_bus: self.open_bus,
+            controller: self.controller,
+            controller_state: self.controller_state,
+            controller_strobe: self.controller_strobe,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn restore(&mut self, st: crate::state::BusState) {
+        self.ram = st.ram;
+        self.cpu_cycles = st.cpu_cycles;
+        self.oam_dma_page = st.oam_dma_page;
+        self.open_bus = st.open_bus;
+        self.controller = st.controller;
+        self.controller_state = st.controller_state;
+        self.controller_strobe = st.controller_strobe;
+    }
+
     /// Reset do console: RAM preservada (como no hardware), PPU/APU/mapper reiniciados.
     pub fn reset(&mut self) {
         self.cartridge.reset();

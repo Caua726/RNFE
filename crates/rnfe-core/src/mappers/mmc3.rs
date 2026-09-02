@@ -2,6 +2,8 @@
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Mmc3 {
     bank_select: u8,
     regs: [u8; 8],

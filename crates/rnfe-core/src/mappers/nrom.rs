@@ -1,6 +1,8 @@
 //! Mapper 000 (NROM): sem bank switching. NROM-128 (16 KB) espelha em `$C000` via a máscara.
 use super::{CartData, Mapper};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Nrom;
 
 impl Mapper for Nrom {

@@ -66,6 +66,7 @@ const FRAME_TICKS: [[FrameTick; 6]; 2] = [
 // ------------------------------------------------------------------ peças comuns
 
 /// Length counter com a latência de escrita do hardware (halt/reload valem no ciclo seguinte).
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Default, Clone)]
 struct LengthCounter {
     enabled: bool,
@@ -119,6 +120,7 @@ impl LengthCounter {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Default, Clone)]
 struct Envelope {
     start: bool,
@@ -161,6 +163,7 @@ impl Envelope {
 
 // ------------------------------------------------------------------ canais
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
 struct Pulse {
     length: LengthCounter,
@@ -255,6 +258,7 @@ impl Pulse {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
 struct Triangle {
     length: LengthCounter,
@@ -312,6 +316,7 @@ impl Triangle {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
 struct Noise {
     length: LengthCounter,
@@ -353,6 +358,7 @@ impl Noise {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone)]
 struct Dmc {
     irq_enabled: bool,
@@ -456,6 +462,8 @@ impl Dmc {
 
 // ------------------------------------------------------------------ APU
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
@@ -478,6 +486,7 @@ pub struct Apu {
     cycle: u64,
 
     // Buffer de áudio
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub sample_buffer: Vec<f32>,
     pub sample_rate: f32,
     /// Amostras por ciclo de CPU (`sample_rate / CPU_HZ`), pré-calculado.
