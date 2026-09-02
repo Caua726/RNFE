@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RNFE_REQUIRE_ROMS: "1"   # no CI, ROM de teste ausente é erro, não skip
+
+jobs:
+  core:
+    name: núcleo — fmt, clippy, testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: core
+      - name: ROMs de teste (cache)
+        uses: actions/cache@v4
+        with:
+          path: test-roms
+          key: test-roms-${{ hashFiles('scripts/fetch-roms.sh') }}
+      - run: bash scripts/fetch-roms.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p rnfe-core -p rnfe-frontend -p rnfe-tty --all-targets -- -D warnings
+      - run: cargo test -p rnfe-core -p rnfe-frontend
+      - name: STATUS.md no resumo do job
+        if: always()
+        run: |
+          cargo run -q -p rnfe-core --release --bin status >> "$GITHUB_STEP_SUMMARY" || true
+
+  desktop-check:
+    name: desktop — cargo check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências de sistema (alsa, udev, xkbcommon)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libxkbcommon-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+      - run: cargo check -p rnfe-desktop --all-targets
+      - run: cargo clippy -p rnfe-desktop -- -D warnings
+        continue-on-error: true   # o frontend herdado ainda tem warnings; vira erro em F4-01
+
+  bench:
+    name: bench (informativo)
+    runs-on: ubuntu-latest
+    needs: core
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+      - uses: actions/cache@v4
+        with:
+          path: test-roms
+          key: test-roms-${{ hashFiles('scripts/fetch-roms.sh') }}
+      - run: bash scripts/fetch-roms.sh
+      - name: Bench
+        run: |
+          {
+            echo '### Bench (ubuntu runner, release)'
+            echo '```'
+            for r in other/nestest.nes other/BladeBuster.nes mmc3_test_2/rom_singles/1-clocking.nes; do
+              cargo run -q -p rnfe-core --release --bin bench -- --rom "test-roms/$r" --frames 2000
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
