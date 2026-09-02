@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-08 (frontend + tty)
+Tarefa: F0-10 (README/CHANGELOG) — marco M0 fechado, merge em main
 Estado: concluída
-Próximo: F0-09 — CI
+Próximo: F1-01 — tabela de opcodes não-oficiais (branch fase-1-cpu)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -42,8 +42,8 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - [x] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
 - [x] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
 - [x] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
-- [ ] F0-09 CI: ci.yml (core, desktop-check, bench)
-- [ ] F0-10 README real + CHANGELOG
+- [x] F0-09 CI: ci.yml (core, desktop-check, bench)
+- [x] F0-10 README real + CHANGELOG
 
 ## F1 — CPU exata (`fase-1-cpu`) · marco M1: nestest 8991/8991 · instr_test-v5 16/16 · instr_timing 2/2 · instr_misc 4/4 · cpu_dummy_* · cpu_interrupts 5/5
 - [ ] F1-01 tabela: 22 NOPs com modo certo, `EB`=SBC IMM, `97/B7`=4 ciclos → VERIFIED_LINES 8991
