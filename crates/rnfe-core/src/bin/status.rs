@@ -67,6 +67,7 @@ fn main() {
         let style = match t.style {
             Style::Mem => "$6000",
             Style::Screen => "tela",
+            Style::Crc(_) => "CRC",
         };
         let (expect, why) = match t.expect {
             Expect::Pass => ("Pass", ""),

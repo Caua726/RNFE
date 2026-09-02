@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F1 inteira — marco M1 fechado, merge em main
+Tarefa: F2 inteira — marco M2 fechado, merge em main
 Estado: concluída
-Próximo: F2-01 — frame counter da APU em ciclos de CPU + IRQ (branch fase-2-apu-ppu)
+Próximo: F3-01 [S] — trait Mapper novo + enum MapperKind + NES 2.0 (branch fase-3-mappers-saves)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -32,6 +32,11 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - `bench --rom other/BladeBuster.nes --frames 600`: **405 fps · 2,47 ms/frame · VmHWM 4,6 MB** (F1-04 janela de pixels −17 %, F1-05 bus por acesso −30 %)
 - `bench --rom other/nestest.nes --frames 600`: 470 fps · 2,13 ms/frame
 - nestest 8991/8991 · `grep unsafe crates/rnfe-core` vazio
+
+M2, 02/09/2026:
+- ROMs: 105 Pass / 11 KnownFail (10 são MMC3/A12 → F3-02; 1 é a leitura dupla de `$2007`)
+- `bench` BladeBuster: **3,8 ms/frame** (mínimo de 3 corridas) — piorou ~1,3 ms desde M1 com a APU/PPU por ciclo (frame counter, sprites, open bus). Fica para F7-01/F7-02 medir por subsistema; o celular também oscila de frequência (medições variam 3,2–5,0 ms).
+- `framebuffer()` agora converte de índices sob demanda (61 KB×2 em vez de 184 KB de RGBA na PPU); `framebuffer_indexed()` + `ppu::PALETTE_RGBA` para paleta na GPU
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -61,13 +66,13 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - Pendências de M1 que dependem de F2: `instr_misc/04` e `cpu_dummy_writes_ppumem` (open bus, F2-02/F2-05); `cpu_interrupts 1–5` (a fonte de IRQ do teste é o frame counter da APU, F2-01)
 
 ## F2 — APU e PPU exatos (`fase-2-apu-ppu`) · marco M2
-- [ ] F2-01 APU frame counter em ciclos de CPU + IRQ flag/inhibit + `$4015` R + delay `$4017`
-- [ ] F2-02 noise/DMC por ciclo; DMC IRQ; DMA do DMC com stall de 4; `$4000-$4013` open bus
-- [ ] F2-03 length counter halt/reload ordering
-- [ ] F2-04 VBL/NMI exatos: (241,1), prevent_vbl, supressão, odd-frame em (261,339)
-- [ ] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
-- [ ] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255
-- [ ] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
+- [x] F2-01 APU frame counter em ciclos de CPU + IRQ flag/inhibit + `$4015` R + delay `$4017`
+- [x] F2-02 noise/DMC por ciclo; DMC IRQ; DMA do DMC com stall de 4; `$4000-$4013` open bus
+- [x] F2-03 length counter halt/reload ordering
+- [x] F2-04 VBL/NMI exatos: (241,1), prevent_vbl, supressão, odd-frame em (261,339)
+- [x] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
+- [x] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255
+- [x] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
 
 ## F3 — Mappers, saves, rewind (`fase-3-mappers-saves`) · marco M3
 - [ ] F3-01 [S] trait `Mapper` novo + `enum MapperKind`; NES 2.0; bateria; four-screen; bounds; CHR só via cartucho

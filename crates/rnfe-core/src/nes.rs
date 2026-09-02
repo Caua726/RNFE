@@ -12,12 +12,21 @@ pub struct Nes {
     pub cpu: Cpu6502,
     pub bus: Bus,
     pub debugger: Debugger,
+    /// Cache RGBA do frame (convertido do framebuffer por índice só quando alguém pede).
+    rgba: Box<[[u8; 4]; crate::SCREEN_W * crate::SCREEN_H]>,
+    rgba_dirty: bool,
 }
 
 impl Nes {
     /// Cria o console com o cartucho inserido e já resetado.
     pub fn new(cartridge: Cartridge) -> Nes {
-        let mut nes = Nes { cpu: Cpu6502::new(), bus: Bus::new(cartridge), debugger: Debugger::new() };
+        let mut nes = Nes {
+            cpu: Cpu6502::new(),
+            bus: Bus::new(cartridge),
+            debugger: Debugger::new(),
+            rgba: vec![[0u8; 4]; crate::SCREEN_W * crate::SCREEN_H].into_boxed_slice().try_into().unwrap(),
+            rgba_dirty: true,
+        };
         nes.reset();
         nes
     }
@@ -45,6 +54,7 @@ impl Nes {
             self.step_instruction();
         }
         self.bus.ppu.frame_complete = false;
+        self.rgba_dirty = true;
         // Headless: ninguém drenou o áudio — não deixar crescer sem limite
         let buf = &mut self.bus.apu.sample_buffer;
         if buf.len() > 8192 {
@@ -58,9 +68,21 @@ impl Nes {
         self.bus.cpu_cycles
     }
 
-    /// Imagem do frame atual, RGBA8, 256×240×4 bytes.
-    pub fn framebuffer(&self) -> &[u8] {
-        self.bus.ppu.screen.as_flattened()
+    /// Imagem do frame atual, RGBA8, 256×240×4 bytes (convertida da paleta sob demanda).
+    pub fn framebuffer(&mut self) -> &[u8] {
+        if self.rgba_dirty {
+            for (dst, &idx) in self.rgba.iter_mut().zip(self.bus.ppu.screen.iter()) {
+                *dst = crate::ppu::PALETTE_RGBA[idx as usize];
+            }
+            self.rgba_dirty = false;
+        }
+        self.rgba.as_flattened()
+    }
+
+    /// Frame atual como índices de paleta de 9 bits (`ênfase << 6 | cor`), 256×240 — para
+    /// frontends que aplicam a paleta na GPU (`ppu::PALETTE_RGBA`).
+    pub fn framebuffer_indexed(&self) -> &[u16] {
+        &self.bus.ppu.screen[..]
     }
 
     /// Leitura de memória sem efeitos colaterais (RAM, PPU, cartucho).

@@ -125,12 +125,26 @@ impl Cartridge {
         )
     }
 
+    /// Leitura pela CPU. Mappers que não tratam `$6000-$7FFF` ganham os 8 KB de PRG RAM
+    /// por padrão (muitos ROMs de teste e homebrews contam com WRAM mesmo sem bateria).
+    #[inline]
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
-        self.mapper.cpu_read(addr, &self.data)
+        match self.mapper.cpu_read(addr, &self.data) {
+            None if (0x6000..=0x7FFF).contains(&addr) => Some(self.data.prg_ram[(addr & 0x1FFF) as usize]),
+            r => r,
+        }
     }
 
+    #[inline]
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
-        self.mapper.cpu_write(addr, data, &mut self.data)
+        if self.mapper.cpu_write(addr, data, &mut self.data) {
+            return true;
+        }
+        if (0x6000..=0x7FFF).contains(&addr) {
+            self.data.prg_ram[(addr & 0x1FFF) as usize] = data;
+            return true;
+        }
+        false
     }
 
     /// Leitura de CHR (`$0000-$1FFF` da PPU) pelo mapper.
