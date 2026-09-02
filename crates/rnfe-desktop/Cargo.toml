@@ -1,0 +1,19 @@
+[package]
+name = "rnfe-desktop"
+description = "RNFE para Linux, Windows e macOS."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rnfe"
+path = "src/main.rs"
+
+[dependencies]
+rnfe-gui.workspace = true
+
+[lints]
+workspace = true

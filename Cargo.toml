@@ -1,19 +1,54 @@
-cargo-features = ["edition2024"]
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# `cargo build/check/test` na raiz só toca o núcleo — wgpu/winit nunca compilam no celular.
+default-members = ["crates/rnfe-core", "crates/rnfe-frontend", "crates/rnfe-tty"]
 
-[package]
-name = "RNFE"
+[workspace.package]
+version = "0.1.0"
 edition = "2024"
-version = "0.0.1"
+rust-version = "1.85"
 authors = ["Caua <cauaalvarenganeves@gmail.com>"]
-description = "Rust Nintendo Famicon Emulator"
+license = "MIT"
 repository = "https://github.com/Caua726/RNFE"
 
-
-[dependencies]
+[workspace.dependencies]
+rnfe-core = { path = "crates/rnfe-core" }
+rnfe-gui = { path = "crates/rnfe-gui" }
+rnfe-frontend = { path = "crates/rnfe-frontend" }
+log = "0.4"
 wgpu = "24"
-winit = { version = "0.30.12", features = ["x11", "wayland"] }
+winit = "0.30.12"
 pollster = "0.4"
 cpal = "0.17.3"
-bytemuck = { version = "1.25.0", features = ["derive"] }
+bytemuck = "1"
 rfd = "0.17.2"
 fontdue = "0.9"
+
+[workspace.lints.rust]
+# A CPU usa IMP/IMM/getFlag… (nomes do datasheet); renomear é trabalho de estilo, não de exatidão.
+non_snake_case = "allow"
+
+# ---- perfis calibrados para ~1,5 GB de RAM livre ----
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+incremental = true
+
+[profile.dev.package.rnfe-core]
+opt-level = 2          # testes de emulação 10× mais rápidos; debug-assertions continuam ligados
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+debug = false
+strip = "debuginfo"
+
+[profile.release.package.rnfe-core]
+codegen-units = 1
+
+[profile.web]
+inherits = "release"
+opt-level = 3

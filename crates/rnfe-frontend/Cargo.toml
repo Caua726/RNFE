@@ -1,0 +1,15 @@
+[package]
+name = "rnfe-frontend"
+description = "Peças comuns a todo frontend do RNFE: cadência de frames, estado de input. Sem dependências."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rnfe-core.workspace = true
+
+[lints]
+workspace = true
