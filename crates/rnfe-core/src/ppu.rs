@@ -68,6 +68,9 @@ const NES_PALETTE: [[u8; 4]; 64] = [
 
 use crate::cartridge::{Cartridge, Mirror};
 
+/// Dots entre a escrita em `$2001` e o render ligar/desligar de fato.
+const RENDER_DELAY: u8 = 2;
+
 pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
@@ -118,6 +121,12 @@ pub struct Ppu {
 
     // Frame par/ímpar
     odd_frame: bool,
+    /// `$2002` lido um dot antes do VBL: a flag não é setada neste frame (e não há NMI).
+    prevent_vbl: bool,
+    /// Render ligado (bits 3/4 de `$2001`), com o atraso de `RENDER_DELAY` dots do hardware.
+    rendering: bool,
+    render_next: bool,
+    render_delay: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -169,6 +178,10 @@ impl Ppu {
             frame_complete: false,
             scanline_trigger: false,
             odd_frame: false,
+            prevent_vbl: false,
+            rendering: false,
+            render_next: false,
+            render_delay: 0,
         }
     }
 
@@ -186,6 +199,10 @@ impl Ppu {
                 let data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
                 self.status &= 0x7F;
                 self.address_latch = 0;
+                // Lido um dot antes de (241,1): lê 0 e o VBL deste frame é suprimido
+                if self.scanline == 241 && self.cycle == 1 {
+                    self.prevent_vbl = true;
+                }
                 data
             }
             0x0004 => self.oam[self.oam_addr as usize],
@@ -213,6 +230,8 @@ impl Ppu {
             }
             0x0001 => {
                 self.mask = data;
+                self.render_next = data & 0x18 != 0;
+                self.render_delay = RENDER_DELAY;
             }
             0x0002 => {}
             0x0003 => {
@@ -306,12 +325,17 @@ impl Ppu {
 
     /// Um dot de PPU.
     pub fn step(&mut self, cart: &mut Cartridge) {
+        if self.render_delay > 0 {
+            self.render_delay -= 1;
+            if self.render_delay == 0 {
+                self.rendering = self.render_next;
+            }
+        }
+        // Frame ímpar com render ligado: (261,339) salta direto para (0,0).
+        let skip_dot = self.scanline == -1 && self.cycle == 339 && self.odd_frame && self.rendering;
+
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
-            if self.scanline == 0 && self.cycle == 0 && self.odd_frame && (self.mask & 0x18) != 0 {
-                self.cycle = 1;
-            }
-
             if self.scanline == -1 && self.cycle == 1 {
                 // Limpar vblank, sprite overflow, sprite zero hit
                 self.status &= !(0x80 | 0x40 | 0x20);
@@ -375,7 +399,7 @@ impl Ppu {
             }
 
             // MMC3 scanline counter trigger (A12 rising edge)
-            if self.cycle == 260 && (self.mask & 0x18) != 0 {
+            if self.cycle == 260 && self.rendering {
                 self.scanline_trigger = true;
             }
 
@@ -494,7 +518,10 @@ impl Ppu {
         }
 
         if self.scanline == 241 && self.cycle == 1 {
-            self.status |= 0x80;
+            if !self.prevent_vbl {
+                self.status |= 0x80;
+            }
+            self.prevent_vbl = false;
         }
 
         // Mux de pixel, sprite 0 hit e escrita na tela: só na janela visível (240 linhas × dots 1..=256).
@@ -516,6 +543,9 @@ impl Ppu {
         }
 
         self.cycle += 1;
+        if skip_dot {
+            self.cycle = 341;
+        }
         if self.cycle >= 341 {
             self.cycle = 0;
             self.scanline += 1;
@@ -636,7 +666,7 @@ impl Ppu {
     }
 
     fn increment_scroll_x(&mut self) {
-        if (self.mask & 0x08) != 0 || (self.mask & 0x10) != 0 {
+        if self.rendering {
             if (self.vram_addr & 0x001F) == 31 {
                 self.vram_addr &= !0x001F;
                 self.vram_addr ^= 0x0400;
@@ -647,7 +677,7 @@ impl Ppu {
     }
 
     fn increment_scroll_y(&mut self) {
-        if (self.mask & 0x08) != 0 || (self.mask & 0x10) != 0 {
+        if self.rendering {
             if (self.vram_addr & 0x7000) != 0x7000 {
                 self.vram_addr += 0x1000;
             } else {
@@ -667,14 +697,14 @@ impl Ppu {
     }
 
     fn transfer_address_x(&mut self) {
-        if (self.mask & 0x08) != 0 || (self.mask & 0x10) != 0 {
+        if self.rendering {
             // Copy horizontal bits from t to v
             self.vram_addr = (self.vram_addr & !0x041F) | (self.tram_addr & 0x041F);
         }
     }
 
     fn transfer_address_y(&mut self) {
-        if (self.mask & 0x08) != 0 || (self.mask & 0x10) != 0 {
+        if self.rendering {
             // Copy vertical bits from t to v
             self.vram_addr = (self.vram_addr & !0x7BE0) | (self.tram_addr & 0x7BE0);
         }
