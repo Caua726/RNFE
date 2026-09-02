@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F4 inteira (gui reestruturado, web, toque, CI Pages, gamepad)
-Estado: concluída no celular (clippy wasm32 limpo); marco M4 depende do push (CI desktop + Pages)
-Próximo: push → conferir CI (desktop-check, web, pages) e jogar em https://caua726.github.io/RNFE/ no celular; depois F5-01 (Android)
+Tarefa: F5 inteira (rnfe-android + JNI/SAF, projeto Gradle, CI android + release.yml, README)
+Estado: concluída no celular; marco M5 = APK do CI instalado e rodando no g56 (push + conferir job android)
+Próximo: push → job android verde → instalar o APK do artefato no g56 → F6-01 (mix de expansão, branch fase-6-mappers-ext)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -42,6 +42,8 @@ M3, 02/09/2026:
 - ROMs: **115 Pass / 1 KnownFail** (só a leitura dupla de `$2007`); mmc3_test_2 6/6, mmc3_irq_tests 6/6; 7 testes sintéticos de mapper; 6 de save state; 3 de save; 2 de rewind
 - `bench` BladeBuster (MMC3): **3,16 ms/frame** (mínimo de 3), VmHWM 4,4 MB — igual/melhor que M2 apesar do A12 por acesso e do `MapperKind` por `match`
 - save state ≈ 15 KB (23 KB com CHR RAM); `cargo test` com `--features rnfe-core/serde`: ~35 s (blargg 25 s)
+
+M4, 02/09/2026 (CI ubuntu): 5 jobs verdes no 1º push; wasm 3,82 MB (1,43 MB gzip, meta < 2 MB); https://caua726.github.io/RNFE/ no ar.
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -96,9 +98,9 @@ M3, 02/09/2026:
 - [x] F4-05 gamepads
 
 ## F5 — Android (`fase-5-android`) · marco M5: APK arm64 roda SMB1 com toque e som
-- [ ] F5-01 rnfe-android cdylib (android-activity, FsStorage, oboe, SAF)
-- [ ] F5-02 release.yml: Linux, Windows, APK, web em tag
-- [ ] F5-03 README Android
+- [x] F5-01 rnfe-android cdylib (android-activity, FsStorage, oboe, SAF)
+- [x] F5-02 release.yml: Linux, Windows, APK, web em tag
+- [x] F5-03 README Android
 
 ## F6 — Mappers estendidos e áudio (`fase-6-mappers-ext`) · marco M6
 - [ ] F6-01 mix de expansão na amostra + áudio 5B (FME-7)
