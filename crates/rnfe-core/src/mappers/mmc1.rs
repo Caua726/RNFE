@@ -1,5 +1,5 @@
 // Mapper 001 (MMC1) - PRG/CHR bank switching via serial port
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
 pub struct Mmc1 {
@@ -13,14 +13,7 @@ pub struct Mmc1 {
 
 impl Mmc1 {
     pub fn new() -> Self {
-        Mmc1 {
-            shift: 0x10,
-            shift_count: 0,
-            control: 0x0C,
-            chr_bank0: 0,
-            chr_bank1: 0,
-            prg_bank: 0,
-        }
+        Mmc1 { shift: 0x10, shift_count: 0, control: 0x0C, chr_bank0: 0, chr_bank1: 0, prg_bank: 0 }
     }
 }
 
@@ -32,27 +25,23 @@ impl Mapper for Mmc1 {
                 0 | 1 => {
                     let b = (self.prg_bank & 0x0E) as usize;
                     b * 0x4000 + (addr as usize - 0x8000)
-                },
+                }
                 2 => {
                     if addr < 0xC000 {
                         addr as usize - 0x8000
                     } else {
                         (self.prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0xC000)
                     }
-                },
+                }
                 3 | _ => {
                     if addr < 0xC000 {
                         (self.prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0x8000)
                     } else {
                         (data.prg_banks as usize - 1) * 0x4000 + (addr as usize - 0xC000)
                     }
-                },
+                }
             };
-            if bank < data.prg.len() {
-                Some(data.prg[bank])
-            } else {
-                Some(0)
-            }
+            if bank < data.prg.len() { Some(data.prg[bank]) } else { Some(0) }
         } else if addr >= 0x6000 {
             Some(data.prg_ram[(addr - 0x6000) as usize])
         } else {
@@ -87,7 +76,7 @@ impl Mapper for Mmc1 {
                                 3 => Mirror::Horizontal,
                                 _ => data.mirror,
                             };
-                        },
+                        }
                         0xA000..=0xBFFF => self.chr_bank0 = value,
                         0xC000..=0xDFFF => self.chr_bank1 = value,
                         0xE000..=0xFFFF => self.prg_bank = value & 0x0F,
@@ -119,11 +108,7 @@ impl Mapper for Mmc1 {
                         self.chr_bank1 as usize * 0x1000 + (addr as usize - 0x1000)
                     }
                 };
-                if bank_addr < data.chr.len() {
-                    Some(data.chr[bank_addr])
-                } else {
-                    Some(0)
-                }
+                if bank_addr < data.chr.len() { Some(data.chr[bank_addr]) } else { Some(0) }
             }
         } else {
             None
@@ -140,7 +125,9 @@ impl Mapper for Mmc1 {
     }
 
     fn state_string(&self) -> String {
-        format!("  MMC1 ctrl: ${:02X}  PRG bank: {}  CHR banks: {}/{}\n",
-            self.control, self.prg_bank, self.chr_bank0, self.chr_bank1)
+        format!(
+            "  MMC1 ctrl: ${:02X}  PRG bank: {}  CHR banks: {}/{}\n",
+            self.control, self.prg_bank, self.chr_bank0, self.chr_bank1
+        )
     }
 }

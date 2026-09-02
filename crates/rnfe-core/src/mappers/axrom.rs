@@ -1,5 +1,5 @@
 // Mapper 007 (AxROM) - 32KB PRG switching + single screen mirroring
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
 pub struct Axrom {
@@ -7,7 +7,9 @@ pub struct Axrom {
 }
 
 impl Axrom {
-    pub fn new() -> Self { Axrom { prg_bank: 0 } }
+    pub fn new() -> Self {
+        Axrom { prg_bank: 0 }
+    }
 }
 
 impl Mapper for Axrom {
@@ -31,12 +33,10 @@ impl Mapper for Axrom {
     }
 
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            Some(data.chr[addr as usize])
-        } else {
-            None
-        }
+        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
     }
 
-    fn reset(&mut self, _prg_banks: u8) { self.prg_bank = 0; }
+    fn reset(&mut self, _prg_banks: u8) {
+        self.prg_bank = 0;
+    }
 }

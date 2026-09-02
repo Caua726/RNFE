@@ -1,65 +1,60 @@
-
 // Flags Cpu6502
-pub enum FLAGS6502{
-     C = 1 << 0,   // Transportar Bit
-     Z = 1 << 1,   // Zerar
-     I = 1 << 2,   // Disabilitar Interrupção
-     D = 1 << 3,   // Modo Decimal
-     B = 1 << 4,   // Break
-     U = 1 << 5,   // Não usado
-     V = 1 << 6,   // Overflow
-     N = 1 << 7,   // Negativo
+pub enum FLAGS6502 {
+    C = 1 << 0, // Transportar Bit
+    Z = 1 << 1, // Zerar
+    I = 1 << 2, // Disabilitar Interrupção
+    D = 1 << 3, // Modo Decimal
+    B = 1 << 4, // Break
+    U = 1 << 5, // Não usado
+    V = 1 << 6, // Overflow
+    N = 1 << 7, // Negativo
 }
 
 pub struct Cpu6502 {
-    pub a: u8,          // Acccumulator Register
-    pub x: u8,          // X Register
-    pub y: u8,          // Y Register
-    pub stkp: u8,       // Stack Pointer (mostra os pontos do bus)
-    pub pc: u16,        // Program Counter
-    pub status: u8,     // Status Register
+    pub a: u8,      // Acccumulator Register
+    pub x: u8,      // X Register
+    pub y: u8,      // Y Register
+    pub stkp: u8,   // Stack Pointer (mostra os pontos do bus)
+    pub pc: u16,    // Program Counter
+    pub status: u8, // Status Register
     fetched: u8,    // Nao sei, depois vejo
     temp: u16,      // Variavel temporaria
     addr_abs: u16,  // Endereco Absoluto
     addr_rel: u16,  // Endereço Relativo
     opcode: u8,     // Variavel Opcode
-    cycles: u8,      // Ciclo de clock
+    cycles: u8,     // Ciclo de clock
     lookup: Vec<Instruction>,
 }
 
 pub struct Instruction {
-    pub name: &'static str,                           // Nome da instrução
+    pub name: &'static str, // Nome da instrução
     pub operate: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
     pub addrmode: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
-    pub cycles: u8,                                   // Ciclos necessários para a instrução
+    pub cycles: u8, // Ciclos necessários para a instrução
 }
 //Vector<Instruction> lookup
 
 impl Cpu6502 {
     pub fn new() -> Self {
         Cpu6502 {
-            a:0x00,                         // Accumulator
-            x:0x00,                         // X Register
-            y:0x00,                         // Y Register
-            stkp:0x00,                      // Stack Pointer
-            pc:0x0000,                      // Program Counter
-            status:0x00,                    // Status Register
-            fetched:0x00,                   // Nao sei depois eu vejo
-            temp:0x0000,                    // Variavel temporaria
-            addr_abs:0x0000,                // Todo o endereço de memoria acaba aqui
-            addr_rel:0x0000,                // O endereço absoluto da atual instrução
-            opcode:0x00,                    // Byte de instrução
-            cycles:0,                       // Contagem do numero de ciclo de clocks
-            lookup: Cpu6502::instrucoes(),  // Lookup table para uinstrucoes da cpu
+            a: 0x00,                       // Accumulator
+            x: 0x00,                       // X Register
+            y: 0x00,                       // Y Register
+            stkp: 0x00,                    // Stack Pointer
+            pc: 0x0000,                    // Program Counter
+            status: 0x00,                  // Status Register
+            fetched: 0x00,                 // Nao sei depois eu vejo
+            temp: 0x0000,                  // Variavel temporaria
+            addr_abs: 0x0000,              // Todo o endereço de memoria acaba aqui
+            addr_rel: 0x0000,              // O endereço absoluto da atual instrução
+            opcode: 0x00,                  // Byte de instrução
+            cycles: 0,                     // Contagem do numero de ciclo de clocks
+            lookup: Cpu6502::instrucoes(), // Lookup table para uinstrucoes da cpu
         }
     }
 
     pub fn getFlag(&self, flag: FLAGS6502) -> u8 {
-        if self.status & flag as u8 != 0 {
-            1
-        } else {
-            0
-        }
+        if self.status & flag as u8 != 0 { 1 } else { 0 }
     }
     pub fn setFlag(&mut self, flag: FLAGS6502, value: bool) {
         if value {
@@ -128,7 +123,7 @@ impl Cpu6502 {
         self.pc = self.pc.wrapping_add(1);
         self.addr_abs = base.wrapping_add(self.y) as u16;
         0
-    }   
+    }
     // ABS: Absolute
     // O endereço absoluto é formado
     // Por dois bytes, o primeiro
@@ -144,7 +139,7 @@ impl Cpu6502 {
         self.addr_abs = (hi << 8) | lo;
 
         0
-    }   
+    }
     // ABX: Absolute X
     // Endereço absoluto com valor X
     // Isto calcula o mesmo que o
@@ -158,12 +153,7 @@ impl Cpu6502 {
         self.addr_abs = (hi << 8) | lo;
         self.addr_abs = self.addr_abs.wrapping_add(self.x as u16);
 
-        if (self.addr_abs & 0xFF00) != (hi << 8) {
-            1
-        } else {
-            0
-        }
-
+        if (self.addr_abs & 0xFF00) != (hi << 8) { 1 } else { 0 }
     }
     // ABY: Absolute Y
     // O mesmo que o ABX, mas
@@ -177,12 +167,7 @@ impl Cpu6502 {
         self.addr_abs = (hi << 8) | lo;
         self.addr_abs = self.addr_abs.wrapping_add(self.y as u16);
 
-        if (self.addr_abs & 0xFF00) != (hi << 8) {
-            1
-        } else {
-            0
-        }
-
+        if (self.addr_abs & 0xFF00) != (hi << 8) { 1 } else { 0 }
     }
     // IND: Indirect Adressing
     // Normalmente é reconhecido como um
@@ -213,13 +198,13 @@ impl Cpu6502 {
     pub fn IZX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let t: u16 = self.read(bus, self.pc) as u16;
         self.pc = self.pc.wrapping_add(1);
-        let lo: u16 = self.read(bus, (t + (self.x  as u16)) & 0x00FF) as u16;
+        let lo: u16 = self.read(bus, (t + (self.x as u16)) & 0x00FF) as u16;
         let hi: u16 = self.read(bus, (t + (self.x as u16) + 1) & 0x00FF) as u16;
 
         self.addr_abs = (hi << 8 | lo);
 
         0
-    } 
+    }
     // IZY: Indirect Adressing Zero Page Y
     // Diferentemente dos outros, onde X == Y, nesse
     // O X !== Y, neste caso ele lê um ponteiro de 16 bits
@@ -234,12 +219,8 @@ impl Cpu6502 {
         let base = ((hi << 8) | lo) as u16;
         self.addr_abs = base.wrapping_add(self.y as u16);
 
-        if (self.addr_abs & 0xFF00) != (base & 0xFF00) {
-            1
-        } else {
-            0
-        }
-    }   
+        if (self.addr_abs & 0xFF00) != (base & 0xFF00) { 1 } else { 0 }
+    }
     // REL: Relative.
     // Modo de Endereçamento Relativo, usado para
     // Instruções de branch, ele lê um byte
@@ -270,7 +251,7 @@ impl Cpu6502 {
     pub fn fetch(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         let idx = self.opcode as usize;
         let am = self.lookup[idx].addrmode as usize;
-    
+
         if am == Cpu6502::ACC as usize {
             self.fetched = self.a;
         } else if am != Cpu6502::IMP as usize {
@@ -278,7 +259,6 @@ impl Cpu6502 {
         }
         self.fetched
     }
-    
 
     // AND: And
     pub fn AND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
@@ -286,7 +266,7 @@ impl Cpu6502 {
         self.a = self.a & self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        
+
         return 1;
     }
 
@@ -303,7 +283,7 @@ impl Cpu6502 {
         }
         return 0;
     }
-    
+
     // BCC: Branch Carry Clear
     pub fn BCC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         if self.getFlag(FLAGS6502::C) == 0 {
@@ -460,23 +440,19 @@ impl Cpu6502 {
     pub fn ADC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.fetch(bus);
         self.temp = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
-    
+
         self.setFlag(FLAGS6502::C, self.temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-    
+
         let r = (self.temp & 0x00FF) as u8; // resultado de 8 bits
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-    
+
         // V: (~(A^M) & (A^R) & 0x80) != 0
-        self.setFlag(
-            FLAGS6502::V,
-            (((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0)
-        );
-    
+        self.setFlag(FLAGS6502::V, (((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0));
+
         self.a = r;
         1
     }
-    
 
     // SBC: Subtract with Carry
     // Subtrai um valor da memoria com o acumulador
@@ -485,23 +461,20 @@ impl Cpu6502 {
         self.fetch(bus);
         let value = (self.fetched as u16) ^ 0x00FF;
         let temp = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
-    
+
         let r = (temp & 0x00FF) as u8;
-    
+
         self.setFlag(FLAGS6502::C, (temp & 0xFF00) != 0);
         self.setFlag(FLAGS6502::Z, r == 0);
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-    
+
         // V (SBC): ((A^R) & (A^M) & 0x80) != 0
-        self.setFlag(
-            FLAGS6502::V,
-            (((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0)
-        );
-    
+        self.setFlag(FLAGS6502::V, (((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0));
+
         self.a = r;
         1
     }
-    
+
     // PHA: Push Accumulator
     // Funcão: Coloca o valor do acumulador no stack
     pub fn PHA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
@@ -519,23 +492,23 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
         0
     }
-    
+
     // RTI: Return from Interrupt
     pub fn RTI(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.stkp = self.stkp.wrapping_add(1);
         self.status = self.read(bus, 0x0100 + self.stkp as u16);
         self.status &= !(FLAGS6502::B as u8);
-        self.status |=  (FLAGS6502::U as u8);
-    
+        self.status |= (FLAGS6502::U as u8);
+
         self.stkp = self.stkp.wrapping_add(1);
         let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
         self.stkp = self.stkp.wrapping_add(1);
         let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
-    
+
         self.pc = (hi << 8) | lo;
         0
     }
-    
+
     //===========================================//
     //#         Opcodes Nao Implementados       #//
     //===========================================//
@@ -567,17 +540,17 @@ impl Cpu6502 {
     // BRK: Force Interrupt
     pub fn BRK(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.pc = self.pc.wrapping_add(1);
-        
+
         self.setFlag(FLAGS6502::I, true);
         self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
         self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
-        
+
         self.setFlag(FLAGS6502::B, true);
         self.write(bus, 0x0100 + self.stkp as u16, self.status);
         self.stkp = self.stkp.wrapping_sub(1);
-        
+
         let lo = self.read(bus, 0xFFFE) as u16;
         let hi = self.read(bus, 0xFFFF) as u16;
         self.pc = (hi << 8) | lo;
@@ -654,12 +627,12 @@ impl Cpu6502 {
     // JSR: Jump to Subroutine
     pub fn JSR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.pc = self.pc.wrapping_sub(1);
-        
+
         self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
         self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
-        
+
         self.pc = self.addr_abs;
         0
     }
@@ -710,7 +683,7 @@ impl Cpu6502 {
     pub fn NOP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         match self.opcode {
             0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => 1,
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -775,7 +748,7 @@ impl Cpu6502 {
         let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
         self.stkp = self.stkp.wrapping_add(1);
         let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
-        
+
         self.pc = (hi << 8) | lo;
         self.pc = self.pc.wrapping_add(1);
         0
@@ -911,10 +884,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, (result & 0xFF00) != 0);
         self.setFlag(FLAGS6502::Z, r == 0);
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(
-            FLAGS6502::V,
-            (((self.a ^ r) & (self.a ^ temp) & 0x80) != 0)
-        );
+        self.setFlag(FLAGS6502::V, (((self.a ^ r) & (self.a ^ temp) & 0x80) != 0));
         self.a = r;
         0
     }
@@ -977,16 +947,15 @@ impl Cpu6502 {
         let r = (result & 0x00FF) as u8;
         self.setFlag(FLAGS6502::Z, r == 0);
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(
-            FLAGS6502::V,
-            (((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0)
-        );
+        self.setFlag(FLAGS6502::V, (((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0));
         self.a = r;
         0
     }
 
     // XXX: Illegal Opcode
-    pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {0}
+    pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
+        0
+    }
 
     pub fn is_instruction_start(&self) -> bool {
         self.cycles == 0
@@ -997,12 +966,12 @@ impl Cpu6502 {
         if self.cycles == 0 {
             self.opcode = self.read(bus, self.pc);
             self.pc = self.pc.wrapping_add(1); // só +1
-    
+
             let (addrmode, operate, base_cycles) = {
                 let ins = &self.lookup[self.opcode as usize];
                 (ins.addrmode, ins.operate, ins.cycles)
             };
-    
+
             self.cycles = base_cycles;
             let cycle0 = addrmode(self, bus);
             let cycle1 = operate(self, bus);
@@ -1010,8 +979,7 @@ impl Cpu6502 {
         }
         self.cycles = self.cycles.wrapping_sub(1);
     }
-    
-    
+
     // Reset
     pub fn reset(&mut self, bus: &mut crate::bus::Bus) {
         self.a = 0;
@@ -1019,7 +987,7 @@ impl Cpu6502 {
         self.y = 0;
         self.stkp = 0xFD;
         self.status = 0x00 | FLAGS6502::U as u8;
-        
+
         self.addr_abs = 0xFFFC;
         let lo = self.read(bus, self.addr_abs + 0);
         let hi = self.read(bus, self.addr_abs + 1);
@@ -1040,39 +1008,39 @@ impl Cpu6502 {
             self.stkp = self.stkp.wrapping_sub(1);
             self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
             self.stkp = self.stkp.wrapping_sub(1);
-    
+
             // push status (B=0, U=1) e seta I
             self.setFlag(FLAGS6502::B, false);
             self.setFlag(FLAGS6502::U, true);
             self.setFlag(FLAGS6502::I, true);
             self.write(bus, 0x0100 + self.stkp as u16, self.status);
             self.stkp = self.stkp.wrapping_sub(1);
-    
+
             // vetor IRQ
             let lo = self.read(bus, 0xFFFE) as u16;
             let hi = self.read(bus, 0xFFFF) as u16;
             self.pc = (hi << 8) | lo;
-    
+
             self.cycles = 7;
         }
     }
-    
+
     pub fn nmi(&mut self, bus: &mut crate::bus::Bus) {
         self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
         self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
-    
+
         self.setFlag(FLAGS6502::B, false);
         self.setFlag(FLAGS6502::U, true);
         self.setFlag(FLAGS6502::I, true);
         self.write(bus, 0x0100 + self.stkp as u16, self.status);
         self.stkp = self.stkp.wrapping_sub(1);
-    
+
         let lo = self.read(bus, 0xFFFA) as u16;
         let hi = self.read(bus, 0xFFFB) as u16;
         self.pc = (hi << 8) | lo;
-    
+
         self.cycles = 8;
     }
 
@@ -1101,7 +1069,6 @@ impl Cpu6502 {
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0x10
             Instruction { name: "BPL", operate: Cpu6502::BPL, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1119,7 +1086,6 @@ impl Cpu6502 {
             Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABX, cycles: 7 },
             Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABX, cycles: 7 },
-    
             // 0x20
             Instruction { name: "JSR", operate: Cpu6502::JSR, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1137,7 +1103,6 @@ impl Cpu6502 {
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0x30
             Instruction { name: "BMI", operate: Cpu6502::BMI, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1155,7 +1120,6 @@ impl Cpu6502 {
             Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABX, cycles: 7 },
             Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABX, cycles: 7 },
-    
             // 0x40
             Instruction { name: "RTI", operate: Cpu6502::RTI, addrmode: Cpu6502::IMP, cycles: 6 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1173,7 +1137,6 @@ impl Cpu6502 {
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0x50
             Instruction { name: "BVC", operate: Cpu6502::BVC, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1191,7 +1154,6 @@ impl Cpu6502 {
             Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABX, cycles: 7 },
             Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABX, cycles: 7 },
-    
             // 0x60
             Instruction { name: "RTS", operate: Cpu6502::RTS, addrmode: Cpu6502::IMP, cycles: 6 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1209,7 +1171,6 @@ impl Cpu6502 {
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0x70
             Instruction { name: "BVS", operate: Cpu6502::BVS, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1227,7 +1188,6 @@ impl Cpu6502 {
             Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABX, cycles: 7 },
             Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABX, cycles: 7 },
-    
             // 0x80
             Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1245,7 +1205,6 @@ impl Cpu6502 {
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ABS, cycles: 4 },
-
             // 0x90
             Instruction { name: "BCC", operate: Cpu6502::BCC, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZY, cycles: 6 },
@@ -1263,7 +1222,6 @@ impl Cpu6502 {
             Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABX, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
             Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
-    
             // 0xA0
             Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1281,7 +1239,6 @@ impl Cpu6502 {
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABS, cycles: 4 },
-
             // 0xB0
             Instruction { name: "BCS", operate: Cpu6502::BCS, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1299,7 +1256,6 @@ impl Cpu6502 {
             Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABY, cycles: 4 },
             Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABY, cycles: 4 },
-
             // 0xC0
             Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1317,7 +1273,6 @@ impl Cpu6502 {
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0xD0
             Instruction { name: "BNE", operate: Cpu6502::BNE, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZY, cycles: 5 },
@@ -1335,7 +1290,6 @@ impl Cpu6502 {
             Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABX, cycles: 4 },
             Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABX, cycles: 7 },
             Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABX, cycles: 7 },
-    
             // 0xE0
             Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::IMM, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZX, cycles: 6 },
@@ -1353,7 +1307,6 @@ impl Cpu6502 {
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABS, cycles: 4 },
             Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ABS, cycles: 6 },
             Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABS, cycles: 6 },
-
             // 0xF0
             Instruction { name: "BEQ", operate: Cpu6502::BEQ, addrmode: Cpu6502::REL, cycles: 2 },
             Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZY, cycles: 5 },

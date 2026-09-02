@@ -2,12 +2,12 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, ElementState, MouseButton};
-use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 use wgpu::util::DeviceExt;
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::ui::Ui;
 use rnfe_core::Nes;
@@ -78,16 +78,15 @@ impl GpuState {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window).expect("surface");
-        let adapter = pollster::block_on(
-            instance.request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })
-        ).expect("adapter");
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
+        .expect("adapter");
 
-        let (device, queue) = pollster::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor::default(), None)
-        ).expect("device");
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+                .expect("device");
 
         let surface_caps = surface.get_capabilities(&adapter);
         let format = surface_caps.formats[0];
@@ -188,11 +187,20 @@ impl GpuState {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), buffers: &[], compilation_options: Default::default() },
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
@@ -206,7 +214,12 @@ impl GpuState {
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay"),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), buffers: &[], compilation_options: Default::default() },
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
@@ -238,21 +251,38 @@ impl GpuState {
             Self::create_menu_resources(&device, &queue, &bind_group_layout, &sampler, menu_w, menu_h);
 
         GpuState {
-            surface, device, queue, config, pipeline, bind_group, texture,
-            scale_buffer, bind_group_layout, sampler, overlay_pipeline,
-            menu_texture, menu_bind_group, menu_scale_buffer, menu_w, menu_h,
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            bind_group,
+            texture,
+            scale_buffer,
+            bind_group_layout,
+            sampler,
+            overlay_pipeline,
+            menu_texture,
+            menu_bind_group,
+            menu_scale_buffer,
+            menu_w,
+            menu_h,
         }
     }
 
     fn create_menu_resources(
-        device: &wgpu::Device, queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler,
-        w: u32, h: u32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        w: u32,
+        h: u32,
     ) -> (wgpu::Texture, wgpu::BindGroup, wgpu::Buffer) {
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("menu"),
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            mip_level_count: 1, sample_count: 1,
+            mip_level_count: 1,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
@@ -266,7 +296,8 @@ impl GpuState {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None, layout,
+            label: None,
+            layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
@@ -297,7 +328,13 @@ impl GpuState {
 
         // Recriar menu texture na nova resolução
         let (mt, mbg, msb) = Self::create_menu_resources(
-            &self.device, &self.queue, &self.bind_group_layout, &self.sampler, width.max(1), height.max(1));
+            &self.device,
+            &self.queue,
+            &self.bind_group_layout,
+            &self.sampler,
+            width.max(1),
+            height.max(1),
+        );
         self.menu_texture = mt;
         self.menu_bind_group = mbg;
         self.menu_scale_buffer = msb;
@@ -309,29 +346,44 @@ impl GpuState {
     fn render(&mut self, nes_pixels: &[u8], overlay: Option<&[u8]>) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.texture, mip_level: 0,
-                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             nes_pixels,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(NES_WIDTH * 4), rows_per_image: Some(NES_HEIGHT) },
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(NES_WIDTH * 4),
+                rows_per_image: Some(NES_HEIGHT),
+            },
             wgpu::Extent3d { width: NES_WIDTH, height: NES_HEIGHT, depth_or_array_layers: 1 },
         );
 
         if let Some(ovr) = overlay {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &self.menu_texture, mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                    texture: &self.menu_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
                 },
                 ovr,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.menu_w * 4), rows_per_image: Some(self.menu_h) },
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(self.menu_w * 4),
+                    rows_per_image: Some(self.menu_h),
+                },
                 wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
             );
         }
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
-            Err(_) => { self.surface.configure(&self.device, &self.config); return; }
+            Err(_) => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
         };
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -340,8 +392,12 @@ impl GpuState {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 ..Default::default()
@@ -367,17 +423,26 @@ impl GpuState {
     fn render_menu(&mut self, pixels: &[u8]) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.menu_texture, mip_level: 0,
-                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                texture: &self.menu_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             pixels,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.menu_w * 4), rows_per_image: Some(self.menu_h) },
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.menu_w * 4),
+                rows_per_image: Some(self.menu_h),
+            },
             wgpu::Extent3d { width: self.menu_w, height: self.menu_h, depth_or_array_layers: 1 },
         );
 
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
-            Err(_) => { self.surface.configure(&self.device, &self.config); return; }
+            Err(_) => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
         };
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -385,8 +450,12 @@ impl GpuState {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view, resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 ..Default::default()
@@ -425,7 +494,9 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
-            win: None, gpu: None, nes: None,
+            win: None,
+            gpu: None,
+            nes: None,
             framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
             audio_buffer: Arc::new(Mutex::new(VecDeque::new())),
             _audio_stream: None,
@@ -447,7 +518,9 @@ impl App {
         let audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
         let stream = Self::init_audio(audio_buffer.clone(), &mut nes);
         Self {
-            win: None, gpu: None, nes: Some(nes),
+            win: None,
+            gpu: None,
+            nes: Some(nes),
             framebuffer: vec![0u8; (NES_WIDTH * NES_HEIGHT * 4) as usize],
             audio_buffer,
             _audio_stream: stream,
@@ -473,22 +546,24 @@ impl App {
         let channels = config.channels() as usize;
         nes.bus.apu.set_sample_rate(sample_rate as f32);
 
-        let stream = device.build_output_stream(
-            &config.into(),
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut buf = buffer.lock().unwrap();
-                // Preencher frames (cada frame tem N canais)
-                for frame in data.chunks_mut(channels) {
-                    let sample = buf.pop_front().unwrap_or(0.0);
-                    // Mesmo sample pra todos os canais (mono -> stereo)
-                    for ch in frame.iter_mut() {
-                        *ch = sample;
+        let stream = device
+            .build_output_stream(
+                &config.into(),
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let mut buf = buffer.lock().unwrap();
+                    // Preencher frames (cada frame tem N canais)
+                    for frame in data.chunks_mut(channels) {
+                        let sample = buf.pop_front().unwrap_or(0.0);
+                        // Mesmo sample pra todos os canais (mono -> stereo)
+                        for ch in frame.iter_mut() {
+                            *ch = sample;
+                        }
                     }
-                }
-            },
-            |err| eprintln!("Audio error: {}", err),
-            None,
-        ).ok()?;
+                },
+                |err| eprintln!("Audio error: {}", err),
+                None,
+            )
+            .ok()?;
 
         stream.play().ok()?;
         Some(stream)
@@ -543,8 +618,24 @@ impl App {
                 let mx = self.cursor_pos.0 as i32;
                 let my = self.cursor_pos.1 as i32;
 
-                self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "PAUSED", 36.0, (mh as f32 * 0.35) as i32, [200, 200, 200, 255]);
-                self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "ESC to resume", 14.0, (mh as f32 * 0.35) as i32 + 48, [70, 70, 70, 255]);
+                self.ui.draw_text_centered(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    "PAUSED",
+                    36.0,
+                    (mh as f32 * 0.35) as i32,
+                    [200, 200, 200, 255],
+                );
+                self.ui.draw_text_centered(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    "ESC to resume",
+                    14.0,
+                    (mh as f32 * 0.35) as i32 + 48,
+                    [70, 70, 70, 255],
+                );
 
                 self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
@@ -552,7 +643,16 @@ impl App {
                     let tw = self.ui.text_width(&self.toast_msg, 16.0);
                     let tx = (mw as i32 - tw) / 2;
                     let ty = mh as i32 - 50;
-                    self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                    self.ui.fill_rect_pub(
+                        &mut self.menu_fb,
+                        mw,
+                        mh,
+                        tx - 12,
+                        ty - 6,
+                        tw + 24,
+                        28,
+                        [0, 0, 0, 180],
+                    );
                     let msg = self.toast_msg.clone();
                     self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
                 }
@@ -623,8 +723,12 @@ impl App {
                 let stuck = nes.debugger.detect_stuck(&nes.cpu, &nes.bus);
                 // Unknown opcodes
                 let has_unknown = !nes.debugger.unknown_opcodes.is_empty();
-                if stuck.is_some() { panel_h += 18; }
-                if has_unknown { panel_h += 18; }
+                if stuck.is_some() {
+                    panel_h += 18;
+                }
+                if has_unknown {
+                    panel_h += 18;
+                }
 
                 self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, 4, 4, 420, panel_h, bg);
 
@@ -632,20 +736,35 @@ impl App {
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &fps, sz, 12, y, green);
                 y += 18;
 
-                let cpu = format!("PC:{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  SP:{:02X}  P:{:02X}",
-                    nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status);
+                let cpu = format!(
+                    "PC:{:04X}  A:{:02X}  X:{:02X}  Y:{:02X}  SP:{:02X}  P:{:02X}",
+                    nes.cpu.pc, nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.stkp, nes.cpu.status
+                );
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &cpu, sz, 12, y, gray);
                 y += 18;
 
-                let ppu = format!("SL:{}  CYC:{}  CTRL:{:02X}  MASK:{:02X}  STAT:{:02X}",
-                    nes.bus.ppu.scanline, nes.bus.ppu.cycle,
-                    nes.bus.ppu.control, nes.bus.ppu.mask, nes.bus.ppu.status);
+                let ppu = format!(
+                    "SL:{}  CYC:{}  CTRL:{:02X}  MASK:{:02X}  STAT:{:02X}",
+                    nes.bus.ppu.scanline,
+                    nes.bus.ppu.cycle,
+                    nes.bus.ppu.control,
+                    nes.bus.ppu.mask,
+                    nes.bus.ppu.status
+                );
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &ppu, sz, 12, y, gray);
                 y += 18;
 
                 // Opcodes coverage
-                let used = nes.debugger.opcode_count.iter().enumerate()
-                    .filter(|(i, c)| **c > 0 && nes.debugger.opcode_names[*i] != "???" && nes.debugger.opcode_names[*i] != "NOP*")
+                let used = nes
+                    .debugger
+                    .opcode_count
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, c)| {
+                        **c > 0
+                            && nes.debugger.opcode_names[*i] != "???"
+                            && nes.debugger.opcode_names[*i] != "NOP*"
+                    })
                     .count();
                 let coverage = format!("Coverage: {}/56 opcodes  F4=report  F5=trace", used);
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &coverage, sz, 12, y, gray);
@@ -657,8 +776,14 @@ impl App {
                 }
 
                 if has_unknown {
-                    let unk = format!("Unknown opcodes: {:?}",
-                        nes.debugger.unknown_opcodes.iter().map(|(op, _)| format!("${:02X}", op)).collect::<Vec<_>>());
+                    let unk = format!(
+                        "Unknown opcodes: {:?}",
+                        nes.debugger
+                            .unknown_opcodes
+                            .iter()
+                            .map(|(op, _)| format!("${:02X}", op))
+                            .collect::<Vec<_>>()
+                    );
                     self.ui.draw_text(&mut self.menu_fb, mw, mh, &unk, sz, 12, y, yellow);
                 }
 
@@ -680,7 +805,16 @@ impl App {
                 let tw = self.ui.text_width(&self.toast_msg, 16.0);
                 let tx = (mw as i32 - tw) / 2;
                 let ty = mh as i32 - 50;
-                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                self.ui.fill_rect_pub(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    tx - 12,
+                    ty - 6,
+                    tw + 24,
+                    28,
+                    [0, 0, 0, 180],
+                );
                 let msg = self.toast_msg.clone();
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
             }
@@ -706,8 +840,24 @@ impl App {
             let cx = mw as i32 / 2;
             let title_y = (mh as f32 * 0.30) as i32;
 
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "RNFE", 56.0, title_y, [220, 220, 220, 255]);
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "NES Emulator", 16.0, title_y + 65, [80, 80, 80, 255]);
+            self.ui.draw_text_centered(
+                &mut self.menu_fb,
+                mw,
+                mh,
+                "RNFE",
+                56.0,
+                title_y,
+                [220, 220, 220, 255],
+            );
+            self.ui.draw_text_centered(
+                &mut self.menu_fb,
+                mw,
+                mh,
+                "NES Emulator",
+                16.0,
+                title_y + 65,
+                [80, 80, 80, 255],
+            );
 
             let mx = self.cursor_pos.0 as i32;
             let my = self.cursor_pos.1 as i32;
@@ -717,14 +867,40 @@ impl App {
             let hover = mx >= bx && mx < bx + bw && my >= by && my < by + bh;
 
             if hover {
-                self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
-                    [255, 255, 255, 255], [150, 150, 150, 255]);
+                self.ui.draw_button(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    "Open ROM",
+                    18.0,
+                    cx,
+                    btn_y,
+                    [255, 255, 255, 255],
+                    [150, 150, 150, 255],
+                );
             } else {
-                self.ui.draw_button(&mut self.menu_fb, mw, mh, "Open ROM", 18.0, cx, btn_y,
-                    [180, 180, 180, 255], [80, 80, 80, 255]);
+                self.ui.draw_button(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    "Open ROM",
+                    18.0,
+                    cx,
+                    btn_y,
+                    [180, 180, 180, 255],
+                    [80, 80, 80, 255],
+                );
             }
 
-            self.ui.draw_text_centered(&mut self.menu_fb, mw, mh, "press O", 12.0, btn_y + 38, [50, 50, 50, 255]);
+            self.ui.draw_text_centered(
+                &mut self.menu_fb,
+                mw,
+                mh,
+                "press O",
+                12.0,
+                btn_y + 38,
+                [50, 50, 50, 255],
+            );
 
             self.ui.draw_menubar(&mut self.menu_fb, mw, mh, mx, my);
 
@@ -733,7 +909,16 @@ impl App {
                 let tw = self.ui.text_width(&self.toast_msg, 16.0);
                 let tx = (mw as i32 - tw) / 2;
                 let ty = mh as i32 - 50;
-                self.ui.fill_rect_pub(&mut self.menu_fb, mw, mh, tx - 12, ty - 6, tw + 24, 28, [0, 0, 0, 180]);
+                self.ui.fill_rect_pub(
+                    &mut self.menu_fb,
+                    mw,
+                    mh,
+                    tx - 12,
+                    ty - 6,
+                    tw + 24,
+                    28,
+                    [0, 0, 0, 180],
+                );
                 let msg = self.toast_msg.clone();
                 self.ui.draw_text(&mut self.menu_fb, mw, mh, &msg, 16.0, tx, ty, [255, 255, 255, 255]);
             }
@@ -745,7 +930,9 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.win.is_some() { return; }
+        if self.win.is_some() {
+            return;
+        }
         let attrs = WindowAttributes::default()
             .with_title("RNFE - NES Emulator")
             .with_inner_size(winit::dpi::PhysicalSize::new(768, 720));
@@ -758,11 +945,15 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, ev: WindowEvent) {
         let Some(w) = self.win else { return };
-        if w.id() != id { return; }
+        if w.id() != id {
+            return;
+        }
         match ev {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(s) => {
-                if let Some(gpu) = self.gpu.as_mut() { gpu.resize(s.width, s.height); }
+                if let Some(gpu) = self.gpu.as_mut() {
+                    gpu.resize(s.width, s.height);
+                }
                 w.request_redraw();
             }
             WindowEvent::RedrawRequested => self.draw(),
@@ -786,13 +977,18 @@ impl ApplicationHandler for App {
                         }
                     }
                     match action {
-                        crate::ui::MenuAction::OpenRom => { self.paused = false; self.open_rom(); },
-                        crate::ui::MenuAction::Reset => {
-                            if let Some(ref mut nes) = self.nes { nes.reset(); }
+                        crate::ui::MenuAction::OpenRom => {
                             self.paused = false;
-                        },
+                            self.open_rom();
+                        }
+                        crate::ui::MenuAction::Reset => {
+                            if let Some(ref mut nes) = self.nes {
+                                nes.reset();
+                            }
+                            self.paused = false;
+                        }
                         crate::ui::MenuAction::Quit => el.exit(),
-                        crate::ui::MenuAction::None => {},
+                        crate::ui::MenuAction::None => {}
                     }
                 }
             }
@@ -800,23 +996,32 @@ impl ApplicationHandler for App {
                 if let Some(ref mut nes) = self.nes {
                     let pressed = event.state == ElementState::Pressed;
                     let bit = match event.physical_key {
-                        PhysicalKey::Code(KeyCode::KeyZ)       => Some(0x80),
-                        PhysicalKey::Code(KeyCode::KeyX)       => Some(0x40),
-                        PhysicalKey::Code(KeyCode::Tab)        => Some(0x20),
-                        PhysicalKey::Code(KeyCode::Enter)      => Some(0x10),
-                        PhysicalKey::Code(KeyCode::ArrowUp)    => Some(0x08),
-                        PhysicalKey::Code(KeyCode::ArrowDown)  => Some(0x04),
-                        PhysicalKey::Code(KeyCode::ArrowLeft)  => Some(0x02),
+                        PhysicalKey::Code(KeyCode::KeyZ) => Some(0x80),
+                        PhysicalKey::Code(KeyCode::KeyX) => Some(0x40),
+                        PhysicalKey::Code(KeyCode::Tab) => Some(0x20),
+                        PhysicalKey::Code(KeyCode::Enter) => Some(0x10),
+                        PhysicalKey::Code(KeyCode::ArrowUp) => Some(0x08),
+                        PhysicalKey::Code(KeyCode::ArrowDown) => Some(0x04),
+                        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(0x02),
                         PhysicalKey::Code(KeyCode::ArrowRight) => Some(0x01),
                         _ => None,
                     };
                     if let Some(b) = bit {
-                        if pressed { nes.bus.controller[0] |= b; } else { nes.bus.controller[0] &= !b; }
+                        if pressed {
+                            nes.bus.controller[0] |= b;
+                        } else {
+                            nes.bus.controller[0] &= !b;
+                        }
                     }
                     if pressed {
                         match event.physical_key {
-                            PhysicalKey::Code(KeyCode::Escape) => { self.paused = !self.paused; },
-                            PhysicalKey::Code(KeyCode::KeyR) => { nes.reset(); println!("NES Reset!"); }
+                            PhysicalKey::Code(KeyCode::Escape) => {
+                                self.paused = !self.paused;
+                            }
+                            PhysicalKey::Code(KeyCode::KeyR) => {
+                                nes.reset();
+                                println!("NES Reset!");
+                            }
                             PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
                             PhysicalKey::Code(KeyCode::F3) => {
                                 self.debug_overlay = !self.debug_overlay;
@@ -831,14 +1036,21 @@ impl ApplicationHandler for App {
                             }
                             PhysicalKey::Code(KeyCode::F5) => {
                                 nes.debugger.trace_enabled = !nes.debugger.trace_enabled;
-                                println!("CPU Trace: {}", if nes.debugger.trace_enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "CPU Trace: {}",
+                                    if nes.debugger.trace_enabled { "ON" } else { "OFF" }
+                                );
                                 if !nes.debugger.trace_enabled && !nes.debugger.trace_log.is_empty() {
                                     println!("--- Last {} instructions ---", nes.debugger.trace_log.len());
                                     for line in nes.debugger.trace_log.iter().rev().take(20).rev() {
                                         println!("{}", line);
                                     }
                                 }
-                                self.toast_msg = if nes.debugger.trace_enabled { "Trace ON".into() } else { "Trace OFF -> terminal".into() };
+                                self.toast_msg = if nes.debugger.trace_enabled {
+                                    "Trace ON".into()
+                                } else {
+                                    "Trace OFF -> terminal".into()
+                                };
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F6) => {
@@ -877,11 +1089,12 @@ impl ApplicationHandler for App {
                         if self.nes.is_none() {
                             self.debug_overlay = !self.debug_overlay;
                         }
-                        self.toast_msg = if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
+                        self.toast_msg =
+                            if self.debug_overlay { "Debug ON".into() } else { "Debug OFF".into() };
                         self.toast_until = Instant::now() + Duration::from_secs(2);
                     }
                 }
-            },
+            }
             _ => {}
         }
 

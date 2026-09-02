@@ -4,8 +4,8 @@
 //! render regrava o `.hash` no mesmo commit: `RNFE_UPDATE_SNAPSHOTS=1 cargo test --test snapshots`.
 //! Numa divergência, o frame é gravado em `target/snapshots/<nome>.ppm` para inspeção.
 
-use rnfe_core::testing::{fnv1a64, load, write_ppm};
 use rnfe_core::Buttons;
+use rnfe_core::testing::{fnv1a64, load, write_ppm};
 use std::path::Path;
 
 /// (nome, ROM relativa a test-roms/, frames, [(frame, botões)])

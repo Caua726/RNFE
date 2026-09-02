@@ -3,7 +3,7 @@
 // A2-A6 + A8: PRG bank (6 bits)
 // A7: mode (0=32K, 1=16K)
 // A9: L flag
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
 pub struct Mapper227 {
@@ -52,11 +52,7 @@ impl Mapper for Mapper227 {
     }
 
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            Some(data.chr[addr as usize])
-        } else {
-            None
-        }
+        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
     }
 
     fn reset(&mut self, _prg_banks: u8) {

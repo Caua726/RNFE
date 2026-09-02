@@ -4,7 +4,7 @@
 //! implementados (meta: 8991 = o log inteiro). O teste falha tanto se uma linha já
 //! verificada divergir quanto se o emulador passar a bater MAIS linhas sem a constante subir.
 
-use rnfe_core::testing::nestest::{compare, St, TOTAL_LINES};
+use rnfe_core::testing::nestest::{St, TOTAL_LINES, compare};
 
 /// Linhas do log que DEVEM bater. Meta: 8991.
 const VERIFIED_LINES: usize = 5004;

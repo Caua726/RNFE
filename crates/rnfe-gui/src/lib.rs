@@ -9,10 +9,7 @@ use rnfe_core::{Cartridge, Nes};
 
 /// Abre um diálogo nativo para escolher uma ROM `.nes`.
 pub fn pick_rom() -> Option<String> {
-    let file = rfd::FileDialog::new()
-        .add_filter("NES ROM", &["nes"])
-        .set_title("Abrir ROM")
-        .pick_file()?;
+    let file = rfd::FileDialog::new().add_filter("NES ROM", &["nes"]).set_title("Abrir ROM").pick_file()?;
     Some(file.to_string_lossy().to_string())
 }
 

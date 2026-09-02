@@ -1,5 +1,5 @@
 // Mapper 206 (DxROM) - MMC3 simplificado, sem IRQ
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 
 pub struct Dxrom {
     bank_select: u8,
@@ -28,11 +28,7 @@ impl Mapper for Dxrom {
                 _ => 0,
             };
             let offset = bank as usize * 0x2000 + (addr & 0x1FFF) as usize;
-            if offset < data.prg.len() {
-                Some(data.prg[offset])
-            } else {
-                Some(0)
-            }
+            if offset < data.prg.len() { Some(data.prg[offset]) } else { Some(0) }
         } else {
             None
         }
@@ -49,23 +45,23 @@ impl Mapper for Dxrom {
                         0 | 1 => {
                             self.chr_banks[reg as usize * 2] = val & 0xFE;
                             self.chr_banks[reg as usize * 2 + 1] = (val & 0xFE) + 1;
-                        },
+                        }
                         2..=5 => {
                             self.chr_banks[reg as usize + 2] = val;
-                        },
+                        }
                         6 => {
                             self.prg_banks[0] = val;
-                        },
+                        }
                         7 => {
                             self.prg_banks[1] = val;
-                        },
+                        }
                         _ => {}
                     }
                     self.prg_banks[2] = (data.prg_banks * 2).wrapping_sub(2);
                     self.prg_banks[3] = (data.prg_banks * 2).wrapping_sub(1);
                 }
                 true
-            },
+            }
             _ => false,
         }
     }
@@ -84,11 +80,7 @@ impl Mapper for Dxrom {
                 _ => 0,
             };
             let offset = bank as usize * 0x0400 + (addr & 0x03FF) as usize;
-            if offset < data.chr.len() {
-                Some(data.chr[offset])
-            } else {
-                Some(0)
-            }
+            if offset < data.chr.len() { Some(data.chr[offset]) } else { Some(0) }
         } else {
             None
         }

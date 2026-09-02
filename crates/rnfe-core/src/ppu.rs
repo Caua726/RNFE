@@ -3,19 +3,19 @@ pub struct Ppu {
     pub palette_table: [u8; 32],
     pub pattern_table: [[u8; 4096]; 2],
     pub cart_ptr: Option<*mut crate::cartridge::Cartridge>,
-    
+
     // Status registers
     pub status: u8,
     pub mask: u8,
     pub control: u8,
-    
+
     // Internal registers
     address_latch: u8,
     ppu_data_buffer: u8,
-    pub vram_addr: u16,   // v register - current VRAM address
-    pub tram_addr: u16,   // t register - temporary VRAM address
+    pub vram_addr: u16, // v register - current VRAM address
+    pub tram_addr: u16, // t register - temporary VRAM address
     fine_x: u8,
-    
+
     // Background rendering
     bg_next_tile_id: u8,
     bg_next_tile_attr: u8,
@@ -25,8 +25,8 @@ pub struct Ppu {
     bg_shifter_pattern_hi: u16,
     bg_shifter_attr_lo: u16,
     bg_shifter_attr_hi: u16,
-    
-    // Sprite rendering  
+
+    // Sprite rendering
     pub oam: [u8; 256],
     oam_addr: u8,
     sprites_scanline: [ObjectAttributeEntry; 8],
@@ -35,16 +35,16 @@ pub struct Ppu {
     sprite_shifter_pattern_hi: [u8; 8],
     sprite_zero_hit_possible: bool,
     sprite_zero_being_rendered: bool,
-    
+
     // Screen (no heap pra nao estourar a stack)
     pub screen: Box<[[u8; 4]; 256 * 240]>,
-    
+
     // Timing
     pub scanline: i16,
     pub cycle: i16,
-    
+
     pub frame_complete: bool,
-    
+
     // NMI
     nmi: bool,
 
@@ -127,32 +127,32 @@ impl Ppu {
 
     pub fn cpu_read(&mut self, addr: u16, read_only: bool) -> u8 {
         let mut data = 0x00;
-        
+
         if read_only {
             match addr {
-                0x0000 => {},
-                0x0001 => {},
+                0x0000 => {}
+                0x0001 => {}
                 0x0002 => data = self.status,
-                0x0003 => {},
-                0x0004 => {},
-                0x0005 => {},
-                0x0006 => {},
-                0x0007 => {},
+                0x0003 => {}
+                0x0004 => {}
+                0x0005 => {}
+                0x0006 => {}
+                0x0007 => {}
                 _ => {}
             }
         } else {
             match addr {
-                0x0000 => {},
-                0x0001 => {},
+                0x0000 => {}
+                0x0001 => {}
                 0x0002 => {
                     data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
                     self.status &= 0x7F;
                     self.address_latch = 0;
-                },
-                0x0003 => {},
+                }
+                0x0003 => {}
                 0x0004 => data = self.oam[self.oam_addr as usize],
-                0x0005 => {},
-                0x0006 => {},
+                0x0005 => {}
+                0x0006 => {}
                 0x0007 => {
                     data = self.ppu_data_buffer;
                     self.ppu_data_buffer = self.ppu_read_internal(self.vram_addr);
@@ -168,11 +168,11 @@ impl Ppu {
                     } else {
                         self.vram_addr = self.vram_addr.wrapping_add(1);
                     }
-                },
+                }
                 _ => {}
             }
         }
-        
+
         data
     }
 
@@ -185,18 +185,18 @@ impl Ppu {
                 if old_nmi == 0 && (data & 0x80) != 0 && (self.status & 0x80) != 0 {
                     self.nmi = true;
                 }
-            },
+            }
             0x0001 => {
                 self.mask = data;
-            },
-            0x0002 => {},
+            }
+            0x0002 => {}
             0x0003 => {
                 self.oam_addr = data;
-            },
+            }
             0x0004 => {
                 self.oam[self.oam_addr as usize] = data;
                 self.oam_addr = self.oam_addr.wrapping_add(1);
-            },
+            }
             0x0005 => {
                 if self.address_latch == 0 {
                     self.fine_x = data & 0x07;
@@ -208,7 +208,7 @@ impl Ppu {
                         | ((data as u16 & 0xF8) << 2);
                     self.address_latch = 0;
                 }
-            },
+            }
             0x0006 => {
                 if self.address_latch == 0 {
                     self.tram_addr = ((data as u16 & 0x3F) << 8) | (self.tram_addr & 0x00FF);
@@ -218,7 +218,7 @@ impl Ppu {
                     self.vram_addr = self.tram_addr; // t -> v on second write
                     self.address_latch = 0;
                 }
-            },
+            }
             0x0007 => {
                 self.ppu_write_internal(self.vram_addr, data);
                 if (self.control & 0x04) != 0 {
@@ -226,7 +226,7 @@ impl Ppu {
                 } else {
                     self.vram_addr = self.vram_addr.wrapping_add(1);
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -236,10 +236,10 @@ impl Ppu {
         let table = (addr >> 10) as usize; // 0-3
         let offset = (addr & 0x03FF) as usize;
         let nt = match self.mirror_mode {
-            0 => table & 1,      // Vertical: 0->0, 1->1, 2->0, 3->1
-            1 => table >> 1,     // Horizontal: 0->0, 1->0, 2->1, 3->1
-            2 => 0,              // OneScreen Lo: tudo pra nametable 0
-            3 => 1,              // OneScreen Hi: tudo pra nametable 1
+            0 => table & 1,  // Vertical: 0->0, 1->1, 2->0, 3->1
+            1 => table >> 1, // Horizontal: 0->0, 1->0, 2->1, 3->1
+            2 => 0,          // OneScreen Lo: tudo pra nametable 0
+            3 => 1,          // OneScreen Hi: tudo pra nametable 1
             _ => table & 1,
         };
         (nt, offset)
@@ -273,20 +273,31 @@ impl Ppu {
             self.nametable[nt][offset]
         } else if addr >= 0x3F00 && addr <= 0x3FFF {
             let addr = addr & 0x001F;
-            let addr = if addr == 0x0010 { 0x0000 }
-                      else if addr == 0x0014 { 0x0004 }
-                      else if addr == 0x0018 { 0x0008 }
-                      else if addr == 0x001C { 0x000C }
-                      else { addr };
+            let addr = if addr == 0x0010 {
+                0x0000
+            } else if addr == 0x0014 {
+                0x0004
+            } else if addr == 0x0018 {
+                0x0008
+            } else if addr == 0x001C {
+                0x000C
+            } else {
+                addr
+            };
             self.palette_table[addr as usize] & if (self.mask & 0x01) != 0 { 0x30 } else { 0x3F }
         } else {
             0
         }
     }
-    
-    pub fn ppu_read(&mut self, addr: u16, read_only: bool, cartridge: Option<&mut crate::cartridge::Cartridge>) -> u8 {
+
+    pub fn ppu_read(
+        &mut self,
+        addr: u16,
+        read_only: bool,
+        cartridge: Option<&mut crate::cartridge::Cartridge>,
+    ) -> u8 {
         let addr = addr & 0x3FFF;
-        
+
         if addr >= 0x0000 && addr <= 0x1FFF {
             if let Some(cart) = cartridge {
                 if let Some(cart_data) = cart.ppu_read(addr) {
@@ -294,7 +305,7 @@ impl Ppu {
                 }
             }
         }
-        
+
         self.ppu_read_internal(addr)
     }
 
@@ -304,7 +315,9 @@ impl Ppu {
         if addr <= 0x1FFF {
             // Escrever no cartridge CHR RAM se disponível
             if let Some(cart) = self.cart_ptr {
-                unsafe { (*cart).ppu_write_chr(addr, data); }
+                unsafe {
+                    (*cart).ppu_write_chr(addr, data);
+                }
             }
             // Também escrever no pattern_table local (fallback)
             self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize] = data;
@@ -313,18 +326,24 @@ impl Ppu {
             self.nametable[nt][offset] = data;
         } else if addr >= 0x3F00 && addr <= 0x3FFF {
             let addr = addr & 0x001F;
-            let addr = if addr == 0x0010 { 0x0000 }
-                      else if addr == 0x0014 { 0x0004 }
-                      else if addr == 0x0018 { 0x0008 }
-                      else if addr == 0x001C { 0x000C }
-                      else { addr };
+            let addr = if addr == 0x0010 {
+                0x0000
+            } else if addr == 0x0014 {
+                0x0004
+            } else if addr == 0x0018 {
+                0x0008
+            } else if addr == 0x001C {
+                0x000C
+            } else {
+                addr
+            };
             self.palette_table[addr as usize] = data;
         }
     }
-    
+
     pub fn ppu_write(&mut self, addr: u16, data: u8, cartridge: Option<&mut crate::cartridge::Cartridge>) {
         let addr = addr & 0x3FFF;
-        
+
         if addr >= 0x0000 && addr <= 0x1FFF {
             if let Some(cart) = cartridge {
                 if cart.ppu_write(addr, data) {
@@ -332,7 +351,7 @@ impl Ppu {
                 }
             }
         }
-        
+
         self.ppu_write_internal(addr, data);
     }
 
@@ -356,27 +375,45 @@ impl Ppu {
 
             if (self.cycle >= 2 && self.cycle < 258) || (self.cycle >= 321 && self.cycle < 338) {
                 self.update_shifters();
-                
+
                 match (self.cycle - 1) % 8 {
                     0 => {
                         self.load_background_shifters();
                         self.bg_next_tile_id = self.ppu_read_internal(0x2000 | (self.vram_addr & 0x0FFF));
-                    },
+                    }
                     2 => {
-                        self.bg_next_tile_attr = self.ppu_read_internal(0x23C0 | (self.vram_addr & 0x0C00) | ((self.vram_addr >> 4) & 0x38) | ((self.vram_addr >> 2) & 0x07));
-                        if (self.vram_addr & 0x0040) != 0 { self.bg_next_tile_attr >>= 4; }
-                        if (self.vram_addr & 0x0002) != 0 { self.bg_next_tile_attr >>= 2; }
+                        self.bg_next_tile_attr = self.ppu_read_internal(
+                            0x23C0
+                                | (self.vram_addr & 0x0C00)
+                                | ((self.vram_addr >> 4) & 0x38)
+                                | ((self.vram_addr >> 2) & 0x07),
+                        );
+                        if (self.vram_addr & 0x0040) != 0 {
+                            self.bg_next_tile_attr >>= 4;
+                        }
+                        if (self.vram_addr & 0x0002) != 0 {
+                            self.bg_next_tile_attr >>= 2;
+                        }
                         self.bg_next_tile_attr &= 0x03;
-                    },
+                    }
                     4 => {
-                        self.bg_next_tile_lsb = self.ppu_read_internal(((self.control as u16 & 0x10) << 8) + (self.bg_next_tile_id as u16 * 16) + ((self.vram_addr >> 12) & 0x07));
-                    },
+                        self.bg_next_tile_lsb = self.ppu_read_internal(
+                            ((self.control as u16 & 0x10) << 8)
+                                + (self.bg_next_tile_id as u16 * 16)
+                                + ((self.vram_addr >> 12) & 0x07),
+                        );
+                    }
                     6 => {
-                        self.bg_next_tile_msb = self.ppu_read_internal(((self.control as u16 & 0x10) << 8) + (self.bg_next_tile_id as u16 * 16) + ((self.vram_addr >> 12) & 0x07) + 8);
-                    },
+                        self.bg_next_tile_msb = self.ppu_read_internal(
+                            ((self.control as u16 & 0x10) << 8)
+                                + (self.bg_next_tile_id as u16 * 16)
+                                + ((self.vram_addr >> 12) & 0x07)
+                                + 8,
+                        );
+                    }
                     7 => {
                         self.increment_scroll_x();
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -406,19 +443,23 @@ impl Ppu {
             if self.cycle == 257 && self.scanline >= 0 {
                 self.sprite_count = 0;
                 for i in 0..8 {
-                    self.sprites_scanline[i] = ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF };
+                    self.sprites_scanline[i] =
+                        ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF };
                 }
                 self.sprite_zero_hit_possible = false;
 
                 let mut oam_entry = 0;
                 while oam_entry < 64 && self.sprite_count < 9 {
                     let diff = self.scanline as i16 - self.oam[(oam_entry * 4) as usize] as i16;
-                    if diff >= 0 && diff < if (self.control & 0x20) != 0 { 16 } else { 8 } && self.sprite_count < 8 {
+                    if diff >= 0
+                        && diff < if (self.control & 0x20) != 0 { 16 } else { 8 }
+                        && self.sprite_count < 8
+                    {
                         if self.sprite_count < 8 {
                             if oam_entry == 0 {
                                 self.sprite_zero_hit_possible = true;
                             }
-                            
+
                             self.sprites_scanline[self.sprite_count] = ObjectAttributeEntry {
                                 y: self.oam[(oam_entry * 4) as usize],
                                 id: self.oam[(oam_entry * 4 + 1) as usize],
@@ -439,15 +480,15 @@ impl Ppu {
                     let mut sprite_pattern_bits_hi = 0u8;
                     let mut sprite_pattern_addr_lo = 0u16;
                     let mut sprite_pattern_addr_hi = 0u16;
-                    
+
                     if (self.control & 0x20) == 0 {
                         if (self.sprites_scanline[i].attribute & 0x80) == 0 {
-                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9) 
-                                | (self.sprites_scanline[i].id as u16 * 16) 
+                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9)
+                                | (self.sprites_scanline[i].id as u16 * 16)
                                 | ((self.scanline - self.sprites_scanline[i].y as i16) as u16);
                         } else {
-                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9) 
-                                | (self.sprites_scanline[i].id as u16 * 16) 
+                            sprite_pattern_addr_lo = ((self.control as u16 & 0x08) << 9)
+                                | (self.sprites_scanline[i].id as u16 * 16)
                                 | (7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16;
                         }
                     } else {
@@ -465,19 +506,21 @@ impl Ppu {
                             if (self.scanline - self.sprites_scanline[i].y as i16) < 8 {
                                 sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
                                     | (((self.sprites_scanline[i].id as u16 & 0xFE) + 1) << 4)
-                                    | ((7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16 & 0x07);
+                                    | ((7 - (self.scanline - self.sprites_scanline[i].y as i16)) as u16
+                                        & 0x07);
                             } else {
                                 sprite_pattern_addr_lo = ((self.sprites_scanline[i].id as u16 & 0x01) << 12)
                                     | ((self.sprites_scanline[i].id as u16 & 0xFE) << 4)
-                                    | ((7 - ((self.scanline - self.sprites_scanline[i].y as i16) & 0x07)) as u16);
+                                    | ((7 - ((self.scanline - self.sprites_scanline[i].y as i16) & 0x07))
+                                        as u16);
                             }
                         }
                     }
-                    
+
                     sprite_pattern_addr_hi = sprite_pattern_addr_lo + 8;
                     sprite_pattern_bits_lo = self.ppu_read_internal(sprite_pattern_addr_lo);
                     sprite_pattern_bits_hi = self.ppu_read_internal(sprite_pattern_addr_hi);
-                    
+
                     if (self.sprites_scanline[i].attribute & 0x40) != 0 {
                         fn flip_byte(b: u8) -> u8 {
                             let mut b = b;
@@ -486,11 +529,11 @@ impl Ppu {
                             b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
                             b
                         }
-                        
+
                         sprite_pattern_bits_lo = flip_byte(sprite_pattern_bits_lo);
                         sprite_pattern_bits_hi = flip_byte(sprite_pattern_bits_hi);
                     }
-                    
+
                     self.sprite_shifter_pattern_lo[i] = sprite_pattern_bits_lo;
                     self.sprite_shifter_pattern_hi[i] = sprite_pattern_bits_hi;
                 }
@@ -516,7 +559,7 @@ impl Ppu {
                 let p0_pixel = if (self.bg_shifter_pattern_lo & bit_mux) > 0 { 1 } else { 0 };
                 let p1_pixel = if (self.bg_shifter_pattern_hi & bit_mux) > 0 { 1 } else { 0 };
                 bg_pixel = (p1_pixel << 1) | p0_pixel;
-                
+
                 let bg_pal0 = if (self.bg_shifter_attr_lo & bit_mux) > 0 { 1 } else { 0 };
                 let bg_pal1 = if (self.bg_shifter_attr_hi & bit_mux) > 0 { 1 } else { 0 };
                 bg_palette = (bg_pal1 << 1) | bg_pal0;
@@ -634,7 +677,7 @@ impl Ppu {
     fn load_background_shifters(&mut self) {
         self.bg_shifter_pattern_lo = (self.bg_shifter_pattern_lo & 0xFF00) | self.bg_next_tile_lsb as u16;
         self.bg_shifter_pattern_hi = (self.bg_shifter_pattern_hi & 0xFF00) | self.bg_next_tile_msb as u16;
-        
+
         let attr = if (self.bg_next_tile_attr & 0x01) != 0 { 0xFF } else { 0x00 };
         self.bg_shifter_attr_lo = (self.bg_shifter_attr_lo & 0xFF00) | attr;
         let attr = if (self.bg_next_tile_attr & 0x02) != 0 { 0xFF } else { 0x00 };
@@ -692,38 +735,92 @@ impl Ppu {
             let color_index = self.palette_table[0] & 0x3F;
             return self.get_nes_color(color_index);
         }
-        
+
         let addr = (palette as u16 * 4 + pixel as u16) & 0x001F;
-        let addr = if addr == 0x0010 { 0x0000 }
-                  else if addr == 0x0014 { 0x0004 }
-                  else if addr == 0x0018 { 0x0008 }
-                  else if addr == 0x001C { 0x000C }
-                  else { addr };
+        let addr = if addr == 0x0010 {
+            0x0000
+        } else if addr == 0x0014 {
+            0x0004
+        } else if addr == 0x0018 {
+            0x0008
+        } else if addr == 0x001C {
+            0x000C
+        } else {
+            addr
+        };
         let color_index = self.palette_table[addr as usize] & 0x3F;
         self.get_nes_color(color_index)
     }
-    
+
     fn get_nes_color(&self, color_index: u8) -> [u8; 4] {
         // NES palette colors (simplified RGB values)
         let nes_palette = [
-            [84, 84, 84, 255], [0, 30, 116, 255], [8, 16, 144, 255], [48, 0, 136, 255],
-            [68, 0, 100, 255], [92, 0, 48, 255], [84, 4, 0, 255], [60, 24, 0, 255],
-            [32, 42, 0, 255], [8, 58, 0, 255], [0, 64, 0, 255], [0, 60, 0, 255],
-            [0, 50, 60, 255], [0, 0, 0, 255], [0, 0, 0, 255], [0, 0, 0, 255],
-            [152, 150, 152, 255], [8, 76, 196, 255], [48, 50, 236, 255], [92, 30, 228, 255],
-            [136, 20, 176, 255], [160, 20, 100, 255], [152, 34, 32, 255], [120, 60, 0, 255],
-            [84, 90, 0, 255], [40, 114, 0, 255], [8, 124, 0, 255], [0, 118, 40, 255],
-            [0, 102, 120, 255], [0, 0, 0, 255], [0, 0, 0, 255], [0, 0, 0, 255],
-            [236, 238, 236, 255], [76, 154, 236, 255], [120, 124, 236, 255], [176, 98, 236, 255],
-            [228, 84, 236, 255], [236, 88, 180, 255], [236, 106, 100, 255], [212, 136, 32, 255],
-            [160, 170, 0, 255], [116, 196, 0, 255], [76, 208, 32, 255], [56, 204, 108, 255],
-            [56, 180, 204, 255], [60, 60, 60, 255], [0, 0, 0, 255], [0, 0, 0, 255],
-            [236, 238, 236, 255], [168, 204, 236, 255], [188, 188, 236, 255], [212, 178, 236, 255],
-            [236, 174, 236, 255], [236, 174, 212, 255], [236, 180, 176, 255], [228, 196, 144, 255],
-            [204, 210, 120, 255], [180, 222, 120, 255], [168, 226, 144, 255], [152, 226, 180, 255],
-            [160, 214, 228, 255], [160, 162, 160, 255], [0, 0, 0, 255], [0, 0, 0, 255]
+            [84, 84, 84, 255],
+            [0, 30, 116, 255],
+            [8, 16, 144, 255],
+            [48, 0, 136, 255],
+            [68, 0, 100, 255],
+            [92, 0, 48, 255],
+            [84, 4, 0, 255],
+            [60, 24, 0, 255],
+            [32, 42, 0, 255],
+            [8, 58, 0, 255],
+            [0, 64, 0, 255],
+            [0, 60, 0, 255],
+            [0, 50, 60, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+            [152, 150, 152, 255],
+            [8, 76, 196, 255],
+            [48, 50, 236, 255],
+            [92, 30, 228, 255],
+            [136, 20, 176, 255],
+            [160, 20, 100, 255],
+            [152, 34, 32, 255],
+            [120, 60, 0, 255],
+            [84, 90, 0, 255],
+            [40, 114, 0, 255],
+            [8, 124, 0, 255],
+            [0, 118, 40, 255],
+            [0, 102, 120, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+            [236, 238, 236, 255],
+            [76, 154, 236, 255],
+            [120, 124, 236, 255],
+            [176, 98, 236, 255],
+            [228, 84, 236, 255],
+            [236, 88, 180, 255],
+            [236, 106, 100, 255],
+            [212, 136, 32, 255],
+            [160, 170, 0, 255],
+            [116, 196, 0, 255],
+            [76, 208, 32, 255],
+            [56, 204, 108, 255],
+            [56, 180, 204, 255],
+            [60, 60, 60, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
+            [236, 238, 236, 255],
+            [168, 204, 236, 255],
+            [188, 188, 236, 255],
+            [212, 178, 236, 255],
+            [236, 174, 236, 255],
+            [236, 174, 212, 255],
+            [236, 180, 176, 255],
+            [228, 196, 144, 255],
+            [204, 210, 120, 255],
+            [180, 222, 120, 255],
+            [168, 226, 144, 255],
+            [152, 226, 180, 255],
+            [160, 214, 228, 255],
+            [160, 162, 160, 255],
+            [0, 0, 0, 255],
+            [0, 0, 0, 255],
         ];
-        
+
         nes_palette[color_index as usize]
     }
 

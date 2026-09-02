@@ -27,11 +27,7 @@ impl Mapper for Nrom {
     }
 
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            Some(data.chr[addr as usize])
-        } else {
-            None
-        }
+        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
     }
 
     fn reset(&mut self, _prg_banks: u8) {}

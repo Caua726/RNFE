@@ -1,17 +1,17 @@
-pub mod nrom;
-pub mod mmc1;
-pub mod uxrom;
-pub mod cnrom;
-pub mod mmc3;
 pub mod axrom;
-pub mod mmc2;
-pub mod colordreams;
 pub mod bnrom;
-pub mod gxrom;
-pub mod fme7;
 pub mod camerica;
+pub mod cnrom;
+pub mod colordreams;
 pub mod dxrom;
+pub mod fme7;
+pub mod gxrom;
 pub mod mapper227;
+pub mod mmc1;
+pub mod mmc2;
+pub mod mmc3;
+pub mod nrom;
+pub mod uxrom;
 
 use crate::cartridge::Mirror;
 
@@ -29,9 +29,13 @@ pub trait Mapper {
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool;
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8>;
     fn clock_scanline(&mut self) {}
-    fn mapper_irq(&mut self) -> bool { false }
+    fn mapper_irq(&mut self) -> bool {
+        false
+    }
     fn reset(&mut self, prg_banks: u8);
-    fn state_string(&self) -> String { String::new() }
+    fn state_string(&self) -> String {
+        String::new()
+    }
 }
 
 pub fn create_mapper(id: u8, prg_banks: u8) -> Box<dyn Mapper> {

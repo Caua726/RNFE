@@ -6,5 +6,5 @@ pub mod list;
 pub mod nestest;
 pub mod runner;
 
-pub use list::{Expect, Style, TestRom, NESTEST_LOG, NESTEST_ROM, TESTS};
-pub use runner::{fnv1a64, load, roms_dir, run, screen_text, write_ppm, Outcome};
+pub use list::{Expect, NESTEST_LOG, NESTEST_ROM, Style, TESTS, TestRom};
+pub use runner::{Outcome, fnv1a64, load, roms_dir, run, screen_text, write_ppm};

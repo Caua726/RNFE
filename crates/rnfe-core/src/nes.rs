@@ -1,5 +1,5 @@
-use crate::buttons::Buttons;
 use crate::bus::Bus;
+use crate::buttons::Buttons;
 use crate::cartridge::Cartridge;
 use crate::cpu6502::Cpu6502;
 use crate::debug::Debugger;
@@ -65,9 +65,8 @@ impl Nes {
                         self.bus.dma_dummy = false;
                     }
                 } else if self.system_clock_counter % 2 == 0 {
-                    self.bus.dma_data = self
-                        .bus
-                        .cpu_read((self.bus.dma_page as u16) << 8 | self.bus.dma_addr as u16, false);
+                    self.bus.dma_data =
+                        self.bus.cpu_read((self.bus.dma_page as u16) << 8 | self.bus.dma_addr as u16, false);
                 } else {
                     self.bus.ppu.cpu_write(0x0004, self.bus.dma_data);
                     self.bus.dma_addr = self.bus.dma_addr.wrapping_add(1);

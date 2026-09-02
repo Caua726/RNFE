@@ -1,5 +1,5 @@
 // Mapper 066 (GxROM) - bits 4-5 = PRG bank, bits 0-1 = CHR bank
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 
 pub struct Gxrom {
     prg_bank: u8,
@@ -7,7 +7,9 @@ pub struct Gxrom {
 }
 
 impl Gxrom {
-    pub fn new() -> Self { Gxrom { prg_bank: 0, chr_bank: 0 } }
+    pub fn new() -> Self {
+        Gxrom { prg_bank: 0, chr_bank: 0 }
+    }
 }
 
 impl Mapper for Gxrom {
@@ -39,5 +41,8 @@ impl Mapper for Gxrom {
         }
     }
 
-    fn reset(&mut self, _prg_banks: u8) { self.prg_bank = 0; self.chr_bank = 0; }
+    fn reset(&mut self, _prg_banks: u8) {
+        self.prg_bank = 0;
+        self.chr_bank = 0;
+    }
 }

@@ -54,11 +54,7 @@ pub fn screen_text(nes: &Nes) -> String {
 }
 
 fn mem_text(nes: &Nes) -> String {
-    (0x6004u16..0x7000)
-        .map(|a| nes.peek(a))
-        .take_while(|&b| b != 0)
-        .map(|b| b as char)
-        .collect()
+    (0x6004u16..0x7000).map(|a| nes.peek(a)).take_while(|&b| b != 0).map(|b| b as char).collect()
 }
 
 fn last_line(s: &str) -> String {
@@ -131,9 +127,7 @@ pub fn run(t: &TestRom) -> Outcome {
 
 /// FNV-1a de 64 bits — hash estável do framebuffer, sem dependências.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
-    bytes
-        .iter()
-        .fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    bytes.iter().fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3))
 }
 
 /// Grava o framebuffer RGBA como PPM (para olhar um snapshot divergente).

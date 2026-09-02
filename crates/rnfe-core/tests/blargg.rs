@@ -8,7 +8,7 @@
 //! - ROM ausente → SKIP (erro só com `RNFE_REQUIRE_ROMS=1`, como no CI).
 //! - `RNFE_TEST_FILTER=substring` restringe pelos paths.
 
-use rnfe_core::testing::{run, Expect, Outcome, TESTS};
+use rnfe_core::testing::{Expect, Outcome, TESTS, run};
 
 fn suite(name: &str) {
     let require = std::env::var_os("RNFE_REQUIRE_ROMS").is_some();
@@ -26,9 +26,9 @@ fn suite(name: &str) {
             (Expect::Pass, Outcome::Pass) => Ok("ok"),
             (Expect::Pass, Outcome::Fail(m) | Outcome::Timeout(m)) => Err(format!("esperava PASS: {m}")),
             (Expect::KnownFail(_), Outcome::Fail(_) | Outcome::Timeout(_)) => Ok("known-fail"),
-            (Expect::KnownFail(why), Outcome::Pass) => Err(format!(
-                "agora PASSA (era KnownFail: {why}) — troque para Pass em src/testing/list.rs"
-            )),
+            (Expect::KnownFail(why), Outcome::Pass) => {
+                Err(format!("agora PASSA (era KnownFail: {why}) — troque para Pass em src/testing/list.rs"))
+            }
         };
         ran += 1;
         match verdict {
@@ -52,9 +52,26 @@ macro_rules! suites {
 }
 
 suites!(
-    instr_test_v5, instr_timing, instr_misc, cpu_interrupts, cpu_dummy, cpu_exec_space, cpu_reset,
-    branch_timing, ppu_vbl_nmi, vbl_nmi_timing, sprite_hit, sprite_overflow, oam, ppu_misc,
-    apu_test, apu_2005, apu_reset, dmc, mmc3, mmc3_irq,
+    instr_test_v5,
+    instr_timing,
+    instr_misc,
+    cpu_interrupts,
+    cpu_dummy,
+    cpu_exec_space,
+    cpu_reset,
+    branch_timing,
+    ppu_vbl_nmi,
+    vbl_nmi_timing,
+    sprite_hit,
+    sprite_overflow,
+    oam,
+    ppu_misc,
+    apu_test,
+    apu_2005,
+    apu_reset,
+    dmc,
+    mmc3,
+    mmc3_irq,
 );
 
 /// Toda entrada da tabela precisa pertencer a uma suíte com `#[test]`.

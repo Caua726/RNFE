@@ -1,12 +1,14 @@
 // Mapper 002 (UxROM) - 16KB PRG switching, CHR RAM
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 
 pub struct Uxrom {
     bank: u8,
 }
 
 impl Uxrom {
-    pub fn new() -> Self { Uxrom { bank: 0 } }
+    pub fn new() -> Self {
+        Uxrom { bank: 0 }
+    }
 }
 
 impl Mapper for Uxrom {
@@ -32,12 +34,10 @@ impl Mapper for Uxrom {
     }
 
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            Some(data.chr[addr as usize])
-        } else {
-            None
-        }
+        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
     }
 
-    fn reset(&mut self, _prg_banks: u8) { self.bank = 0; }
+    fn reset(&mut self, _prg_banks: u8) {
+        self.bank = 0;
+    }
 }

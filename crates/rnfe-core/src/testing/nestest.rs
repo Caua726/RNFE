@@ -2,9 +2,9 @@
 
 use super::list::{NESTEST_LOG, NESTEST_ROM};
 use super::runner::roms_dir;
+use crate::Cartridge;
 use crate::bus::Bus;
 use crate::cpu6502::Cpu6502;
-use crate::Cartridge;
 
 pub const TOTAL_LINES: usize = 8991;
 

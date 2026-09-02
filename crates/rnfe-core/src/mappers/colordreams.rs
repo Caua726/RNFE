@@ -1,5 +1,5 @@
 // Mapper 011 (Color Dreams) - bits 0-1 = PRG bank, bits 4-5 = CHR bank
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 
 pub struct ColorDreams {
     prg_bank: u8,
@@ -7,7 +7,9 @@ pub struct ColorDreams {
 }
 
 impl ColorDreams {
-    pub fn new() -> Self { ColorDreams { prg_bank: 0, chr_bank: 0 } }
+    pub fn new() -> Self {
+        ColorDreams { prg_bank: 0, chr_bank: 0 }
+    }
 }
 
 impl Mapper for ColorDreams {
@@ -39,5 +41,8 @@ impl Mapper for ColorDreams {
         }
     }
 
-    fn reset(&mut self, _prg_banks: u8) { self.prg_bank = 0; self.chr_bank = 0; }
+    fn reset(&mut self, _prg_banks: u8) {
+        self.prg_bank = 0;
+        self.chr_bank = 0;
+    }
 }

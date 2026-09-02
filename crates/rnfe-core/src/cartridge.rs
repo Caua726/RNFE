@@ -63,11 +63,7 @@ impl Cartridge {
         let mapper_id = (mapper2 & 0xF0) | (mapper1 >> 4);
 
         // iNES bit0=1 -> vertical, bit0=0 -> horizontal
-        let mirror = if (mapper1 & 0x01) != 0 {
-            Mirror::Vertical
-        } else {
-            Mirror::Horizontal
-        };
+        let mirror = if (mapper1 & 0x01) != 0 { Mirror::Vertical } else { Mirror::Horizontal };
 
         let prg_size = prg_banks as usize * 16384;
         let chr_size = chr_banks as usize * 8192;
@@ -91,7 +87,10 @@ impl Cartridge {
 
         log::info!(
             "ROM: PRG {} x 16K, CHR {} x 8K, mapper {}, mirror {:?}",
-            prg_banks, chr_banks, mapper_id, mirror
+            prg_banks,
+            chr_banks,
+            mapper_id,
+            mirror
         );
 
         let mapper = mappers::create_mapper(mapper_id, prg_banks);
@@ -189,11 +188,7 @@ impl Cartridge {
     // Debug: ler CHR sem side effects
     pub fn cpu_read_chr_debug(&self, addr: u16) -> Option<u8> {
         if addr <= 0x1FFF {
-            if (addr as usize) < self.data.chr.len() {
-                Some(self.data.chr[addr as usize])
-            } else {
-                Some(0)
-            }
+            if (addr as usize) < self.data.chr.len() { Some(self.data.chr[addr as usize]) } else { Some(0) }
         } else {
             None
         }

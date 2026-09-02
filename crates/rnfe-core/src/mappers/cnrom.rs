@@ -1,12 +1,14 @@
 // Mapper 003 (CNROM) - 8KB CHR bank switching
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 
 pub struct Cnrom {
     chr_bank: u8,
 }
 
 impl Cnrom {
-    pub fn new() -> Self { Cnrom { chr_bank: 0 } }
+    pub fn new() -> Self {
+        Cnrom { chr_bank: 0 }
+    }
 }
 
 impl Mapper for Cnrom {
@@ -37,5 +39,7 @@ impl Mapper for Cnrom {
         }
     }
 
-    fn reset(&mut self, _prg_banks: u8) { self.chr_bank = 0; }
+    fn reset(&mut self, _prg_banks: u8) {
+        self.chr_bank = 0;
+    }
 }

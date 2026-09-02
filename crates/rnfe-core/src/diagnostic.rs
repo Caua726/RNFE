@@ -85,10 +85,8 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
     let pt1 = bus.ppu.pattern_table[1].iter().filter(|b| **b != 0).count();
     let _ = writeln!(o, "  PT0: {}/4096 bytes nonzero", pt0);
     let _ = writeln!(o, "  PT1: {}/4096 bytes nonzero", pt1);
-    let cart_nonzero = (0..0x2000u16)
-        .filter_map(|a| bus.cartridge.cpu_read_chr_debug(a))
-        .filter(|b| *b != 0)
-        .count();
+    let cart_nonzero =
+        (0..0x2000u16).filter_map(|a| bus.cartridge.cpu_read_chr_debug(a)).filter(|b| *b != 0).count();
     let _ = writeln!(o, "  Cartridge CHR (via mapper): {}/8192 bytes nonzero", cart_nonzero);
 
     // 5. Paleta
@@ -125,7 +123,8 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
             let attr = bus.ppu.oam[i * 4 + 2];
             let x = bus.ppu.oam[i * 4 + 3];
             if y < 240 {
-                let _ = writeln!(o, "    Sprite {}: X={} Y={} Tile=${:02X} Attr=${:02X}", i, x, y, tile, attr);
+                let _ =
+                    writeln!(o, "    Sprite {}: X={} Y={} Tile=${:02X} Attr=${:02X}", i, x, y, tile, attr);
             }
         }
     }
@@ -164,7 +163,12 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
         let _ = writeln!(
             o,
             "  {}. RGB({},{},{}) = {} pixels ({:.1}%)",
-            i + 1, color[0], color[1], color[2], count, pct
+            i + 1,
+            color[0],
+            color[1],
+            color[2],
+            count,
+            pct
         );
     }
     if sorted.len() <= 2 {

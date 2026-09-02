@@ -2,13 +2,14 @@
 //!
 //! `cargo run -p rnfe-core --release --bin status > docs/STATUS.md`
 
-use rnfe_core::testing::{nestest, run, Expect, Outcome, Style, TestRom, TESTS};
+use rnfe_core::testing::{Expect, Outcome, Style, TESTS, TestRom, nestest, run};
 use std::fmt::Write;
 
 fn main() {
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 6);
     let results: Vec<(usize, Outcome)> = std::thread::scope(|s| {
-        let chunks: Vec<Vec<usize>> = (0..threads).map(|k| (k..TESTS.len()).step_by(threads).collect()).collect();
+        let chunks: Vec<Vec<usize>> =
+            (0..threads).map(|k| (k..TESTS.len()).step_by(threads).collect()).collect();
         let handles: Vec<_> = chunks
             .into_iter()
             .map(|idx| s.spawn(move || idx.into_iter().map(|i| (i, run(&TESTS[i]))).collect::<Vec<_>>()))
@@ -30,7 +31,8 @@ fn main() {
     let _ = writeln!(out, "# Status do RNFE");
     let _ = writeln!(out);
     let _ = writeln!(out, "Gerado por `cargo run -p rnfe-core --release --bin status` · commit `{commit}`.");
-    let _ = writeln!(out, "Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo test`.");
+    let _ =
+        writeln!(out, "Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo test`.");
     let _ = writeln!(out);
 
     match nestest::compare() {

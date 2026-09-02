@@ -1,5 +1,5 @@
 // Mapper 004 (MMC3) - PRG/CHR bank switching + scanline IRQ
-use super::{Mapper, CartData};
+use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
 pub struct Mmc3 {
@@ -37,7 +37,7 @@ impl Mapper for Mmc3 {
                 0xA000..=0xBFFF => self.prg_banks[1],
                 0xC000..=0xDFFF => self.prg_banks[2],
                 0xE000..=0xFFFF => self.prg_banks[3],
-                _ => 0
+                _ => 0,
             };
             let bank_offset = (bank as usize) * 0x2000;
             let addr_offset = (addr & 0x1FFF) as usize;
@@ -66,16 +66,16 @@ impl Mapper for Mmc3 {
                         0 | 1 => {
                             self.chr_banks[bank_register as usize * 2] = val & 0xFE;
                             self.chr_banks[bank_register as usize * 2 + 1] = (val & 0xFE) + 1;
-                        },
+                        }
                         2..=5 => {
                             self.chr_banks[bank_register as usize + 2] = val;
-                        },
+                        }
                         6 => {
                             self.prg_banks[if (self.bank_select & 0x40) != 0 { 2 } else { 0 }] = val;
-                        },
+                        }
                         7 => {
                             self.prg_banks[1] = val;
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -88,13 +88,13 @@ impl Mapper for Mmc3 {
                 }
                 self.prg_banks[3] = last;
                 true
-            },
+            }
             0xA000..=0xBFFF => {
                 if addr % 2 == 0 {
                     data.mirror = if val & 0x01 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
                 }
                 true
-            },
+            }
             0xC000..=0xDFFF => {
                 if addr % 2 == 0 {
                     self.irq_reload = val;
@@ -102,7 +102,7 @@ impl Mapper for Mmc3 {
                     self.irq_counter = 0;
                 }
                 true
-            },
+            }
             0xE000..=0xFFFF => {
                 if addr % 2 == 0 {
                     self.irq_enabled = false;
@@ -111,7 +111,7 @@ impl Mapper for Mmc3 {
                     self.irq_enabled = true;
                 }
                 true
-            },
+            }
             _ => false,
         }
     }
@@ -145,11 +145,7 @@ impl Mapper for Mmc3 {
                 }
             };
             let offset = bank as usize * 0x0400 + (addr & 0x03FF) as usize;
-            if offset < data.chr.len() {
-                Some(data.chr[offset])
-            } else {
-                Some(0)
-            }
+            if offset < data.chr.len() { Some(data.chr[offset]) } else { Some(0) }
         } else {
             None
         }
@@ -185,17 +181,35 @@ impl Mapper for Mmc3 {
     fn state_string(&self) -> String {
         let mut s = String::new();
         use std::fmt::Write;
-        let _ = writeln!(s, "  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
+        let _ = writeln!(
+            s,
+            "  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
             self.bank_select,
             if self.bank_select & 0x80 != 0 { "yes" } else { "no" },
-            if self.bank_select & 0x40 != 0 { "swap" } else { "normal" });
-        let _ = writeln!(s, "  MMC3 PRG banks: [{}, {}, {}, {}]",
-            self.prg_banks[0], self.prg_banks[1], self.prg_banks[2], self.prg_banks[3]);
-        let _ = writeln!(s, "  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
-            self.chr_banks[0], self.chr_banks[1], self.chr_banks[2], self.chr_banks[3],
-            self.chr_banks[4], self.chr_banks[5], self.chr_banks[6], self.chr_banks[7]);
-        let _ = writeln!(s, "  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
-            self.irq_counter, self.irq_reload, self.irq_enabled, self.irq_pending);
+            if self.bank_select & 0x40 != 0 { "swap" } else { "normal" }
+        );
+        let _ = writeln!(
+            s,
+            "  MMC3 PRG banks: [{}, {}, {}, {}]",
+            self.prg_banks[0], self.prg_banks[1], self.prg_banks[2], self.prg_banks[3]
+        );
+        let _ = writeln!(
+            s,
+            "  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
+            self.chr_banks[0],
+            self.chr_banks[1],
+            self.chr_banks[2],
+            self.chr_banks[3],
+            self.chr_banks[4],
+            self.chr_banks[5],
+            self.chr_banks[6],
+            self.chr_banks[7]
+        );
+        let _ = writeln!(
+            s,
+            "  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
+            self.irq_counter, self.irq_reload, self.irq_enabled, self.irq_pending
+        );
         s
     }
 }

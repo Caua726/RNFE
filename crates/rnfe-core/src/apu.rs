@@ -2,25 +2,20 @@
 // Canais: 2 Pulse, 1 Triangle, 1 Noise, 1 DMC
 
 const LENGTH_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
-    12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24,
+    72, 26, 16, 28, 32, 30,
 ];
 
-const DUTY_TABLE: [[u8; 8]; 4] = [
-    [0, 0, 0, 0, 0, 0, 0, 1],
-    [0, 0, 0, 0, 0, 0, 1, 1],
-    [0, 0, 0, 0, 1, 1, 1, 1],
-    [1, 1, 1, 1, 1, 1, 0, 0],
-];
+const DUTY_TABLE: [[u8; 8]; 4] =
+    [[0, 0, 0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 0, 0]];
 
 const TRIANGLE_TABLE: [u8; 32] = [
-    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+    15,
 ];
 
-const NOISE_PERIOD_TABLE: [u16; 16] = [
-    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
-];
+const NOISE_PERIOD_TABLE: [u16; 16] =
+    [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
 
 struct Pulse {
     enabled: bool,
@@ -47,13 +42,25 @@ struct Pulse {
 impl Pulse {
     fn new(channel: u8) -> Self {
         Pulse {
-            enabled: false, duty: 0, duty_pos: 0,
-            length_halt: false, length_counter: 0,
-            constant_volume: false, volume: 0,
-            envelope_start: false, envelope_divider: 0, envelope_decay: 0,
-            sweep_enabled: false, sweep_period: 0, sweep_negate: false,
-            sweep_shift: 0, sweep_reload: false, sweep_divider: 0,
-            timer: 0, timer_period: 0, channel,
+            enabled: false,
+            duty: 0,
+            duty_pos: 0,
+            length_halt: false,
+            length_counter: 0,
+            constant_volume: false,
+            volume: 0,
+            envelope_start: false,
+            envelope_divider: 0,
+            envelope_decay: 0,
+            sweep_enabled: false,
+            sweep_period: 0,
+            sweep_negate: false,
+            sweep_shift: 0,
+            sweep_reload: false,
+            sweep_divider: 0,
+            timer: 0,
+            timer_period: 0,
+            channel,
         }
     }
 
@@ -99,7 +106,12 @@ impl Pulse {
             self.timer_period.wrapping_add(change)
         };
 
-        if self.sweep_divider == 0 && self.sweep_enabled && self.sweep_shift > 0 && self.timer_period >= 8 && target <= 0x7FF {
+        if self.sweep_divider == 0
+            && self.sweep_enabled
+            && self.sweep_shift > 0
+            && self.timer_period >= 8
+            && target <= 0x7FF
+        {
             self.timer_period = target;
         }
 
@@ -137,9 +149,15 @@ struct Triangle {
 impl Triangle {
     fn new() -> Self {
         Triangle {
-            enabled: false, length_halt: false, length_counter: 0,
-            linear_counter: 0, linear_reload_value: 0, linear_reload: false,
-            timer: 0, timer_period: 0, sequence_pos: 0,
+            enabled: false,
+            length_halt: false,
+            length_counter: 0,
+            linear_counter: 0,
+            linear_reload_value: 0,
+            linear_reload: false,
+            timer: 0,
+            timer_period: 0,
+            sequence_pos: 0,
         }
     }
 
@@ -197,10 +215,18 @@ struct Noise {
 impl Noise {
     fn new() -> Self {
         Noise {
-            enabled: false, length_halt: false, length_counter: 0,
-            constant_volume: false, volume: 0,
-            envelope_start: false, envelope_divider: 0, envelope_decay: 0,
-            mode: false, timer: 0, timer_period: 0, shift: 1,
+            enabled: false,
+            length_halt: false,
+            length_counter: 0,
+            constant_volume: false,
+            volume: 0,
+            envelope_start: false,
+            envelope_divider: 0,
+            envelope_decay: 0,
+            mode: false,
+            timer: 0,
+            timer_period: 0,
+            shift: 1,
         }
     }
 
@@ -249,9 +275,8 @@ impl Noise {
     }
 }
 
-const DMC_RATE_TABLE: [u16; 16] = [
-    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
-];
+const DMC_RATE_TABLE: [u16; 16] =
+    [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
 
 struct Dmc {
     enabled: bool,
@@ -274,11 +299,21 @@ struct Dmc {
 impl Dmc {
     fn new() -> Self {
         Dmc {
-            enabled: false, irq_enabled: false, loop_flag: false,
-            timer: 0, timer_period: 0, output_level: 0,
-            sample_addr: 0xC000, sample_length: 0, current_addr: 0xC000,
-            bytes_remaining: 0, sample_buffer: 0, sample_buffer_empty: true,
-            shift_register: 0, bits_remaining: 8, silence: true,
+            enabled: false,
+            irq_enabled: false,
+            loop_flag: false,
+            timer: 0,
+            timer_period: 0,
+            output_level: 0,
+            sample_addr: 0xC000,
+            sample_length: 0,
+            current_addr: 0xC000,
+            bytes_remaining: 0,
+            sample_buffer: 0,
+            sample_buffer_empty: true,
+            shift_register: 0,
+            bits_remaining: 8,
+            silence: true,
         }
     }
 
@@ -288,9 +323,13 @@ impl Dmc {
 
             if !self.silence {
                 if self.shift_register & 1 != 0 {
-                    if self.output_level <= 125 { self.output_level += 2; }
+                    if self.output_level <= 125 {
+                        self.output_level += 2;
+                    }
                 } else {
-                    if self.output_level >= 2 { self.output_level -= 2; }
+                    if self.output_level >= 2 {
+                        self.output_level -= 2;
+                    }
                 }
                 self.shift_register >>= 1;
             }
@@ -377,17 +416,17 @@ impl Apu {
                 self.pulse1.length_halt = (data & 0x20) != 0;
                 self.pulse1.constant_volume = (data & 0x10) != 0;
                 self.pulse1.volume = data & 0x0F;
-            },
+            }
             0x4001 => {
                 self.pulse1.sweep_enabled = (data & 0x80) != 0;
                 self.pulse1.sweep_period = (data >> 4) & 0x07;
                 self.pulse1.sweep_negate = (data & 0x08) != 0;
                 self.pulse1.sweep_shift = data & 0x07;
                 self.pulse1.sweep_reload = true;
-            },
+            }
             0x4002 => {
                 self.pulse1.timer_period = (self.pulse1.timer_period & 0x0700) | data as u16;
-            },
+            }
             0x4003 => {
                 self.pulse1.timer_period = (self.pulse1.timer_period & 0x00FF) | ((data as u16 & 0x07) << 8);
                 if self.pulse1.enabled {
@@ -395,7 +434,7 @@ impl Apu {
                 }
                 self.pulse1.duty_pos = 0;
                 self.pulse1.envelope_start = true;
-            },
+            }
 
             // Pulse 2
             0x4004 => {
@@ -403,17 +442,17 @@ impl Apu {
                 self.pulse2.length_halt = (data & 0x20) != 0;
                 self.pulse2.constant_volume = (data & 0x10) != 0;
                 self.pulse2.volume = data & 0x0F;
-            },
+            }
             0x4005 => {
                 self.pulse2.sweep_enabled = (data & 0x80) != 0;
                 self.pulse2.sweep_period = (data >> 4) & 0x07;
                 self.pulse2.sweep_negate = (data & 0x08) != 0;
                 self.pulse2.sweep_shift = data & 0x07;
                 self.pulse2.sweep_reload = true;
-            },
+            }
             0x4006 => {
                 self.pulse2.timer_period = (self.pulse2.timer_period & 0x0700) | data as u16;
-            },
+            }
             0x4007 => {
                 self.pulse2.timer_period = (self.pulse2.timer_period & 0x00FF) | ((data as u16 & 0x07) << 8);
                 if self.pulse2.enabled {
@@ -421,56 +460,57 @@ impl Apu {
                 }
                 self.pulse2.duty_pos = 0;
                 self.pulse2.envelope_start = true;
-            },
+            }
 
             // Triangle
             0x4008 => {
                 self.triangle.length_halt = (data & 0x80) != 0;
                 self.triangle.linear_reload_value = data & 0x7F;
-            },
+            }
             0x400A => {
                 self.triangle.timer_period = (self.triangle.timer_period & 0x0700) | data as u16;
-            },
+            }
             0x400B => {
-                self.triangle.timer_period = (self.triangle.timer_period & 0x00FF) | ((data as u16 & 0x07) << 8);
+                self.triangle.timer_period =
+                    (self.triangle.timer_period & 0x00FF) | ((data as u16 & 0x07) << 8);
                 if self.triangle.enabled {
                     self.triangle.length_counter = LENGTH_TABLE[(data >> 3) as usize];
                 }
                 self.triangle.linear_reload = true;
-            },
+            }
 
             // Noise
             0x400C => {
                 self.noise.length_halt = (data & 0x20) != 0;
                 self.noise.constant_volume = (data & 0x10) != 0;
                 self.noise.volume = data & 0x0F;
-            },
+            }
             0x400E => {
                 self.noise.mode = (data & 0x80) != 0;
                 self.noise.timer_period = NOISE_PERIOD_TABLE[(data & 0x0F) as usize];
-            },
+            }
             0x400F => {
                 if self.noise.enabled {
                     self.noise.length_counter = LENGTH_TABLE[(data >> 3) as usize];
                 }
                 self.noise.envelope_start = true;
-            },
+            }
 
             // DMC
             0x4010 => {
                 self.dmc.irq_enabled = (data & 0x80) != 0;
                 self.dmc.loop_flag = (data & 0x40) != 0;
                 self.dmc.timer_period = DMC_RATE_TABLE[(data & 0x0F) as usize];
-            },
+            }
             0x4011 => {
                 self.dmc.output_level = data & 0x7F;
-            },
+            }
             0x4012 => {
                 self.dmc.sample_addr = 0xC000 | ((data as u16) << 6);
-            },
+            }
             0x4013 => {
                 self.dmc.sample_length = ((data as u16) << 4) | 1;
-            },
+            }
 
             // Status
             0x4015 => {
@@ -479,17 +519,25 @@ impl Apu {
                 self.triangle.enabled = (data & 0x04) != 0;
                 self.noise.enabled = (data & 0x08) != 0;
                 self.dmc.enabled = (data & 0x10) != 0;
-                if !self.pulse1.enabled { self.pulse1.length_counter = 0; }
-                if !self.pulse2.enabled { self.pulse2.length_counter = 0; }
-                if !self.triangle.enabled { self.triangle.length_counter = 0; }
-                if !self.noise.enabled { self.noise.length_counter = 0; }
+                if !self.pulse1.enabled {
+                    self.pulse1.length_counter = 0;
+                }
+                if !self.pulse2.enabled {
+                    self.pulse2.length_counter = 0;
+                }
+                if !self.triangle.enabled {
+                    self.triangle.length_counter = 0;
+                }
+                if !self.noise.enabled {
+                    self.noise.length_counter = 0;
+                }
                 if !self.dmc.enabled {
                     self.dmc.bytes_remaining = 0;
                 } else if self.dmc.bytes_remaining == 0 {
                     self.dmc.current_addr = self.dmc.sample_addr;
                     self.dmc.bytes_remaining = self.dmc.sample_length;
                 }
-            },
+            }
 
             // Frame counter
             0x4017 => {
@@ -499,7 +547,7 @@ impl Apu {
                     self.clock_quarter_frame();
                     self.clock_half_frame();
                 }
-            },
+            }
 
             _ => {}
         }
@@ -508,11 +556,21 @@ impl Apu {
     pub fn cpu_read(&self, addr: u16) -> u8 {
         if addr == 0x4015 {
             let mut status = 0u8;
-            if self.pulse1.length_counter > 0 { status |= 0x01; }
-            if self.pulse2.length_counter > 0 { status |= 0x02; }
-            if self.triangle.length_counter > 0 { status |= 0x04; }
-            if self.noise.length_counter > 0 { status |= 0x08; }
-            if self.dmc.bytes_remaining > 0 { status |= 0x10; }
+            if self.pulse1.length_counter > 0 {
+                status |= 0x01;
+            }
+            if self.pulse2.length_counter > 0 {
+                status |= 0x02;
+            }
+            if self.triangle.length_counter > 0 {
+                status |= 0x04;
+            }
+            if self.noise.length_counter > 0 {
+                status |= 0x08;
+            }
+            if self.dmc.bytes_remaining > 0 {
+                status |= 0x10;
+            }
             status
         } else {
             0
@@ -554,29 +612,38 @@ impl Apu {
                     // 4-step
                     match self.frame_clock {
                         3729 => self.clock_quarter_frame(),
-                        7457 => { self.clock_quarter_frame(); self.clock_half_frame(); },
+                        7457 => {
+                            self.clock_quarter_frame();
+                            self.clock_half_frame();
+                        }
                         11186 => self.clock_quarter_frame(),
                         14915 => {
                             self.clock_quarter_frame();
                             self.clock_half_frame();
                             self.frame_clock = 0;
-                        },
+                        }
                         _ => {}
                     }
-                },
+                }
                 1 => {
                     // 5-step
                     match self.frame_clock {
                         3729 => self.clock_quarter_frame(),
-                        7457 => { self.clock_quarter_frame(); self.clock_half_frame(); },
+                        7457 => {
+                            self.clock_quarter_frame();
+                            self.clock_half_frame();
+                        }
                         11186 => self.clock_quarter_frame(),
-                        14915 => { self.clock_quarter_frame(); self.clock_half_frame(); },
+                        14915 => {
+                            self.clock_quarter_frame();
+                            self.clock_half_frame();
+                        }
                         18641 => {
                             self.frame_clock = 0;
-                        },
+                        }
                         _ => {}
                     }
-                },
+                }
                 _ => {}
             }
         }
@@ -615,18 +682,10 @@ impl Apu {
         let noise = self.noise.output() as f32;
         let dmc = self.dmc.output() as f32;
 
-        let pulse_out = if p1 + p2 > 0.0 {
-            95.88 / (8128.0 / (p1 + p2) + 100.0)
-        } else {
-            0.0
-        };
+        let pulse_out = if p1 + p2 > 0.0 { 95.88 / (8128.0 / (p1 + p2) + 100.0) } else { 0.0 };
 
         let tnd_sum = tri / 8227.0 + noise / 12241.0 + dmc / 22638.0;
-        let tnd_out = if tnd_sum > 0.0 {
-            159.79 / (1.0 / tnd_sum + 100.0)
-        } else {
-            0.0
-        };
+        let tnd_out = if tnd_sum > 0.0 { 159.79 / (1.0 / tnd_sum + 100.0) } else { 0.0 };
 
         pulse_out + tnd_out
     }

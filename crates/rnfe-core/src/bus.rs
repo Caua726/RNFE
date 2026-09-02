@@ -1,6 +1,6 @@
-use crate::ppu::Ppu;
 use crate::apu::Apu;
 use crate::cartridge::{Cartridge, Mirror};
+use crate::ppu::Ppu;
 
 pub struct Bus {
     pub ppu: Ppu,
@@ -59,18 +59,18 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => {
                 self.ram[(addr & 0x07FF) as usize] = data;
-            },
+            }
             0x2000..=0x3FFF => {
                 self.ppu.cpu_write(addr & 0x0007, data);
-            },
+            }
             0x4000..=0x4013 | 0x4015 => {
                 self.apu.cpu_write(addr, data);
-            },
+            }
             0x4014 => {
                 self.dma_page = data;
                 self.dma_addr = 0x00;
                 self.dma_transfer = true;
-            },
+            }
             0x4016 => {
                 if data & 0x01 != 0 {
                     self.controller_strobe = true;
@@ -82,10 +82,10 @@ impl Bus {
                     }
                     self.controller_strobe = false;
                 }
-            },
+            }
             0x4017 => {
                 self.apu.cpu_write(addr, data);
-            },
+            }
             _ => {}
         }
     }
@@ -96,12 +96,8 @@ impl Bus {
         }
 
         match addr {
-            0x0000..=0x1FFF => {
-                self.ram[(addr & 0x07FF) as usize]
-            },
-            0x2000..=0x3FFF => {
-                self.ppu.cpu_read(addr & 0x0007, _read_only)
-            },
+            0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
+            0x2000..=0x3FFF => self.ppu.cpu_read(addr & 0x0007, _read_only),
             0x4000..=0x4013 | 0x4015 => self.apu.cpu_read(addr),
             0x4016 => {
                 if self.controller_strobe {
@@ -112,7 +108,7 @@ impl Bus {
                     self.controller_state[0] <<= 1;
                     data
                 }
-            },
+            }
             0x4017 => {
                 if self.controller_strobe {
                     self.controller[1] >> 7
@@ -121,7 +117,7 @@ impl Bus {
                     self.controller_state[1] <<= 1;
                     data
                 }
-            },
+            }
             _ => 0x00,
         }
     }
