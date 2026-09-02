@@ -34,7 +34,7 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - nestest 8991/8991 · `grep unsafe crates/rnfe-core` vazio
 
 M2, 02/09/2026:
-- ROMs: 105 Pass / 11 KnownFail (10 são MMC3/A12 → F3-02; 1 é a leitura dupla de `$2007`)
+- ROMs: 104 Pass / 12 KnownFail (11 são MMC3/A12 → F3-02; 1 é a leitura dupla de `$2007`)
 - `bench` BladeBuster: **3,8 ms/frame** (mínimo de 3 corridas) — piorou ~1,3 ms desde M1 com a APU/PPU por ciclo (frame counter, sprites, open bus). Fica para F7-01/F7-02 medir por subsistema; o celular também oscila de frequência (medições variam 3,2–5,0 ms).
 - `framebuffer()` agora converte de índices sob demanda (61 KB×2 em vez de 184 KB de RGBA na PPU); `framebuffer_indexed()` + `ppu::PALETTE_RGBA` para paleta na GPU
 
