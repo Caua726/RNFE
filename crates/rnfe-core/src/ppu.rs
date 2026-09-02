@@ -1,3 +1,71 @@
+/// Paleta NTSC de 64 cores (RGBA8); ênfase e cinza entram em F2-07.
+const NES_PALETTE: [[u8; 4]; 64] = [
+    [84, 84, 84, 255],
+    [0, 30, 116, 255],
+    [8, 16, 144, 255],
+    [48, 0, 136, 255],
+    [68, 0, 100, 255],
+    [92, 0, 48, 255],
+    [84, 4, 0, 255],
+    [60, 24, 0, 255],
+    [32, 42, 0, 255],
+    [8, 58, 0, 255],
+    [0, 64, 0, 255],
+    [0, 60, 0, 255],
+    [0, 50, 60, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+    [152, 150, 152, 255],
+    [8, 76, 196, 255],
+    [48, 50, 236, 255],
+    [92, 30, 228, 255],
+    [136, 20, 176, 255],
+    [160, 20, 100, 255],
+    [152, 34, 32, 255],
+    [120, 60, 0, 255],
+    [84, 90, 0, 255],
+    [40, 114, 0, 255],
+    [8, 124, 0, 255],
+    [0, 118, 40, 255],
+    [0, 102, 120, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+    [236, 238, 236, 255],
+    [76, 154, 236, 255],
+    [120, 124, 236, 255],
+    [176, 98, 236, 255],
+    [228, 84, 236, 255],
+    [236, 88, 180, 255],
+    [236, 106, 100, 255],
+    [212, 136, 32, 255],
+    [160, 170, 0, 255],
+    [116, 196, 0, 255],
+    [76, 208, 32, 255],
+    [56, 204, 108, 255],
+    [56, 180, 204, 255],
+    [60, 60, 60, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+    [236, 238, 236, 255],
+    [168, 204, 236, 255],
+    [188, 188, 236, 255],
+    [212, 178, 236, 255],
+    [236, 174, 236, 255],
+    [236, 174, 212, 255],
+    [236, 180, 176, 255],
+    [228, 196, 144, 255],
+    [204, 210, 120, 255],
+    [180, 222, 120, 255],
+    [168, 226, 144, 255],
+    [152, 226, 180, 255],
+    [160, 214, 228, 255],
+    [160, 162, 160, 255],
+    [0, 0, 0, 255],
+    [0, 0, 0, 255],
+];
+
 pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
@@ -552,6 +620,40 @@ impl Ppu {
             }
         }
 
+        // Mux de pixel, sprite 0 hit e escrita na tela: só na janela visível (240 linhas × dots 1..=256).
+        let visible = self.scanline >= 0 && self.scanline < 240;
+        if visible && self.cycle >= 1 && self.cycle <= 256 {
+            self.render_pixel();
+        }
+
+        // Shifters de sprite avançam durante a linha (o x de cada sprite conta até zero)
+        if visible && self.cycle >= 1 && self.cycle < 258 {
+            for i in 0..self.sprite_count {
+                if self.sprites_scanline[i].x > 0 {
+                    self.sprites_scanline[i].x -= 1;
+                } else {
+                    self.sprite_shifter_pattern_lo[i] <<= 1;
+                    self.sprite_shifter_pattern_hi[i] <<= 1;
+                }
+            }
+        }
+
+        // cart_ptr permanece setado - limpo no próximo clock cycle pelo nes.rs
+        self.cycle += 1;
+        if self.cycle >= 341 {
+            self.cycle = 0;
+            self.scanline += 1;
+            if self.scanline >= 261 {
+                self.scanline = -1;
+                self.frame_complete = true;
+                self.odd_frame = !self.odd_frame;
+            }
+        }
+    }
+
+    /// Um dot visível: combina background e sprites, detecta sprite 0 hit e grava o pixel.
+    #[inline]
+    fn render_pixel(&mut self) {
         let mut bg_pixel = 0u8;
         let mut bg_palette = 0u8;
 
@@ -633,37 +735,9 @@ impl Ppu {
         }
 
         let color = self.get_color_from_palette_ram(palette, pixel);
-        if self.scanline >= 0 && self.scanline < 240 && self.cycle >= 1 && self.cycle <= 256 {
-            let x = (self.cycle - 1) as usize;
-            let y = self.scanline as usize;
-            if x < 256 && y < 240 {
-                self.screen[y * 256 + x] = color;
-            }
-        }
-
-        // Update shifters for sprites
-        if self.cycle >= 1 && self.cycle < 258 {
-            for i in 0..self.sprite_count {
-                if self.sprites_scanline[i].x > 0 {
-                    self.sprites_scanline[i].x -= 1;
-                } else {
-                    self.sprite_shifter_pattern_lo[i] <<= 1;
-                    self.sprite_shifter_pattern_hi[i] <<= 1;
-                }
-            }
-        }
-
-        // cart_ptr permanece setado - limpo no próximo clock cycle pelo nes.rs
-        self.cycle += 1;
-        if self.cycle >= 341 {
-            self.cycle = 0;
-            self.scanline += 1;
-            if self.scanline >= 261 {
-                self.scanline = -1;
-                self.frame_complete = true;
-                self.odd_frame = !self.odd_frame;
-            }
-        }
+        let x = (self.cycle - 1) as usize;
+        let y = self.scanline as usize;
+        self.screen[y * 256 + x] = color;
     }
 
     fn update_shifters(&mut self) {
@@ -753,76 +827,9 @@ impl Ppu {
         self.get_nes_color(color_index)
     }
 
+    #[inline]
     fn get_nes_color(&self, color_index: u8) -> [u8; 4] {
-        // NES palette colors (simplified RGB values)
-        let nes_palette = [
-            [84, 84, 84, 255],
-            [0, 30, 116, 255],
-            [8, 16, 144, 255],
-            [48, 0, 136, 255],
-            [68, 0, 100, 255],
-            [92, 0, 48, 255],
-            [84, 4, 0, 255],
-            [60, 24, 0, 255],
-            [32, 42, 0, 255],
-            [8, 58, 0, 255],
-            [0, 64, 0, 255],
-            [0, 60, 0, 255],
-            [0, 50, 60, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-            [152, 150, 152, 255],
-            [8, 76, 196, 255],
-            [48, 50, 236, 255],
-            [92, 30, 228, 255],
-            [136, 20, 176, 255],
-            [160, 20, 100, 255],
-            [152, 34, 32, 255],
-            [120, 60, 0, 255],
-            [84, 90, 0, 255],
-            [40, 114, 0, 255],
-            [8, 124, 0, 255],
-            [0, 118, 40, 255],
-            [0, 102, 120, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-            [236, 238, 236, 255],
-            [76, 154, 236, 255],
-            [120, 124, 236, 255],
-            [176, 98, 236, 255],
-            [228, 84, 236, 255],
-            [236, 88, 180, 255],
-            [236, 106, 100, 255],
-            [212, 136, 32, 255],
-            [160, 170, 0, 255],
-            [116, 196, 0, 255],
-            [76, 208, 32, 255],
-            [56, 204, 108, 255],
-            [56, 180, 204, 255],
-            [60, 60, 60, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-            [236, 238, 236, 255],
-            [168, 204, 236, 255],
-            [188, 188, 236, 255],
-            [212, 178, 236, 255],
-            [236, 174, 236, 255],
-            [236, 174, 212, 255],
-            [236, 180, 176, 255],
-            [228, 196, 144, 255],
-            [204, 210, 120, 255],
-            [180, 222, 120, 255],
-            [168, 226, 144, 255],
-            [152, 226, 180, 255],
-            [160, 214, 228, 255],
-            [160, 162, 160, 255],
-            [0, 0, 0, 255],
-            [0, 0, 0, 255],
-        ];
-
-        nes_palette[color_index as usize]
+        NES_PALETTE[(color_index & 0x3F) as usize]
     }
 
     pub fn get_nmi(&mut self) -> bool {
