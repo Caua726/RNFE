@@ -18,13 +18,17 @@ pub fn pick_rom() -> Option<String> {
 
 /// Carrega uma ROM do disco e devolve um console pronto (já resetado).
 pub fn load_rom(path: &str) -> Option<Box<Nes>> {
-    match Cartridge::new(path) {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Erro ao ler '{}': {}", path, e);
+            return None;
+        }
+    };
+    match Cartridge::from_bytes(&bytes) {
         Ok(cartridge) => {
-            println!("ROM carregada: {}", path);
-            let mut nes = Box::new(Nes::new());
-            nes.insert_cartridge(cartridge);
-            nes.reset();
-            Some(nes)
+            println!("ROM carregada: {} ({})", path, cartridge.describe());
+            Some(Box::new(Nes::new(cartridge)))
         }
         Err(e) => {
             eprintln!("Erro ao carregar ROM '{}': {}", path, e);

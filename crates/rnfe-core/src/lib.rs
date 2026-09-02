@@ -4,6 +4,7 @@
 
 pub mod apu;
 pub mod bus;
+pub mod buttons;
 pub mod cartridge;
 pub mod cpu6502;
 pub mod debug;
@@ -12,7 +13,8 @@ pub mod mappers;
 pub mod nes;
 pub mod ppu;
 
-pub use cartridge::Cartridge;
+pub use buttons::Buttons;
+pub use cartridge::{Cartridge, Mirror, RomError};
 pub use nes::Nes;
 
 /// Largura da imagem gerada pela PPU, em pixels.

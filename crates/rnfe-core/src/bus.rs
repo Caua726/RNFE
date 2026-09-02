@@ -1,11 +1,11 @@
 use crate::ppu::Ppu;
 use crate::apu::Apu;
-use crate::cartridge::Cartridge;
+use crate::cartridge::{Cartridge, Mirror};
 
 pub struct Bus {
     pub ppu: Ppu,
     pub apu: Apu,
-    pub cartridge: Option<Cartridge>,
+    pub cartridge: Cartridge,
     pub ram: [u8; 2048],
     pub dma_page: u8,
     pub dma_addr: u8,
@@ -20,14 +20,16 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new() -> Bus {
-        let ram = [0u8; 2048];
+    pub fn new(cartridge: Cartridge) -> Bus {
+        let mut ppu = Ppu::new();
+        ppu.load_chr(cartridge.get_chr_data());
+        ppu.mirror_mode = Self::mirror_code(cartridge.get_mirror());
 
         Bus {
-            ppu: Ppu::new(),
+            ppu,
             apu: Apu::new(),
-            cartridge: None,
-            ram,
+            cartridge,
+            ram: [0u8; 2048],
             dma_page: 0x00,
             dma_addr: 0x00,
             dma_data: 0x00,
@@ -39,22 +41,19 @@ impl Bus {
         }
     }
 
-    pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
-        self.ppu.load_chr(cartridge.get_chr_data());
-        self.ppu.mirror_mode = match cartridge.get_mirror() {
-            crate::cartridge::Mirror::Vertical => 0,
-            crate::cartridge::Mirror::Horizontal => 1,
-            crate::cartridge::Mirror::OneScreenLo => 2,
-            crate::cartridge::Mirror::OneScreenHi => 3,
-        };
-        self.cartridge = Some(cartridge);
+    /// Código de mirroring usado internamente pela PPU.
+    pub fn mirror_code(mirror: Mirror) -> u8 {
+        match mirror {
+            Mirror::Vertical => 0,
+            Mirror::Horizontal => 1,
+            Mirror::OneScreenLo => 2,
+            Mirror::OneScreenHi => 3,
+        }
     }
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
-        if let Some(ref mut cartridge) = self.cartridge {
-            if cartridge.cpu_write(addr, data) {
-                return;
-            }
+        if self.cartridge.cpu_write(addr, data) {
+            return;
         }
 
         match addr {
@@ -92,10 +91,8 @@ impl Bus {
     }
 
     pub fn cpu_read(&mut self, addr: u16, _read_only: bool) -> u8 {
-        if let Some(ref cartridge) = self.cartridge {
-            if let Some(data) = cartridge.cpu_read(addr) {
-                return data;
-            }
+        if let Some(data) = self.cartridge.cpu_read(addr) {
+            return data;
         }
 
         match addr {
@@ -131,10 +128,8 @@ impl Bus {
 
     // Read sem side effects (pra debug)
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {
-        if let Some(ref cartridge) = self.cartridge {
-            if let Some(data) = cartridge.cpu_read(addr) {
-                return data;
-            }
+        if let Some(data) = self.cartridge.cpu_read(addr) {
+            return data;
         }
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
@@ -144,15 +139,11 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
-        if let Some(ref mut cartridge) = self.cartridge {
-            cartridge.reset();
-        }
+        self.cartridge.reset();
         let mirror = self.ppu.mirror_mode;
         self.ppu = Ppu::new();
         self.ppu.mirror_mode = mirror;
-        if let Some(ref cartridge) = self.cartridge {
-            self.ppu.load_chr(cartridge.get_chr_data());
-        }
+        self.ppu.load_chr(self.cartridge.get_chr_data());
         self.dma_page = 0x00;
         self.dma_addr = 0x00;
         self.dma_data = 0x00;

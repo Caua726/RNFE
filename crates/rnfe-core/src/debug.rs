@@ -123,7 +123,7 @@ impl Debugger {
                 let already = self.unknown_opcodes.iter().any(|(op, _)| *op == opcode);
                 if !already {
                     self.unknown_opcodes.push((opcode, pc));
-                    eprintln!("[DEBUG] Unknown opcode 0x{:02X} at PC=0x{:04X}", opcode, pc);
+                    log::warn!("opcode desconhecido 0x{:02X} at PC=0x{:04X}", opcode, pc);
                 }
             }
         }
@@ -153,7 +153,7 @@ impl Debugger {
         for watch in &mut self.watches {
             let val = bus.cpu_read_debug(watch.0);
             if val != watch.1 {
-                eprintln!("[WATCH] ${:04X}: {:02X} -> {:02X}", watch.0, watch.1, val);
+                log::info!("[WATCH] ${:04X}: {:02X} -> {:02X}", watch.0, watch.1, val);
                 watch.1 = val;
             }
         }

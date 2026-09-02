@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-01 (repo: higiene)
+Tarefa: F0-03 (core: API)
 Estado: concluída
-Próximo: F0-02 — workspace (crates/rnfe-core, rnfe-gui, rnfe-desktop; perfis; default-members)
+Próximo: F0-04 — NROM 32 KB + PRG RAM
 
 ## Linha de base
 (preenchida em F0-06)
@@ -28,8 +28,8 @@ Próximo: F0-02 — workspace (crates/rnfe-core, rnfe-gui, rnfe-desktop; perfis;
 
 ## F0 — Fundação (`fase-0-fundacao`) · marco M0: `cargo test` verde no celular e no CI; STATUS.md; SMB1 boota; jogo visível no tty
 - [x] F0-01 repo: clone, identidade, branch, lixo versionado removido, .gitignore, sem `cargo-features`, LICENSE, PLAN.md
-- [ ] F0-02 [S] workspace: crates/rnfe-core (9 módulos + mappers), crates/rnfe-gui (display/ui), crates/rnfe-desktop; perfis; `default-members` sem wgpu; .cargo/config.toml
-- [ ] F0-03 core: `Cartridge::from_bytes` + `RomError`; `println!`→`log`; `diagnostic_report()->String`; `Buttons`; `Nes::new(cart)`; `run_frame/step_instruction/peek/set_controller/drain_audio/framebuffer` (RGBA8)
+- [x] F0-02 [S] workspace: crates/rnfe-core (9 módulos + mappers), crates/rnfe-gui (display/ui), crates/rnfe-desktop; perfis; `default-members` sem wgpu; .cargo/config.toml
+- [x] F0-03 core: `Cartridge::from_bytes` + `RomError`; `println!`→`log`; `diagnostic_report()->String`; `Buttons`; `Nes::new(cart)`; `run_frame/step_instruction/peek/set_controller/drain_audio/framebuffer` (RGBA8)
 - [ ] F0-04 NROM: máscara 32 KB (`& 0x3FFF` extra) + PRG RAM `$6000-$7FFF`
 - [ ] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
 - [ ] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base

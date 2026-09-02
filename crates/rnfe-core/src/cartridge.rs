@@ -1,6 +1,30 @@
-use std::fs::File;
-use std::io::Read;
 use crate::mappers::{self, CartData, Mapper};
+use std::fmt;
+
+/// Erro ao interpretar uma ROM iNES.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RomError {
+    /// Os 4 primeiros bytes não são `NES\x1A`.
+    BadMagic,
+    /// O arquivo termina antes do que o header promete.
+    Truncated { expected: usize, got: usize },
+    /// Mapper sem implementação.
+    UnsupportedMapper(u16),
+}
+
+impl fmt::Display for RomError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RomError::BadMagic => write!(f, "arquivo não é uma ROM iNES (magic inválido)"),
+            RomError::Truncated { expected, got } => {
+                write!(f, "ROM truncada: header pede {} bytes, arquivo tem {}", expected, got)
+            }
+            RomError::UnsupportedMapper(id) => write!(f, "mapper {} não suportado", id),
+        }
+    }
+}
+
+impl std::error::Error for RomError {}
 
 pub struct Cartridge {
     pub data: CartData,
@@ -8,7 +32,7 @@ pub struct Cartridge {
     mapper: Box<dyn Mapper>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mirror {
     Horizontal,
     Vertical,
@@ -16,15 +40,13 @@ pub enum Mirror {
     OneScreenHi,
 }
 
-impl Cartridge {
-    pub fn new(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut file = File::open(filename)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
+const SUPPORTED_MAPPERS: &[u8] = &[0, 1, 2, 3, 4, 7, 9, 11, 34, 66, 69, 71, 206, 227];
 
-        // Parse iNES header
+impl Cartridge {
+    /// Interpreta uma ROM iNES a partir dos bytes do arquivo.
+    pub fn from_bytes(buffer: &[u8]) -> Result<Self, RomError> {
         if buffer.len() < 16 || &buffer[0..4] != b"NES\x1A" {
-            return Err("Invalid NES ROM format".into());
+            return Err(RomError::BadMagic);
         }
 
         let prg_banks = buffer[4];
@@ -32,7 +54,7 @@ impl Cartridge {
         let mapper1 = buffer[6];
         let mapper2 = buffer[7];
 
-        // Skip trainer if present
+        // Trainer de 512 bytes, se presente
         let mut file_offset = 16;
         if (mapper1 & 0x04) != 0 {
             file_offset += 512;
@@ -40,33 +62,37 @@ impl Cartridge {
 
         let mapper_id = (mapper2 & 0xF0) | (mapper1 >> 4);
 
-        // FIX: iNES bit0=1 -> vertical mirroring, bit0=0 -> horizontal mirroring
+        // iNES bit0=1 -> vertical, bit0=0 -> horizontal
         let mirror = if (mapper1 & 0x01) != 0 {
             Mirror::Vertical
         } else {
             Mirror::Horizontal
         };
 
-        // Read PRG ROM
         let prg_size = prg_banks as usize * 16384;
+        let chr_size = chr_banks as usize * 8192;
+        let expected = file_offset + prg_size + chr_size;
+        if buffer.len() < expected {
+            return Err(RomError::Truncated { expected, got: buffer.len() });
+        }
+
         let prg_memory = buffer[file_offset..file_offset + prg_size].to_vec();
         file_offset += prg_size;
 
-        // Read CHR ROM
-        let chr_size = chr_banks as usize * 8192;
         let chr_memory = if chr_size > 0 {
             buffer[file_offset..file_offset + chr_size].to_vec()
         } else {
             vec![0; 8192] // CHR RAM
         };
 
-        let supported = matches!(mapper_id, 0 | 1 | 2 | 3 | 4 | 7 | 9 | 11 | 34 | 66 | 69 | 71 | 206 | 227);
-        println!("Cartridge loaded: PRG banks: {}, CHR banks: {}, Mapper: {}, Mirror: {:?}",
-                 prg_banks, chr_banks, mapper_id, mirror);
-        println!("PRG ROM size: {} bytes, CHR ROM size: {} bytes", prg_size, chr_size);
-        if !supported {
-            eprintln!("WARNING: Mapper {} not supported! Game may not work.", mapper_id);
+        if !SUPPORTED_MAPPERS.contains(&mapper_id) {
+            return Err(RomError::UnsupportedMapper(mapper_id as u16));
         }
+
+        log::info!(
+            "ROM: PRG {} x 16K, CHR {} x 8K, mapper {}, mirror {:?}",
+            prg_banks, chr_banks, mapper_id, mirror
+        );
 
         let mapper = mappers::create_mapper(mapper_id, prg_banks);
 
@@ -82,6 +108,22 @@ impl Cartridge {
             mapper_id,
             mapper,
         })
+    }
+
+    pub fn mapper_id(&self) -> u8 {
+        self.mapper_id
+    }
+
+    /// Resumo de uma linha (para logs e a tela inicial).
+    pub fn describe(&self) -> String {
+        format!(
+            "PRG {}K, CHR {}{}, mapper {}, {:?}",
+            self.data.prg_banks as usize * 16,
+            if self.data.chr_banks == 0 { 8 } else { self.data.chr_banks as usize * 8 },
+            if self.data.chr_banks == 0 { "K RAM" } else { "K" },
+            self.mapper_id,
+            self.data.mirror
+        )
     }
 
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
@@ -134,9 +176,14 @@ impl Cartridge {
         self.mapper.reset(self.data.prg_banks);
     }
 
-    pub fn print_mapper_state(&self) {
-        println!("  Mapper: {}  PRG banks: {}  CHR banks: {}", self.mapper_id, self.data.prg_banks, self.data.chr_banks);
-        self.mapper.print_state();
+    /// Estado interno do mapper, em texto (diagnóstico).
+    pub fn mapper_state(&self) -> String {
+        let mut s = format!(
+            "  Mapper: {}  PRG banks: {}  CHR banks: {}\n",
+            self.mapper_id, self.data.prg_banks, self.data.chr_banks
+        );
+        s.push_str(&self.mapper.state_string());
+        s
     }
 
     // Debug: ler CHR sem side effects

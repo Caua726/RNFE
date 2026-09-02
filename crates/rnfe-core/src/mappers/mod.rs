@@ -31,7 +31,7 @@ pub trait Mapper {
     fn clock_scanline(&mut self) {}
     fn mapper_irq(&mut self) -> bool { false }
     fn reset(&mut self, prg_banks: u8);
-    fn print_state(&self) {}
+    fn state_string(&self) -> String { String::new() }
 }
 
 pub fn create_mapper(id: u8, prg_banks: u8) -> Box<dyn Mapper> {

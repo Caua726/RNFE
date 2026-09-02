@@ -139,8 +139,8 @@ impl Mapper for Mmc1 {
         self.prg_bank = 0;
     }
 
-    fn print_state(&self) {
-        println!("  MMC1 ctrl: ${:02X}  PRG bank: {}  CHR banks: {}/{}",
-            self.control, self.prg_bank, self.chr_bank0, self.chr_bank1);
+    fn state_string(&self) -> String {
+        format!("  MMC1 ctrl: ${:02X}  PRG bank: {}  CHR banks: {}/{}\n",
+            self.control, self.prg_bank, self.chr_bank0, self.chr_bank1)
     }
 }

@@ -182,17 +182,20 @@ impl Mapper for Mmc3 {
         self.irq_pending = false;
     }
 
-    fn print_state(&self) {
-        println!("  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
+    fn state_string(&self) -> String {
+        let mut s = String::new();
+        use std::fmt::Write;
+        let _ = writeln!(s, "  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
             self.bank_select,
             if self.bank_select & 0x80 != 0 { "yes" } else { "no" },
             if self.bank_select & 0x40 != 0 { "swap" } else { "normal" });
-        println!("  MMC3 PRG banks: [{}, {}, {}, {}]",
+        let _ = writeln!(s, "  MMC3 PRG banks: [{}, {}, {}, {}]",
             self.prg_banks[0], self.prg_banks[1], self.prg_banks[2], self.prg_banks[3]);
-        println!("  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
+        let _ = writeln!(s, "  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
             self.chr_banks[0], self.chr_banks[1], self.chr_banks[2], self.chr_banks[3],
             self.chr_banks[4], self.chr_banks[5], self.chr_banks[6], self.chr_banks[7]);
-        println!("  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
+        let _ = writeln!(s, "  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
             self.irq_counter, self.irq_reload, self.irq_enabled, self.irq_pending);
+        s
     }
 }

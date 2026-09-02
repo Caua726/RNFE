@@ -598,15 +598,8 @@ impl App {
                 self.fps_timer = Instant::now();
             }
 
-            // PPU screen (RGB) -> framebuffer (RGBA)
-            for i in 0..(NES_WIDTH * NES_HEIGHT) as usize {
-                let color = nes.bus.ppu.screen[i];
-                let fb_idx = i * 4;
-                self.framebuffer[fb_idx] = color[0];
-                self.framebuffer[fb_idx + 1] = color[1];
-                self.framebuffer[fb_idx + 2] = color[2];
-                self.framebuffer[fb_idx + 3] = 255;
-            }
+            // A PPU já produz RGBA8
+            self.framebuffer.copy_from_slice(nes.framebuffer());
 
             // Debug overlay + toast
             let mut has_overlay = false;
@@ -849,7 +842,7 @@ impl ApplicationHandler for App {
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F6) => {
-                                rnfe_core::diagnostic::run_diagnostic(&nes.cpu, &nes.bus);
+                                print!("{}", rnfe_core::diagnostic::diagnostic_report(&nes.cpu, &nes.bus));
                                 self.toast_msg = "Diagnostic -> terminal".into();
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }

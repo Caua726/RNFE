@@ -9,6 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+log.workspace = true
 
 [lints]
 workspace = true
