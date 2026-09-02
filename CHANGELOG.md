@@ -2,6 +2,10 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F2 APU e PPU exatos
+
+- F2-01/02/03 APU reescrita em ciclos de CPU: frame counter com IRQ e atraso de `$4017`, `$4015` com flags, noise/DMC por ciclo, DMC com DMA que para a CPU (3–4 ciclos, leituras repetidas em `$2007`), latência de halt/reload dos length counters, reset como se `$4017` fosse escrito antes da 1ª instrução. Acesso da CPU no meio do ciclo (2 dots antes) e sem polling ao fim de BRK/IRQ. Open bus da CPU. Controle devolve 1 após 8 leituras. Harness: estilo `Crc`, resets múltiplos, `run_rom -v`, `disasm`. Passam agora: apu_test 8/8, blargg_apu_2005 11/11, apu_reset 6/6, cpu_interrupts 5/5, instr_misc 4/4, dmc_dma_during_read4 4/5, ppu_vbl_nmi 05/07/08, vbl_nmi_timing 6/7.
+
 ## Não publicado — F1 CPU exata
 
 - F1-05 Bus ciclo a ciclo: cada acesso da CPU avança PPU (3 dots) e APU; CPU reescrita com tabela estática `(Op, Mode)`, dummy reads iguais ao hardware, OAM DMA inline (513/514 ciclos), polling de NMI (borda) e IRQ (nível) no penúltimo ciclo com hijack; `cart_ptr` removido e `#![forbid(unsafe_code)]`; +30 % de fps. Absorveu F1-06 (dummy reads/writes) e F1-07 (interrupções).

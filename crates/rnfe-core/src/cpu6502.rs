@@ -299,6 +299,9 @@ impl Cpu6502 {
         if let Some(page) = bus.take_oam_dma() {
             self.oam_dma(bus, page, addr);
         }
+        if bus.take_dmc_dma() {
+            self.dmc_dma(bus, addr);
+        }
         bus.tick_pre();
         let v = bus.read_raw(addr);
         bus.tick_post();
@@ -336,6 +339,33 @@ impl Cpu6502 {
         for i in 0..256u16 {
             let v = self.dma_read(bus, base | i);
             self.write(bus, 0x2004, v);
+        }
+    }
+
+    /// DMA do DMC: parada (1) + dummy (1) + alinhamento (0–1) + leitura do byte. Os ciclos
+    /// parados repetem a leitura de `addr` — é o que duplica leituras de `$2007`/`$4016`.
+    fn dmc_dma(&mut self, bus: &mut Bus, addr: u16) {
+        // Nas portas de controle ($4016/$4017) só o ciclo de parada repete a leitura
+        // (hardware: 1 leitura extra); em $2007 todos os ciclos parados leem (2–3 extras).
+        let repeat = !matches!(addr, 0x4016 | 0x4017);
+        self.dma_read(bus, addr);
+        self.dma_idle(bus, addr, repeat);
+        if bus.cpu_cycles & 1 == 1 {
+            self.dma_idle(bus, addr, repeat);
+        }
+        let v = self.dma_read(bus, bus.dmc_address());
+        bus.dmc_feed(v);
+    }
+
+    /// Ciclo parado do DMA: repete a leitura de `addr` ou só deixa o relógio andar.
+    #[inline]
+    fn dma_idle(&mut self, bus: &mut Bus, addr: u16, repeat_read: bool) {
+        if repeat_read {
+            self.dma_read(bus, addr);
+        } else {
+            bus.tick_pre();
+            bus.tick_post();
+            self.poll_interrupts(bus);
         }
     }
 
@@ -495,6 +525,9 @@ impl Cpu6502 {
         let lo = self.read(bus, vec) as u16;
         let hi = self.read(bus, vec + 1) as u16;
         self.pc = (hi << 8) | lo;
+        // A sequência de interrupção não faz polling no fim: a 1ª instrução do handler sempre roda
+        self.nmi_pending_prev = false;
+        self.irq_run_prev = false;
     }
 
     #[inline]
@@ -770,7 +803,8 @@ impl Cpu6502 {
                 let lo = self.read(bus, vec) as u16;
                 let hi = self.read(bus, vec + 1) as u16;
                 self.pc = (hi << 8) | lo;
-                // I acabou de subir: não atender IRQ imediatamente
+                // Como na sequência de IRQ/NMI: sem polling no fim do BRK
+                self.nmi_pending_prev = false;
                 self.irq_run_prev = false;
             }
             Nop => {

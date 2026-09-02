@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F1 inteira — marco M1 fechado, merge em main
+Tarefa: F2-01/02/03 — APU exata (frame counter, IRQs, DMC com DMA, length counters)
 Estado: concluída
-Próximo: F2-01 — frame counter da APU em ciclos de CPU + IRQ (branch fase-2-apu-ppu)
+Próximo: F2-04 — VBL/NMI exatos na PPU (branch fase-2-apu-ppu)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -61,9 +61,9 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - Pendências de M1 que dependem de F2: `instr_misc/04` e `cpu_dummy_writes_ppumem` (open bus, F2-02/F2-05); `cpu_interrupts 1–5` (a fonte de IRQ do teste é o frame counter da APU, F2-01)
 
 ## F2 — APU e PPU exatos (`fase-2-apu-ppu`) · marco M2
-- [ ] F2-01 APU frame counter em ciclos de CPU + IRQ flag/inhibit + `$4015` R + delay `$4017`
-- [ ] F2-02 noise/DMC por ciclo; DMC IRQ; DMA do DMC com stall de 4; `$4000-$4013` open bus
-- [ ] F2-03 length counter halt/reload ordering
+- [x] F2-01 APU frame counter em ciclos de CPU + IRQ flag/inhibit + `$4015` R + delay `$4017`
+- [x] F2-02 noise/DMC por ciclo; DMC IRQ; DMA do DMC com stall de 4; `$4000-$4013` open bus
+- [x] F2-03 length counter halt/reload ordering
 - [ ] F2-04 VBL/NMI exatos: (241,1), prevent_vbl, supressão, odd-frame em (261,339)
 - [ ] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
 - [ ] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255

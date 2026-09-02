@@ -10,7 +10,7 @@ use crate::ppu::Ppu;
 
 /// Dots de PPU executados antes do acesso da CPU dentro do ciclo (o restante, 3 − N, depois).
 /// Fixa o alinhamento CPU/PPU visível em leituras de `$2002` perto do VBL.
-const DOTS_BEFORE_ACCESS: u32 = 1;
+const DOTS_BEFORE_ACCESS: u32 = 2;
 
 pub struct Bus {
     pub ppu: Ppu,
@@ -21,6 +21,8 @@ pub struct Bus {
     pub cpu_cycles: u64,
     /// Página pedida por `$4014`; a CPU consome no próximo ciclo de leitura.
     oam_dma_page: Option<u8>,
+    /// Último valor no barramento de dados (lido em endereços não mapeados).
+    open_bus: u8,
     // Controles. Bits: A B Select Start Up Down Left Right
     pub controller: [u8; 2],
     controller_state: [u8; 2],
@@ -36,6 +38,7 @@ impl Bus {
             ram: [0u8; 2048],
             cpu_cycles: 0,
             oam_dma_page: None,
+            open_bus: 0,
             controller: [0; 2],
             controller_state: [0; 2],
             controller_strobe: false,
@@ -47,12 +50,15 @@ impl Bus {
     /// Começo de um ciclo de CPU: os dots de PPU que antecedem o acesso.
     #[inline]
     pub fn tick_pre(&mut self) {
+        // A APU avança antes do acesso: uma leitura de $4015 vê o mesmo estado que a linha IRQ
+        // amostrada no fim deste ciclo.
+        self.apu.clock();
         for _ in 0..DOTS_BEFORE_ACCESS {
             self.ppu.step(&mut self.cartridge);
         }
     }
 
-    /// Fim de um ciclo de CPU: dots restantes, APU, DMC, mapper.
+    /// Fim de um ciclo de CPU: dots restantes e mapper.
     #[inline]
     pub fn tick_post(&mut self) {
         for _ in DOTS_BEFORE_ACCESS..3 {
@@ -61,12 +67,6 @@ impl Bus {
         if self.ppu.scanline_trigger {
             self.ppu.scanline_trigger = false;
             self.cartridge.clock_scanline();
-        }
-        self.apu.clock();
-        if let Some(addr) = self.apu.dmc_read_addr.take() {
-            // F2-02: o DMA do DMC passa a parar a CPU por 4 ciclos
-            let data = self.read_raw(addr);
-            self.apu.dmc_feed_sample(data);
         }
         self.cpu_cycles += 1;
     }
@@ -88,24 +88,44 @@ impl Bus {
         self.oam_dma_page.take()
     }
 
+    /// O DMC pediu um byte: a CPU faz o DMA (3–4 ciclos parada) e entrega com `dmc_feed`.
+    #[inline]
+    pub fn take_dmc_dma(&mut self) -> bool {
+        self.apu.take_dmc_dma()
+    }
+
+    #[inline]
+    pub fn dmc_address(&self) -> u16 {
+        self.apu.dmc_address()
+    }
+
+    #[inline]
+    pub fn dmc_feed(&mut self, data: u8) {
+        self.apu.dmc_feed_sample(data);
+    }
+
     // ------------------------------------------------------------------ acessos
 
     /// Leitura sem avançar o relógio (a CPU chama dentro de um ciclo; o DMC também).
     #[inline]
     pub fn read_raw(&mut self, addr: u16) -> u8 {
-        match addr {
+        let v = match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
             0x2000..=0x3FFF => self.ppu.cpu_read(addr & 0x0007, &mut self.cartridge),
-            0x4015 => self.apu.cpu_read(addr),
-            0x4016 => self.read_controller(0),
-            0x4017 => self.read_controller(1),
-            0x4000..=0x401F => 0, // F2-05: open bus
-            _ => self.cartridge.cpu_read(addr).unwrap_or(0),
-        }
+            // bit 5 de $4015 e bits 5-7 dos controles vêm do open bus
+            0x4015 => self.apu.read_status() | (self.open_bus & 0x20),
+            0x4016 => self.read_controller(0) | (self.open_bus & 0xE0),
+            0x4017 => self.read_controller(1) | (self.open_bus & 0xE0),
+            0x4000..=0x401F => self.open_bus,
+            _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
+        };
+        self.open_bus = v;
+        v
     }
 
     #[inline]
     pub fn write_raw(&mut self, addr: u16, data: u8) {
+        self.open_bus = data;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize] = data,
             0x2000..=0x3FFF => self.ppu.cpu_write(addr & 0x0007, data, &mut self.cartridge),
@@ -136,7 +156,8 @@ impl Bus {
             self.controller[port] >> 7
         } else {
             let data = (self.controller_state[port] & 0x80) >> 7;
-            self.controller_state[port] <<= 1;
+            // depois dos 8 botões o controle padrão devolve 1 (alguns jogos/testes contam com isso)
+            self.controller_state[port] = (self.controller_state[port] << 1) | 1;
             data
         }
     }
@@ -146,8 +167,9 @@ impl Bus {
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x07FF) as usize],
             0x2000..=0x3FFF => self.ppu.cpu_read_debug(addr & 0x0007),
-            0x4000..=0x401F => 0,
-            _ => self.cartridge.cpu_read(addr).unwrap_or(0),
+            0x4015 => self.apu.peek_status(),
+            0x4000..=0x401F => self.open_bus,
+            _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
         }
     }
 
@@ -155,8 +177,9 @@ impl Bus {
     pub fn reset(&mut self) {
         self.cartridge.reset();
         self.ppu = Ppu::new();
-        self.apu.reset();
+        self.apu.reset(true);
         self.oam_dma_page = None;
+        self.open_bus = 0;
         self.controller = [0; 2];
         self.controller_state = [0; 2];
         self.controller_strobe = false;
