@@ -38,6 +38,11 @@ M2, 02/09/2026:
 - `bench` BladeBuster: **3,8 ms/frame** (mínimo de 3 corridas) — piorou ~1,3 ms desde M1 com a APU/PPU por ciclo (frame counter, sprites, open bus). Fica para F7-01/F7-02 medir por subsistema; o celular também oscila de frequência (medições variam 3,2–5,0 ms).
 - `framebuffer()` agora converte de índices sob demanda (61 KB×2 em vez de 184 KB de RGBA na PPU); `framebuffer_indexed()` + `ppu::PALETTE_RGBA` para paleta na GPU
 
+M3, 02/09/2026:
+- ROMs: **115 Pass / 1 KnownFail** (só a leitura dupla de `$2007`); mmc3_test_2 6/6, mmc3_irq_tests 6/6; 7 testes sintéticos de mapper; 6 de save state; 3 de save; 2 de rewind
+- `bench` BladeBuster (MMC3): **3,16 ms/frame** (mínimo de 3), VmHWM 4,4 MB — igual/melhor que M2 apesar do A12 por acesso e do `MapperKind` por `match`
+- save state ≈ 15 KB (23 KB com CHR RAM); `cargo test` com `--features rnfe-core/serde`: ~35 s (blargg 25 s)
+
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
 - Tier 2 (deve funcionar): Termux tty, Raspberry Pi, GPU só-OpenGL.
