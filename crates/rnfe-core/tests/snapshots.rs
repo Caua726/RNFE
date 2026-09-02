@@ -2,10 +2,10 @@
 //!
 //! Não prova correção — prova que nada mudou sem querer. Uma correção de PPU que muda o
 //! render regrava o `.hash` no mesmo commit: `RNFE_UPDATE_SNAPSHOTS=1 cargo test --test snapshots`.
-//! Numa divergência, o frame é gravado em `target/snapshots/<nome>.ppm` para inspeção.
+//! Numa divergência, o frame é gravado em `target/snapshots/<nome>.png` para inspeção.
 
 use rnfe_core::Buttons;
-use rnfe_core::testing::{fnv1a64, load, write_ppm};
+use rnfe_core::testing::{fnv1a64, load, write_png};
 use std::path::Path;
 
 /// (nome, ROM relativa a test-roms/, frames, [(frame, botões)])
@@ -55,8 +55,8 @@ fn framebuffer_snapshots() {
             Ok(expected) if expected.trim() == hash => eprintln!("ok   {name} {hash}"),
             Ok(expected) => {
                 let _ = std::fs::create_dir_all(&dump_dir);
-                let ppm = dump_dir.join(format!("{name}.ppm"));
-                let _ = write_ppm(&ppm, nes.framebuffer());
+                let ppm = dump_dir.join(format!("{name}.png"));
+                let _ = write_png(&ppm, nes.framebuffer());
                 errors.push(format!(
                     "{name}: esperado {} obtido {hash} (frame em {})",
                     expected.trim(),

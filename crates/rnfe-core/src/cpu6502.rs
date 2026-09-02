@@ -50,7 +50,7 @@ impl Cpu6502 {
             y: 0x00,          // Y Register
             stkp: 0x00,       // Stack Pointer
             pc: 0x0000,       // Program Counter
-            status: 0x00,     // Status Register
+            status: 0x24,     // Status Register (power-on: I e U)
             fetched: 0x00,    // Nao sei depois eu vejo
             temp: 0x0000,     // Variavel temporaria
             addr_abs: 0x0000, // Todo o endereço de memoria acaba aqui
@@ -550,15 +550,15 @@ impl Cpu6502 {
     pub fn BRK(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.pc = self.pc.wrapping_add(1);
 
-        self.setFlag(FLAGS6502::I, true);
         self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
         self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
         self.stkp = self.stkp.wrapping_sub(1);
 
-        self.setFlag(FLAGS6502::B, true);
-        self.write(bus, 0x0100 + self.stkp as u16, self.status);
+        // B só existe no byte empilhado; I é setado depois do push
+        self.write(bus, 0x0100 + self.stkp as u16, self.status | FLAGS6502::B as u8 | FLAGS6502::U as u8);
         self.stkp = self.stkp.wrapping_sub(1);
+        self.setFlag(FLAGS6502::I, true);
 
         let lo = self.read(bus, 0xFFFE) as u16;
         let hi = self.read(bus, 0xFFFF) as u16;
@@ -1095,17 +1095,13 @@ impl Cpu6502 {
     }
 
     // Reset
+    /// Reset: A/X/Y e os outros bits de P são preservados; I=1, SP desce 3 (pushes falsos), 7 ciclos.
     pub fn reset(&mut self, bus: &mut crate::bus::Bus) {
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
-        self.stkp = 0xFD;
-        self.status = FLAGS6502::U as u8;
+        self.stkp = self.stkp.wrapping_sub(3);
+        self.status |= FLAGS6502::I as u8 | FLAGS6502::U as u8;
 
-        self.addr_abs = 0xFFFC;
-        let lo = self.read(bus, self.addr_abs);
-        let hi = self.read(bus, self.addr_abs + 1);
-
+        let lo = self.read(bus, 0xFFFC);
+        let hi = self.read(bus, 0xFFFD);
         self.pc = ((hi as u16) << 8) | (lo as u16);
 
         self.addr_rel = 0x0000;
@@ -1113,7 +1109,7 @@ impl Cpu6502 {
         self.fetched = 0x00;
         self.jammed = false;
 
-        self.cycles = 8;
+        self.cycles = 7;
     }
     // Interruptiuon Request
     pub fn irq(&mut self, bus: &mut crate::bus::Bus) {
@@ -1156,7 +1152,7 @@ impl Cpu6502 {
         let hi = self.read(bus, 0xFFFB) as u16;
         self.pc = (hi << 8) | lo;
 
-        self.cycles = 8;
+        self.cycles = 7;
     }
 
     // Tem algumas instrucoes que somente alguns
