@@ -91,6 +91,39 @@ jobs:
         with:
           path: dist
 
+  android:
+    name: android — cargo-ndk + gradle (APK de debug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - run: cargo install cargo-ndk --locked
+      - name: Biblioteca nativa (arm64-v8a)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          cargo ndk -t arm64-v8a clippy -p rnfe-android -- -D warnings
+          cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build -p rnfe-android --release
+          ls -la android/app/src/main/jniLibs/arm64-v8a
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: APK (gradle assembleDebug)
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - run: ls -la android/app/build/outputs/apk/debug/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rnfe-android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+
   pages:
     name: GitHub Pages
     needs: [web, core]

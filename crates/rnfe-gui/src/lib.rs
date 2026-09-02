@@ -10,8 +10,13 @@ pub mod platform;
 pub mod ui;
 
 use rnfe_core::{Cartridge, Nes, RomError, Storage};
+use winit::event_loop::EventLoopProxy;
 
 pub use app::{App, UserEvent};
+
+/// Seletor de ROM da plataforma: recebe o proxy e, quando o usuário escolher, envia
+/// `UserEvent::RomLoaded` (ou `RomLoadFailed`). Sem ele, o frontend usa o `rfd`.
+pub type RomPicker = Box<dyn Fn(EventLoopProxy<UserEvent>) + Send + Sync>;
 
 /// O que o binário entrega ao frontend para começar.
 pub struct Launch {
@@ -20,6 +25,14 @@ pub struct Launch {
     pub rom_name: String,
     /// Onde ficam `.sav` e save states.
     pub storage: Box<dyn Storage>,
+    /// Seletor de ROM próprio (Android usa o SAF por JNI).
+    pub picker: Option<RomPicker>,
+}
+
+impl Launch {
+    pub fn new(storage: Box<dyn Storage>) -> Launch {
+        Launch { nes: None, rom_name: String::new(), storage, picker: None }
+    }
 }
 
 /// Cria um console a partir dos bytes de uma ROM.
@@ -49,9 +62,22 @@ pub fn load_rom(path: &str) -> Option<Box<Nes>> {
 }
 
 /// Laço principal no desktop.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 pub fn run(launch: Launch) -> Result<(), winit::error::EventLoopError> {
     let el = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build()?;
+    let mut app = App::new(launch, el.create_proxy());
+    el.run_app(&mut app)
+}
+
+/// Laço principal no Android: recebe o `AndroidApp` do `android_main`.
+#[cfg(target_os = "android")]
+pub fn run_android(
+    android_app: winit::platform::android::activity::AndroidApp,
+    launch: Launch,
+) -> Result<(), winit::error::EventLoopError> {
+    use winit::platform::android::EventLoopBuilderExtAndroid;
+    let el =
+        winit::event_loop::EventLoop::<UserEvent>::with_user_event().with_android_app(android_app).build()?;
     let mut app = App::new(launch, el.create_proxy());
     el.run_app(&mut app)
 }
@@ -64,8 +90,7 @@ pub fn run_web() {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Info);
     let el = winit::event_loop::EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
-    let launch =
-        Launch { nes: None, rom_name: String::new(), storage: Box::new(platform::WebStorage::new()) };
+    let launch = Launch::new(Box::new(platform::WebStorage::new()));
     let app = App::new(launch, el.create_proxy());
     el.spawn_app(app);
 }

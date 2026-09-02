@@ -4,7 +4,7 @@
 
 Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 14 mappers,
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
-desktop, terminal e (em breve) Android.
+desktop, Android e terminal.
 
 **Jogar agora:** <https://caua726.github.io/RNFE/> — abra uma ROM `.nes`, toque na tela (celular)
 ou use o teclado. Saves e save states ficam no `localStorage` do navegador.
@@ -32,12 +32,23 @@ cargo run -p rnfe-desktop --release -- caminho/para/jogo.nes
 # terminal (inclusive Termux no Android) — sem dependências além do próprio Rust
 cargo run -p rnfe-tty --release -- caminho/para/jogo.nes
 
+# Android (arm64, 8.0+): APK em Releases (tag v*) ou no artefato "rnfe-android-debug-apk" de cada CI;
+# build local: cargo install cargo-ndk; cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build -p rnfe-android --release
+#              cd android && gradle assembleDebug   (precisa do Android SDK + NDK)
+
 # só medir velocidade do núcleo
 cargo run -p rnfe-core --release --bin bench -- --rom jogo.nes --frames 3000
 ```
 
 No desktop, `cargo run -p rnfe-desktop` sem argumentos abre a janela com o botão **Open ROM**.
 Saves de bateria (`.sav`) e save states ficam em `~/.local/share/rnfe` (`$RNFE_DATA_DIR` muda).
+
+### Android
+
+Instale o APK (Releases ou o artefato do CI; o Android pede para permitir "fontes desconhecidas"),
+abra o app e toque em **Open ROM**: o seletor de arquivos do sistema abre e qualquer `.nes` do
+aparelho serve (Downloads, Drive…). Os controles de toque aparecem no primeiro toque; um gamepad
+Bluetooth também funciona. Saves e save states ficam na pasta interna do app.
 
 Publicação na web: o job `web` do CI faz o `trunk build` e o job `pages` publica em GitHub Pages
 a cada push em `main` — no repositório, uma vez, ative **Settings → Pages → Source: GitHub Actions**.
@@ -102,6 +113,8 @@ crates/rnfe-tty        frontend de terminal (half-blocks, cor 24-bit)
 crates/rnfe-gui        frontend gráfico (winit + wgpu + cpal + gilrs), o mesmo código no desktop e na web
 crates/rnfe-desktop    binário de desktop (fino)
 crates/rnfe-web        binário wasm32 + index.html (Trunk); saves no localStorage
+crates/rnfe-android    biblioteca nativa (android_main + JNI para o seletor de arquivos)
+android/               projeto Gradle mínimo (NativeActivity) que embala a biblioteca no APK
 scripts/               fetch-roms.sh · check.sh · peak-rss.sh
 docs/STATUS.md         resultado das ROMs de teste (gerado)
 PLAN.md                plano de trabalho e ponto onde parou

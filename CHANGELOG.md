@@ -2,6 +2,12 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F5 Android
+
+- F5-03 README: instalar o APK, abrir ROM pelo seletor do sistema, controles de toque/gamepad, onde ficam os saves.
+- F5-02 CI: job `android` (cargo-ndk arm64-v8a + gradle `assembleDebug`, APK como artefato a cada push) e `release.yml` em tag `v*` (Linux x86_64, Windows x86_64, APK arm64, `dist` web anexados à Release).
+- F5-01 Android: crate `rnfe-android` (cdylib, `android_main` com winit `android-native-activity`, `FsStorage` na pasta interna, log no logcat) + projeto Gradle mínimo em `android/` (`MainActivity extends NativeActivity` abre o SAF e devolve a ROM por JNI → `UserEvent::RomLoaded`). No gui: `Launch::picker`, `run_android`, `suspended` solta GPU/janela, imagem alinhada ao topo em retrato; `rfd` só fora do Android.
+
 ## Não publicado — F4 Web
 
 - F4-05 Gamepad: gilrs (desktop) / Gamepad API (web) — botões, d-pad e analógico esquerdo.

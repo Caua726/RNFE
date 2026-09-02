@@ -16,8 +16,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         None => (None, String::new()),
     };
-    let launch =
-        rnfe_gui::Launch { nes, rom_name, storage: Box::new(FsStorage::new(FsStorage::default_dir())) };
+    let mut launch = rnfe_gui::Launch::new(Box::new(FsStorage::new(FsStorage::default_dir())));
+    launch.nes = nes;
+    launch.rom_name = rom_name;
     rnfe_gui::run(launch)?;
     Ok(())
 }

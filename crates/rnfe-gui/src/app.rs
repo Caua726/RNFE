@@ -7,11 +7,11 @@
 //! - web: a GPU é inicializada num futuro e chega como `UserEvent::GpuReady`; a ROM chega por
 //!   `UserEvent::RomLoaded` do seletor de arquivo; o áudio só nasce após o primeiro gesto.
 
-use crate::Launch;
 use crate::audio::AudioOut;
 use crate::gpu::GpuState;
 use crate::platform::{self, Instant};
 use crate::ui::{self, MenuAction, Ui};
+use crate::{Launch, RomPicker};
 use rnfe_core::{Buttons, Nes, Storage};
 use rnfe_frontend::touch::Special;
 use rnfe_frontend::{FramePacer, InputState, NTSC_FPS, Rewind, SaveManager, TouchLayout, TouchState};
@@ -40,6 +40,7 @@ pub struct App {
     nes: Option<Box<Nes>>,
     rom_name: String,
     storage: Box<dyn Storage>,
+    picker: Option<RomPicker>,
     save: SaveManager,
     rewind: Rewind,
     audio: Option<AudioOut>,
@@ -69,7 +70,7 @@ pub struct App {
 
 impl App {
     pub fn new(launch: Launch, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let Launch { mut nes, rom_name, mut storage } = launch;
+        let Launch { mut nes, rom_name, mut storage, picker } = launch;
         let mut save = match &nes {
             Some(n) => SaveManager::new(n),
             None => SaveManager::none(),
@@ -88,6 +89,7 @@ impl App {
             nes,
             rom_name,
             storage,
+            picker,
             save,
             rewind: Rewind::new(Rewind::DEFAULT_CAP),
             audio: None,
@@ -187,7 +189,10 @@ impl App {
             return;
         }
         self.loading = true;
-        platform::pick_rom(self.proxy.clone());
+        match &self.picker {
+            Some(p) => p(self.proxy.clone()),
+            None => platform::pick_rom(self.proxy.clone()),
+        }
     }
 
     fn reset(&mut self) {
@@ -714,6 +719,19 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw();
             }
             _ => {}
+        }
+    }
+
+    /// Android: a superfície some; solta a GPU e a janela, que `resumed` recria.
+    fn suspended(&mut self, _el: &ActiveEventLoop) {
+        self.flush_save();
+        self.input.clear();
+        self.touch.clear();
+        self.rewinding = false;
+        self.gpu = None;
+        self.window = None;
+        if self.nes.is_some() {
+            self.paused = true;
         }
     }
 

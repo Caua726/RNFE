@@ -3,3 +3,9 @@
 /test-roms/
 *.sav
 *.rnfs
+# Android (build do gradle e .so do cargo-ndk)
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/src/main/jniLibs/
+/android/local.properties

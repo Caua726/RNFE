@@ -21,13 +21,16 @@ wgpu.workspace = true
 winit = { workspace = true, features = ["x11", "wayland"] }
 cpal.workspace = true
 bytemuck.workspace = true
-rfd.workspace = true
 fontdue.workspace = true
 web-time = "1"
 gilrs = { version = "0.11", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
+
+# Diálogo de arquivo: desktop e web. No Android a ROM chega pelo `Launch::picker` (SAF via JNI).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgl"] }
