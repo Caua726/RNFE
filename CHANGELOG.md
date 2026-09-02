@@ -4,6 +4,8 @@ Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
 ## Não publicado — F3 Mappers, saves e rewind
 
+- F3-04 FME-7: contador de IRQ de 16 bits por ciclo de CPU (comandos $D/$E/$F, ack em $D) e janela `$6000` ROM/RAM; testes sintéticos em `tests/mappers.rs`.
+- F3-03 MMC1: segunda escrita de um RMW ignorada (via `CartData::cpu_cycle`), SUROM/SOROM/SXROM (bit 4 do CHR escolhe 256 KB de PRG; bits 2-3 o banco de PRG RAM), bit 4 de `$E000` desliga a PRG RAM, mirroring do header até a 1ª escrita no control.
 - F3-02 PPU: detector de borda de A12 com filtro (todo endereço no barramento, inclusive `v` fora do render e as buscas descartadas dos slots de sprite); busca de sprites nos dots 257–320 como no hardware (slots vazios buscam `$FF`). MMC3: latch/reload flag (`$C001`), ack por nível (`$E000`), `$A001` (PRG RAM enable/protect), revisão A por submapper 4.4. mmc3_test_2 6/6, mmc3_irq_tests 6/6 (`docs/dev_docs/a12-mmc3.md`).
 - F3-01 Cartucho reescrito: header **NES 2.0** (mapper de 12 bits, submapper, tamanhos exponenciais, PRG/CHR RAM), bateria, four-screen (4 nametables na PPU), `RomHeader` público, `rom_hash()` FNV-1a, `prg_ram()`/`take_prg_ram_dirty()`; PRG/CHR preenchidos até potência de 2 (acesso por máscara, sem divisão nem bounds check); trait `Mapper` novo (`chr_offset`, `ppu_write`, `a12_rise`, `cpu_clock` sob demanda, `irq_pending` nível, `audio_output`) e `enum MapperKind` com despacho por `match` (sem `dyn`); os 14 mappers reescritos (DxROM com máscara correta de CHR, mapper 227 com banco fixo L, FME-7 com RAM/ROM em `$6000`).
 

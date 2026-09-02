@@ -6,11 +6,25 @@ pub struct Fme7 {
     command: u8,
     prg_banks: [u8; 4],
     chr_banks: [u8; 8],
+    /// Contador de 16 bits decrementado a cada ciclo de CPU (se `irq_count_enabled`);
+    /// ao passar de $0000 para $FFFF dispara o IRQ (se `irq_enabled`).
+    irq_counter: u16,
+    irq_count_enabled: bool,
+    irq_enabled: bool,
+    irq_pending: bool,
 }
 
 impl Fme7 {
     pub fn new() -> Self {
-        Fme7 { command: 0, prg_banks: [0; 4], chr_banks: [0; 8] }
+        Fme7 {
+            command: 0,
+            prg_banks: [0; 4],
+            chr_banks: [0; 8],
+            irq_counter: 0,
+            irq_count_enabled: false,
+            irq_enabled: false,
+            irq_pending: false,
+        }
     }
 }
 
@@ -72,12 +86,38 @@ impl Mapper for Fme7 {
                             _ => Mirror::OneScreenHi,
                         };
                     }
-                    _ => {} // IRQ: F3-04
+                    0xD => {
+                        self.irq_enabled = val & 0x01 != 0;
+                        self.irq_count_enabled = val & 0x80 != 0;
+                        self.irq_pending = false; // ack
+                    }
+                    0xE => self.irq_counter = (self.irq_counter & 0xFF00) | val as u16,
+                    _ => self.irq_counter = (self.irq_counter & 0x00FF) | ((val as u16) << 8),
                 }
                 true
             }
             _ => false,
         }
+    }
+
+    fn wants_cpu_clock(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    fn cpu_clock(&mut self) {
+        if self.irq_count_enabled {
+            let (v, wrapped) = self.irq_counter.overflowing_sub(1);
+            self.irq_counter = v;
+            if wrapped && self.irq_enabled {
+                self.irq_pending = true;
+            }
+        }
+    }
+
+    #[inline]
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 
     fn manages_prg_ram(&self) -> bool {
@@ -93,9 +133,22 @@ impl Mapper for Fme7 {
         self.command = 0;
         self.prg_banks = [0; 4];
         self.chr_banks = [0; 8];
+        self.irq_counter = 0;
+        self.irq_count_enabled = false;
+        self.irq_enabled = false;
+        self.irq_pending = false;
     }
 
     fn state_string(&self) -> String {
-        format!("  FME-7 cmd: {}  PRG: {:?}  CHR: {:?}\n", self.command, self.prg_banks, self.chr_banks)
+        format!(
+            "  FME-7 cmd: {}  PRG: {:?}  CHR: {:?}  IRQ: counter=${:04X} count={} irq={} pending={}\n",
+            self.command,
+            self.prg_banks,
+            self.chr_banks,
+            self.irq_counter,
+            self.irq_count_enabled,
+            self.irq_enabled,
+            self.irq_pending
+        )
     }
 }
