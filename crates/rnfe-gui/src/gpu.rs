@@ -16,7 +16,7 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 };
 
-@group(0) @binding(2) var<uniform> scale: vec2<f32>;
+@group(0) @binding(2) var<uniform> xform: vec4<f32>; // escala xy, deslocamento zw
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
@@ -29,7 +29,7 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
         vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0),
     );
     var out: VertexOutput;
-    out.pos = vec4(positions[idx] * scale, 0.0, 1.0);
+    out.pos = vec4(positions[idx] * xform.xy + xform.zw, 0.0, 1.0);
     out.uv = uvs[idx];
     return out;
 }
@@ -196,7 +196,7 @@ impl GpuState {
             &sampler,
             config.width,
             config.height,
-            [1.0, 1.0],
+            [1.0, 1.0, 0.0, 0.0],
             "overlay",
         );
         let viewport = Self::calc_viewport(config.width, config.height);
@@ -221,7 +221,7 @@ impl GpuState {
         sampler: &wgpu::Sampler,
         width: u32,
         height: u32,
-        scale: [f32; 2],
+        scale: [f32; 4],
         label: &str,
     ) -> Layer {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -252,18 +252,25 @@ impl GpuState {
         Layer { texture, bind_group, scale_buffer, width, height }
     }
 
-    fn calc_scale(win_w: u32, win_h: u32) -> [f32; 2] {
+    /// Escala xy e deslocamento zw (clip space) do quad do NES. Em retrato a imagem gruda no
+    /// topo (os controles de toque ocupam o resto); em paisagem, centralizada.
+    fn calc_scale(win_w: u32, win_h: u32) -> [f32; 4] {
         let win_aspect = win_w as f32 / win_h.max(1) as f32;
-        if win_aspect > NES_ASPECT { [NES_ASPECT / win_aspect, 1.0] } else { [1.0, win_aspect / NES_ASPECT] }
+        if win_aspect > NES_ASPECT {
+            [NES_ASPECT / win_aspect, 1.0, 0.0, 0.0]
+        } else {
+            let sy = win_aspect / NES_ASPECT;
+            [1.0, sy, 0.0, 1.0 - sy]
+        }
     }
 
-    /// Retângulo da imagem do NES na janela. Em retrato a imagem fica no topo (os controles de
-    /// toque ocupam o resto); em paisagem, centralizada.
+    /// Retângulo da imagem do NES na janela (px).
     fn calc_viewport(win_w: u32, win_h: u32) -> (f32, f32, f32, f32) {
-        let [sx, sy] = Self::calc_scale(win_w, win_h);
+        let [sx, sy, _, oy] = Self::calc_scale(win_w, win_h);
         let w = win_w as f32 * sx;
         let h = win_h as f32 * sy;
-        ((win_w as f32 - w) * 0.5, (win_h as f32 - h) * 0.5, w, h)
+        let y = (1.0 - oy - sy) * 0.5 * win_h as f32;
+        ((win_w as f32 - w) * 0.5, y, w, h)
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -285,7 +292,7 @@ impl GpuState {
             &self.sampler,
             width,
             height,
-            [1.0, 1.0],
+            [1.0, 1.0, 0.0, 0.0],
             "overlay",
         );
         self.viewport = Self::calc_viewport(width, height);

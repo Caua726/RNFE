@@ -1,0 +1,24 @@
+[package]
+name = "rnfe-android"
+description = "RNFE no Android: biblioteca nativa (NativeActivity) carregada pelo app em android/."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "rnfe_android"
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+rnfe-gui.workspace = true
+rnfe-frontend.workspace = true
+log.workspace = true
+winit = { workspace = true, features = ["android-native-activity"] }
+jni = "0.21"
+android_logger = "0.14"
+
+[lints]
+workspace = true

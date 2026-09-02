@@ -6,6 +6,7 @@ use crate::app::UserEvent;
 use winit::event_loop::EventLoopProxy;
 
 /// Abre o seletor de arquivo e entrega a ROM pelo laço de eventos (não bloqueia).
+#[cfg(not(target_os = "android"))]
 pub fn pick_rom(proxy: EventLoopProxy<UserEvent>) {
     spawn_with(move || async move {
         let dialog = rfd::AsyncFileDialog::new().add_filter("NES ROM", &["nes"]).set_title("Abrir ROM");
@@ -19,6 +20,12 @@ pub fn pick_rom(proxy: EventLoopProxy<UserEvent>) {
         };
         let _ = proxy.send_event(ev);
     });
+}
+
+/// Android sem `Launch::picker`: não há diálogo nativo.
+#[cfg(target_os = "android")]
+pub fn pick_rom(proxy: EventLoopProxy<UserEvent>) {
+    let _ = proxy.send_event(UserEvent::RomLoadFailed("sem seletor de arquivos nesta plataforma".into()));
 }
 
 /// Constrói e roda um futuro até o fim: numa thread (desktop — só a closure precisa ser
