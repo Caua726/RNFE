@@ -133,22 +133,17 @@ impl Cartridge {
         self.mapper.cpu_write(addr, data, &mut self.data)
     }
 
-    pub fn ppu_read(&mut self, addr: u16) -> Option<u8> {
-        self.mapper.ppu_read(addr, &self.data)
+    /// Leitura de CHR (`$0000-$1FFF` da PPU) pelo mapper.
+    #[inline]
+    pub fn chr_read(&mut self, addr: u16) -> u8 {
+        self.mapper.ppu_read(addr, &self.data).unwrap_or(0)
     }
 
-    pub fn ppu_write(&mut self, addr: u16, data: u8) -> bool {
-        if addr <= 0x1FFF && self.data.chr_banks == 0 {
-            self.data.chr[addr as usize] = data;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn ppu_write_chr(&mut self, addr: u16, data: u8) {
-        if addr <= 0x1FFF && self.data.chr_banks == 0 {
-            let idx = addr as usize;
+    /// Escrita em CHR RAM (ignorada em CHR ROM).
+    #[inline]
+    pub fn chr_write(&mut self, addr: u16, data: u8) {
+        if self.data.chr_banks == 0 {
+            let idx = (addr & 0x1FFF) as usize;
             if idx < self.data.chr.len() {
                 self.data.chr[idx] = data;
             }
@@ -167,8 +162,10 @@ impl Cartridge {
         self.mapper.clock_scanline();
     }
 
-    pub fn mapper_irq(&mut self) -> bool {
-        self.mapper.mapper_irq()
+    /// Nível da linha IRQ do mapper.
+    #[inline]
+    pub fn irq_pending(&self) -> bool {
+        self.mapper.irq_pending()
     }
 
     pub fn reset(&mut self) {

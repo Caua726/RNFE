@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-10 (README/CHANGELOG) — marco M0 fechado, merge em main
+Tarefa: F1 inteira — marco M1 fechado, merge em main
 Estado: concluída
-Próximo: F1-01 — tabela de opcodes não-oficiais (branch fase-1-cpu)
+Próximo: F2-01 — frame counter da APU em ciclos de CPU + IRQ (branch fase-2-apu-ppu)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -27,6 +27,11 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - `status` (120 ROMs, 6 threads): 38 s · `cargo build -p rnfe-core` debug: 9,5 s · release: pico de RAM do rustc 276 MB (`scripts/peak-rss.sh`)
 - ROMs: 30 Pass / 90 KnownFail · nestest 5004/8991 · 10 snapshots
 - `rnfe-tty --headless` BladeBuster: 260 fps; interativo em pty 40×120: 60 fps estáveis, ~2 KB/frame desenhado
+
+M1, 02/09/2026 (mesma máquina/perfil):
+- `bench --rom other/BladeBuster.nes --frames 600`: **405 fps · 2,47 ms/frame · VmHWM 4,6 MB** (F1-04 janela de pixels −17 %, F1-05 bus por acesso −30 %)
+- `bench --rom other/nestest.nes --frames 600`: 470 fps · 2,13 ms/frame
+- nestest 8991/8991 · `grep unsafe crates/rnfe-core` vazio
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -46,13 +51,14 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - [x] F0-10 README real + CHANGELOG
 
 ## F1 — CPU exata (`fase-1-cpu`) · marco M1: nestest 8991/8991 · instr_test-v5 16/16 · instr_timing 2/2 · instr_misc 4/4 · cpu_dummy_* · cpu_interrupts 5/5
-- [ ] F1-01 tabela: 22 NOPs com modo certo, `EB`=SBC IMM, `97/B7`=4 ciclos → VERIFIED_LINES 8991
-- [ ] F1-02 ilegais: ANC ALR ARR XAA LAX# AXS LAS SHA TAS SHY SHX + JAM
-- [ ] F1-03 wrapping_add; BRK (B só no byte empilhado, I após push); reset I=1/SP-=3; NMI 7 ciclos
-- [ ] F1-04 PPU: mux/paleta/sprite-0/shift só na janela visível (61 440 dots)
-- [ ] F1-05 [S] bus ciclo a ciclo: `Bus::tick()` por acesso; RAM antes do cartucho; OAM DMA inline; remover `cart_ptr`; `#![forbid(unsafe_code)]`; mirroring por acesso
-- [ ] F1-06 dummy reads/writes (`Access` na Instruction; RMW read/write/write)
-- [ ] F1-07 [S] interrupções: `IrqLine` nivelada, `nmi_line` por borda, polling no penúltimo ciclo, hijack, quirk do branch; debugger gated
+- [x] F1-01 tabela: 22 NOPs com modo certo, `EB`=SBC IMM, `97/B7`=4 ciclos → VERIFIED_LINES 8991
+- [x] F1-02 ilegais: ANC ALR ARR XAA LAX# AXS LAS SHA TAS SHY SHX + JAM
+- [x] F1-03 wrapping_add; BRK (B só no byte empilhado, I após push); reset I=1/SP-=3; NMI 7 ciclos
+- [x] F1-04 PPU: mux/paleta/sprite-0/shift só na janela visível (61 440 dots)
+- [x] F1-05 [S] bus ciclo a ciclo: `tick_pre/tick_post` por acesso; RAM antes do cartucho; OAM DMA inline; `cart_ptr` removido; `#![forbid(unsafe_code)]`; mirroring por acesso
+- [x] F1-06 dummy reads/writes — feito dentro de F1-05 (modos `AbsXW/AbsYW/IndYW`, RMW read/write/write, dummy de ZPX/IZX/pilha)
+- [x] F1-07 [S] interrupções — feito dentro de F1-05 (`Bus::nmi_line/irq_line`, borda de NMI, polling no penúltimo ciclo, hijack, quirk do branch; debugger gated por `enabled`)
+- Pendências de M1 que dependem de F2: `instr_misc/04` e `cpu_dummy_writes_ppumem` (open bus, F2-02/F2-05); `cpu_interrupts 1–5` (a fonte de IRQ do teste é o frame counter da APU, F2-01)
 
 ## F2 — APU e PPU exatos (`fase-2-apu-ppu`) · marco M2
 - [ ] F2-01 APU frame counter em ciclos de CPU + IRQ flag/inhibit + `$4015` R + delay `$4017`

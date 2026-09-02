@@ -668,13 +668,7 @@ impl App {
             }
             self.last_frame = Instant::now();
 
-            loop {
-                nes.clock();
-                if nes.bus.ppu.frame_complete {
-                    nes.bus.ppu.frame_complete = false;
-                    break;
-                }
-            }
+            nes.run_frame();
 
             // Enviar samples de audio
             if !nes.bus.apu.sample_buffer.is_empty() {
@@ -1036,6 +1030,7 @@ impl ApplicationHandler for App {
                             }
                             PhysicalKey::Code(KeyCode::F5) => {
                                 nes.debugger.trace_enabled = !nes.debugger.trace_enabled;
+                                nes.debugger.enabled = nes.debugger.trace_enabled;
                                 println!(
                                     "CPU Trace: {}",
                                     if nes.debugger.trace_enabled { "ON" } else { "OFF" }

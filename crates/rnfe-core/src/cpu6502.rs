@@ -1,38 +1,232 @@
-// Flags Cpu6502
-pub enum FLAGS6502 {
-    C = 1 << 0, // Transportar Bit
-    Z = 1 << 1, // Zerar
-    I = 1 << 2, // Disabilitar Interrupção
-    D = 1 << 3, // Modo Decimal
-    B = 1 << 4, // Break
-    U = 1 << 5, // Não usado
-    V = 1 << 6, // Overflow
-    N = 1 << 7, // Negativo
+//! MOS 6502 do Ricoh 2A03 (sem modo decimal), emulado **por acesso ao barramento**.
+//!
+//! Cada leitura ou escrita da CPU custa exatamente um ciclo: `Bus::tick` avança PPU (3 dots) e
+//! APU em volta do acesso, então tudo fica em lock-step sem contador de ciclos por instrução.
+//! As leituras "inúteis" do hardware (dummy reads) são feitas nos mesmos endereços que o chip
+//! real usa, porque registradores como `$2002`/`$2007`/`$4015` têm efeito colateral ao serem lidos.
+//!
+//! Interrupções seguem o modelo do nesdev: a linha NMI passa por um detector de borda e a IRQ é
+//! amostrada por nível ao fim de cada ciclo; a decisão de atender usa o estado do **penúltimo**
+//! ciclo da instrução. NMI pode "sequestrar" um BRK/IRQ já em andamento.
+
+use crate::bus::Bus;
+
+// Bits de P
+pub const C: u8 = 1 << 0;
+pub const Z: u8 = 1 << 1;
+pub const I: u8 = 1 << 2;
+pub const D: u8 = 1 << 3;
+pub const B: u8 = 1 << 4;
+pub const U: u8 = 1 << 5;
+pub const V: u8 = 1 << 6;
+pub const N: u8 = 1 << 7;
+
+const NMI_VECTOR: u16 = 0xFFFA;
+const RESET_VECTOR: u16 = 0xFFFC;
+const IRQ_VECTOR: u16 = 0xFFFE;
+
+/// Modo de endereçamento. Os sufixos `W` marcam instruções de escrita/RMW nos modos indexados:
+/// nelas a leitura no endereço "não corrigido" acontece sempre, não só ao cruzar página.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    Imp,
+    Acc,
+    Imm,
+    Zp,
+    ZpX,
+    ZpY,
+    Abs,
+    AbsX,
+    AbsXW,
+    AbsY,
+    AbsYW,
+    Ind,
+    IndX,
+    IndY,
+    IndYW,
+    Rel,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[rustfmt::skip]
+pub enum Op {
+    // oficiais
+    Adc, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx,
+    Cpy, Dec, Dex, Dey, Eor, Inc, Inx, Iny, Jmp, Jsr, Lda, Ldx, Ldy, Lsr, Nop, Ora, Pha, Php, Pla,
+    Plp, Rol, Ror, Rti, Rts, Sbc, Sec, Sed, Sei, Sta, Stx, Sty, Tax, Tay, Tsx, Txa, Txs, Tya,
+    // não-oficiais
+    Lax, Sax, Dcp, Isb, Slo, Rla, Sre, Rra, Anc, Alr, Arr, Xaa, Axs, Las, Sha, Shx, Shy, Tas, Jam,
+}
+
+impl Op {
+    pub fn name(self) -> &'static str {
+        use Op::*;
+        match self {
+            Adc => "ADC",
+            And => "AND",
+            Asl => "ASL",
+            Bcc => "BCC",
+            Bcs => "BCS",
+            Beq => "BEQ",
+            Bit => "BIT",
+            Bmi => "BMI",
+            Bne => "BNE",
+            Bpl => "BPL",
+            Brk => "BRK",
+            Bvc => "BVC",
+            Bvs => "BVS",
+            Clc => "CLC",
+            Cld => "CLD",
+            Cli => "CLI",
+            Clv => "CLV",
+            Cmp => "CMP",
+            Cpx => "CPX",
+            Cpy => "CPY",
+            Dec => "DEC",
+            Dex => "DEX",
+            Dey => "DEY",
+            Eor => "EOR",
+            Inc => "INC",
+            Inx => "INX",
+            Iny => "INY",
+            Jmp => "JMP",
+            Jsr => "JSR",
+            Lda => "LDA",
+            Ldx => "LDX",
+            Ldy => "LDY",
+            Lsr => "LSR",
+            Nop => "NOP",
+            Ora => "ORA",
+            Pha => "PHA",
+            Php => "PHP",
+            Pla => "PLA",
+            Plp => "PLP",
+            Rol => "ROL",
+            Ror => "ROR",
+            Rti => "RTI",
+            Rts => "RTS",
+            Sbc => "SBC",
+            Sec => "SEC",
+            Sed => "SED",
+            Sei => "SEI",
+            Sta => "STA",
+            Stx => "STX",
+            Sty => "STY",
+            Tax => "TAX",
+            Tay => "TAY",
+            Tsx => "TSX",
+            Txa => "TXA",
+            Txs => "TXS",
+            Tya => "TYA",
+            Lax => "LAX",
+            Sax => "SAX",
+            Dcp => "DCP",
+            Isb => "ISB",
+            Slo => "SLO",
+            Rla => "RLA",
+            Sre => "SRE",
+            Rra => "RRA",
+            Anc => "ANC",
+            Alr => "ALR",
+            Arr => "ARR",
+            Xaa => "XAA",
+            Axs => "AXS",
+            Las => "LAS",
+            Sha => "SHA",
+            Shx => "SHX",
+            Shy => "SHY",
+            Tas => "TAS",
+            Jam => "JAM",
+        }
+    }
+
+    /// Opcode documentado pela MOS (os demais são "ilegais").
+    pub fn is_official(self) -> bool {
+        (self as u8) <= (Op::Tya as u8)
+    }
+}
+
+/// Tabela de decodificação: (operação, modo) por opcode.
+#[rustfmt::skip]
+pub static LOOKUP: [(Op, Mode); 256] = {
+    use Mode::*;
+    use Op::*;
+    [
+    // 0x00
+    (Brk,Imm),(Ora,IndX),(Jam,Imp),(Slo,IndX),(Nop,Zp),(Ora,Zp),(Asl,Zp),(Slo,Zp),
+    (Php,Imp),(Ora,Imm),(Asl,Acc),(Anc,Imm),(Nop,Abs),(Ora,Abs),(Asl,Abs),(Slo,Abs),
+    // 0x10
+    (Bpl,Rel),(Ora,IndY),(Jam,Imp),(Slo,IndYW),(Nop,ZpX),(Ora,ZpX),(Asl,ZpX),(Slo,ZpX),
+    (Clc,Imp),(Ora,AbsY),(Nop,Imp),(Slo,AbsYW),(Nop,AbsX),(Ora,AbsX),(Asl,AbsXW),(Slo,AbsXW),
+    // 0x20
+    (Jsr,Abs),(And,IndX),(Jam,Imp),(Rla,IndX),(Bit,Zp),(And,Zp),(Rol,Zp),(Rla,Zp),
+    (Plp,Imp),(And,Imm),(Rol,Acc),(Anc,Imm),(Bit,Abs),(And,Abs),(Rol,Abs),(Rla,Abs),
+    // 0x30
+    (Bmi,Rel),(And,IndY),(Jam,Imp),(Rla,IndYW),(Nop,ZpX),(And,ZpX),(Rol,ZpX),(Rla,ZpX),
+    (Sec,Imp),(And,AbsY),(Nop,Imp),(Rla,AbsYW),(Nop,AbsX),(And,AbsX),(Rol,AbsXW),(Rla,AbsXW),
+    // 0x40
+    (Rti,Imp),(Eor,IndX),(Jam,Imp),(Sre,IndX),(Nop,Zp),(Eor,Zp),(Lsr,Zp),(Sre,Zp),
+    (Pha,Imp),(Eor,Imm),(Lsr,Acc),(Alr,Imm),(Jmp,Abs),(Eor,Abs),(Lsr,Abs),(Sre,Abs),
+    // 0x50
+    (Bvc,Rel),(Eor,IndY),(Jam,Imp),(Sre,IndYW),(Nop,ZpX),(Eor,ZpX),(Lsr,ZpX),(Sre,ZpX),
+    (Cli,Imp),(Eor,AbsY),(Nop,Imp),(Sre,AbsYW),(Nop,AbsX),(Eor,AbsX),(Lsr,AbsXW),(Sre,AbsXW),
+    // 0x60
+    (Rts,Imp),(Adc,IndX),(Jam,Imp),(Rra,IndX),(Nop,Zp),(Adc,Zp),(Ror,Zp),(Rra,Zp),
+    (Pla,Imp),(Adc,Imm),(Ror,Acc),(Arr,Imm),(Jmp,Ind),(Adc,Abs),(Ror,Abs),(Rra,Abs),
+    // 0x70
+    (Bvs,Rel),(Adc,IndY),(Jam,Imp),(Rra,IndYW),(Nop,ZpX),(Adc,ZpX),(Ror,ZpX),(Rra,ZpX),
+    (Sei,Imp),(Adc,AbsY),(Nop,Imp),(Rra,AbsYW),(Nop,AbsX),(Adc,AbsX),(Ror,AbsXW),(Rra,AbsXW),
+    // 0x80
+    (Nop,Imm),(Sta,IndX),(Nop,Imm),(Sax,IndX),(Sty,Zp),(Sta,Zp),(Stx,Zp),(Sax,Zp),
+    (Dey,Imp),(Nop,Imm),(Txa,Imp),(Xaa,Imm),(Sty,Abs),(Sta,Abs),(Stx,Abs),(Sax,Abs),
+    // 0x90
+    (Bcc,Rel),(Sta,IndYW),(Jam,Imp),(Sha,IndYW),(Sty,ZpX),(Sta,ZpX),(Stx,ZpY),(Sax,ZpY),
+    (Tya,Imp),(Sta,AbsYW),(Txs,Imp),(Tas,AbsYW),(Shy,AbsXW),(Sta,AbsXW),(Shx,AbsYW),(Sha,AbsYW),
+    // 0xA0
+    (Ldy,Imm),(Lda,IndX),(Ldx,Imm),(Lax,IndX),(Ldy,Zp),(Lda,Zp),(Ldx,Zp),(Lax,Zp),
+    (Tay,Imp),(Lda,Imm),(Tax,Imp),(Lax,Imm),(Ldy,Abs),(Lda,Abs),(Ldx,Abs),(Lax,Abs),
+    // 0xB0
+    (Bcs,Rel),(Lda,IndY),(Jam,Imp),(Lax,IndY),(Ldy,ZpX),(Lda,ZpX),(Ldx,ZpY),(Lax,ZpY),
+    (Clv,Imp),(Lda,AbsY),(Tsx,Imp),(Las,AbsY),(Ldy,AbsX),(Lda,AbsX),(Ldx,AbsY),(Lax,AbsY),
+    // 0xC0
+    (Cpy,Imm),(Cmp,IndX),(Nop,Imm),(Dcp,IndX),(Cpy,Zp),(Cmp,Zp),(Dec,Zp),(Dcp,Zp),
+    (Iny,Imp),(Cmp,Imm),(Dex,Imp),(Axs,Imm),(Cpy,Abs),(Cmp,Abs),(Dec,Abs),(Dcp,Abs),
+    // 0xD0
+    (Bne,Rel),(Cmp,IndY),(Jam,Imp),(Dcp,IndYW),(Nop,ZpX),(Cmp,ZpX),(Dec,ZpX),(Dcp,ZpX),
+    (Cld,Imp),(Cmp,AbsY),(Nop,Imp),(Dcp,AbsYW),(Nop,AbsX),(Cmp,AbsX),(Dec,AbsXW),(Dcp,AbsXW),
+    // 0xE0
+    (Cpx,Imm),(Sbc,IndX),(Nop,Imm),(Isb,IndX),(Cpx,Zp),(Sbc,Zp),(Inc,Zp),(Isb,Zp),
+    (Inx,Imp),(Sbc,Imm),(Nop,Imp),(Sbc,Imm),(Cpx,Abs),(Sbc,Abs),(Inc,Abs),(Isb,Abs),
+    // 0xF0
+    (Beq,Rel),(Sbc,IndY),(Jam,Imp),(Isb,IndYW),(Nop,ZpX),(Sbc,ZpX),(Inc,ZpX),(Isb,ZpX),
+    (Sed,Imp),(Sbc,AbsY),(Nop,Imp),(Isb,AbsYW),(Nop,AbsX),(Sbc,AbsX),(Inc,AbsXW),(Isb,AbsXW),
+    ]
+};
+
+#[derive(Debug, Clone)]
 pub struct Cpu6502 {
-    pub a: u8,      // Acccumulator Register
-    pub x: u8,      // X Register
-    pub y: u8,      // Y Register
-    pub stkp: u8,   // Stack Pointer (mostra os pontos do bus)
-    pub pc: u16,    // Program Counter
-    pub status: u8, // Status Register
-    fetched: u8,    // Nao sei, depois vejo
-    temp: u16,      // Variavel temporaria
-    addr_abs: u16,  // Endereco Absoluto
-    addr_rel: u16,  // Endereço Relativo
-    opcode: u8,     // Variavel Opcode
-    cycles: u8,     // Ciclo de clock
-    lookup: Vec<Instruction>,
-}
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub stkp: u8,
+    pub pc: u16,
+    pub status: u8,
+    /// Opcode JAM executado: a CPU para até o reset.
+    pub jammed: bool,
+    /// Último opcode buscado (diagnóstico).
+    pub opcode: u8,
 
-pub struct Instruction {
-    pub name: &'static str, // Nome da instrução
-    pub operate: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
-    pub addrmode: fn(&mut Cpu6502, &mut crate::bus::Bus) -> u8,
-    pub cycles: u8, // Ciclos necessários para a instrução
+    // Endereçamento indexado: byte alto ANTES da indexação e se cruzou página (SHA/SHX/SHY/TAS).
+    base_hi: u8,
+    crossed: bool,
+
+    // Polling de interrupções (ver doc do módulo)
+    nmi_level: bool,
+    nmi_pending: bool,
+    nmi_pending_prev: bool,
+    irq_run: bool,
+    irq_run_prev: bool,
 }
-//Vector<Instruction> lookup
 
 impl Default for Cpu6502 {
     fn default() -> Self {
@@ -41,1295 +235,664 @@ impl Default for Cpu6502 {
 }
 
 impl Cpu6502 {
+    /// Estado de power-on. O `reset` (7 ciclos) leva SP a `$FD` e I=1.
     pub fn new() -> Self {
         Cpu6502 {
-            a: 0x00,                       // Accumulator
-            x: 0x00,                       // X Register
-            y: 0x00,                       // Y Register
-            stkp: 0x00,                    // Stack Pointer
-            pc: 0x0000,                    // Program Counter
-            status: 0x00,                  // Status Register
-            fetched: 0x00,                 // Nao sei depois eu vejo
-            temp: 0x0000,                  // Variavel temporaria
-            addr_abs: 0x0000,              // Todo o endereço de memoria acaba aqui
-            addr_rel: 0x0000,              // O endereço absoluto da atual instrução
-            opcode: 0x00,                  // Byte de instrução
-            cycles: 0,                     // Contagem do numero de ciclo de clocks
-            lookup: Cpu6502::instrucoes(), // Lookup table para uinstrucoes da cpu
+            a: 0,
+            x: 0,
+            y: 0,
+            stkp: 0x00,
+            pc: 0,
+            status: I | U,
+            jammed: false,
+            opcode: 0,
+            base_hi: 0,
+            crossed: false,
+            nmi_level: false,
+            nmi_pending: false,
+            nmi_pending_prev: false,
+            irq_run: false,
+            irq_run_prev: false,
         }
     }
 
-    pub fn getFlag(&self, flag: FLAGS6502) -> u8 {
-        if self.status & flag as u8 != 0 { 1 } else { 0 }
+    // ------------------------------------------------------------------ flags
+
+    #[inline]
+    pub fn flag(&self, f: u8) -> bool {
+        self.status & f != 0
     }
-    pub fn setFlag(&mut self, flag: FLAGS6502, value: bool) {
-        if value {
-            self.status |= flag as u8;
+
+    #[inline]
+    pub fn set_flag(&mut self, f: u8, on: bool) {
+        if on {
+            self.status |= f;
         } else {
-            self.status &= !(flag as u8);
+            self.status &= !f;
         }
     }
-    pub fn read(&self, bus: &mut crate::bus::Bus, addr: u16) -> u8 {
-        bus.cpu_read(addr, false)
+
+    #[inline]
+    fn set_zn(&mut self, v: u8) {
+        self.status = (self.status & !(Z | N)) | (v & N) | if v == 0 { Z } else { 0 };
     }
 
-    pub fn write(&mut self, bus: &mut crate::bus::Bus, addr: u16, data: u8) {
-        bus.cpu_write(addr, data);
-    }
-    //==========================
-    //# Modos de enderecamento #
-    //==========================
+    // ------------------------------------------------------------- ciclos/bus
 
-    // IMP: Implied
-    // Nao tem muita coisa pra falar dele
-    // Ele Faz uma coisa muito simples, como, mudar o estado
-    // De Bits, de qualquer jeito, o objetivo dele é
-    // O Acumulador, para instrucoes como PHA
-    pub fn IMP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        0
-    }
-
-    // IMM: Imediato
-    // A instrução espera até o proximo bit para ser usado
-    // Como valor, o endereco de leitura deve apontar ao
-    // Proximo valor
-    pub fn IMM(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.addr_abs = self.pc;
-        self.pc = self.pc.wrapping_add(1);
-        0
-    }
-
-    // ZP0: Zero Paging Adress / Modo de paginamento zero
-    // Isso é usado para economizar recursos, permitindo
-    // Que você salve o local nos primeiros 0xFF bytes
-    // De um endereço de memoria, e por isso, isto só
-    // Requer um byte de memoria ao invez de 2
-    pub fn ZP0(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.addr_abs = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        self.addr_abs &= 0x00FF;
-        0
-    }
-    // ZPX: Zero Paging X
-    // O valor do X é adicionado ao valor lido
-    // No endereço de memoria, e o resultado é
-    // O endereço de memoria que o valor lido Apontava
-    // Isso é util para interagir com areas da memória
-    // Como um array em C
-    pub fn ZPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let base = self.read(bus, self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        self.addr_abs = base.wrapping_add(self.x) as u16;
-        0
-    }
-    // ZPY: Zero Paging Y
-    // O Mesmo do ZPX mas com Y
-    pub fn ZPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let base = self.read(bus, self.pc);
-        self.pc = self.pc.wrapping_add(1);
-        self.addr_abs = base.wrapping_add(self.y) as u16;
-        0
-    }
-    // ABS: Absolute
-    // O endereço absoluto é formado
-    // Por dois bytes, o primeiro
-    // Serve para o banco de memoória
-    // O segundo para o endereço na
-    // Memória para formar um en1dreço de 16 bits
-    pub fn ABS(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-
-        self.addr_abs = (hi << 8) | lo;
-
-        0
-    }
-    // ABX: Absolute X
-    // Endereço absoluto com valor X
-    // Isto calcula o mesmo que o
-    // ABS, mas adiciona o endereço X
-    pub fn ABX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-
-        self.addr_abs = (hi << 8) | lo;
-        self.addr_abs = self.addr_abs.wrapping_add(self.x as u16);
-
-        if (self.addr_abs & 0xFF00) != (hi << 8) { 1 } else { 0 }
-    }
-    // ABY: Absolute Y
-    // O mesmo que o ABX, mas
-    // Adiciona o valor Y ao endereço
-    pub fn ABY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        let hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-
-        self.addr_abs = (hi << 8) | lo;
-        self.addr_abs = self.addr_abs.wrapping_add(self.y as u16);
-
-        if (self.addr_abs & 0xFF00) != (hi << 8) { 1 } else { 0 }
-    }
-    // IND: Indirect Adressing
-    // Normalmente é reconhecido como um
-    // Bug, mas para funcionar correctamente
-    // É preciso ser emulador também, o que ele
-    // Faz, é, apontar para o endereço 0xFF e ler
-    // O byte mais alto, ele precisa atravesar
-    // A page boudnary
-    pub fn IND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let ptr_lo: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        let ptr_hi: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-
-        let ptr: u16 = (ptr_hi << 8) | ptr_lo;
-
-        if ptr_lo == 0x00FF {
-            self.addr_abs = ((self.read(bus, ptr & 0xFF00) as u16) << 8) | self.read(bus, ptr) as u16;
-        } else {
-            self.addr_abs = ((self.read(bus, ptr + 1) as u16) << 8) | self.read(bus, ptr) as u16;
+    /// Amostra as linhas de interrupção ao fim de um ciclo.
+    #[inline]
+    fn poll_interrupts(&mut self, bus: &Bus) {
+        self.nmi_pending_prev = self.nmi_pending;
+        let nmi = bus.nmi_line();
+        if nmi && !self.nmi_level {
+            self.nmi_pending = true;
         }
-        0
+        self.nmi_level = nmi;
+        self.irq_run_prev = self.irq_run;
+        self.irq_run = bus.irq_line() && !self.flag(I);
     }
-    // IZX: Indirect Adressing Zero Page X
-    // Ele referencia um endereço na memória pagina
-    // Zero a partir do offset X para ler o endereço
-    // De 16 bits que precisamos para a instrução
-    pub fn IZX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let t: u16 = self.read(bus, self.pc) as u16;
+
+    /// Um ciclo de leitura. Se há OAM DMA pendente, a CPU é parada aqui (o DMA só começa num
+    /// ciclo de leitura) e o acesso pedido acontece depois.
+    #[inline]
+    fn read(&mut self, bus: &mut Bus, addr: u16) -> u8 {
+        if let Some(page) = bus.take_oam_dma() {
+            self.oam_dma(bus, page, addr);
+        }
+        bus.tick_pre();
+        let v = bus.read_raw(addr);
+        bus.tick_post();
+        self.poll_interrupts(bus);
+        v
+    }
+
+    /// Um ciclo de escrita.
+    #[inline]
+    fn write(&mut self, bus: &mut Bus, addr: u16, v: u8) {
+        bus.tick_pre();
+        bus.write_raw(addr, v);
+        bus.tick_post();
+        self.poll_interrupts(bus);
+    }
+
+    /// Ciclo de leitura dentro do DMA (nunca reentra no DMA).
+    #[inline]
+    fn dma_read(&mut self, bus: &mut Bus, addr: u16) -> u8 {
+        bus.tick_pre();
+        let v = bus.read_raw(addr);
+        bus.tick_post();
+        self.poll_interrupts(bus);
+        v
+    }
+
+    /// OAM DMA (`$4014`): 1 ciclo de parada (+1 de alinhamento se o ciclo é ímpar) e 256 pares
+    /// leitura/escrita em `$2004` — 513 ou 514 ciclos. `addr` é o endereço que a CPU ia ler.
+    fn oam_dma(&mut self, bus: &mut Bus, page: u8, addr: u16) {
+        self.dma_read(bus, addr);
+        if bus.cpu_cycles & 1 == 1 {
+            self.dma_read(bus, addr);
+        }
+        let base = (page as u16) << 8;
+        for i in 0..256u16 {
+            let v = self.dma_read(bus, base | i);
+            self.write(bus, 0x2004, v);
+        }
+    }
+
+    #[inline]
+    fn fetch_byte(&mut self, bus: &mut Bus) -> u8 {
+        let v = self.read(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
-        let lo: u16 = self.read(bus, (t + (self.x as u16)) & 0x00FF) as u16;
-        let hi: u16 = self.read(bus, (t + (self.x as u16) + 1) & 0x00FF) as u16;
-
-        self.addr_abs = hi << 8 | lo;
-
-        0
-    }
-    // IZY: Indirect Adressing Zero Page Y
-    // Diferentemente dos outros, onde X == Y, nesse
-    // O X !== Y, neste caso ele lê um ponteiro de 16 bits
-    // Da pagina zero e usa o offset Y para formar um
-    // Endereço final.
-    pub fn IZY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let t: u16 = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        let lo: u16 = self.read(bus, t & 0x00FF) as u16;
-        let hi: u16 = self.read(bus, (t + 1) & 0x00FF) as u16;
-
-        let base = (hi << 8) | lo;
-        self.addr_abs = base.wrapping_add(self.y as u16);
-
-        if (self.addr_abs & 0xFF00) != (base & 0xFF00) { 1 } else { 0 }
-    }
-    // REL: Relative.
-    // Modo de Endereçamento Relativo, usado para
-    // Instruções de branch, ele lê um byte
-    // De memoria e o interpreta como deslocamento
-    // Assinado de 8 bits
-    // As intrucoes de branch não conseguem acessar qualquer
-    // Localização da no adress range, eles so conseguem
-    // Acessar um endereço relativo ao endereço atual
-    // Num range de 127 localizações, pois é um endereço
-    // Relativo, diferente dos demais
-    pub fn REL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.addr_rel = self.read(bus, self.pc) as u16;
-        self.pc = self.pc.wrapping_add(1);
-        if (self.addr_rel & 0x80) != 0 {
-            self.addr_rel |= 0xFF00;
-        }
-        0
+        v
     }
 
-    pub fn ACC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        0
-    }
-    //==========================//
-    //#      Instruções        #//
-    //==========================//
-
-    // Fetch
-    pub fn fetch(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let idx = self.opcode as usize;
-        let am = self.lookup[idx].addrmode as usize;
-
-        if am == Cpu6502::ACC as *const () as usize {
-            self.fetched = self.a;
-        } else if am != Cpu6502::IMP as *const () as usize {
-            self.fetched = self.read(bus, self.addr_abs);
-        }
-        self.fetched
+    #[inline]
+    fn fetch_word(&mut self, bus: &mut Bus) -> u16 {
+        let lo = self.fetch_byte(bus) as u16;
+        let hi = self.fetch_byte(bus) as u16;
+        (hi << 8) | lo
     }
 
-    // AND: And
-    pub fn AND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.a &= self.fetched;
-        self.setFlag(FLAGS6502::Z, self.a == 0x00);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-
-        1
-    }
-
-    // BCS: Branch Carry Set
-    pub fn BCS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::C) == 1 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BCC: Branch Carry Clear
-    pub fn BCC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::C) == 0 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BEQ: Branch Equal
-    pub fn BEQ(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::Z) == 1 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BMI: Branch Minus
-    pub fn BMI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::N) == 1 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BME: Branch Not Equal
-    pub fn BNE(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::Z) == 0 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BPL: Branch Plus
-    pub fn BPL(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::N) == 0 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BVC: Branch Overflow
-    pub fn BVC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::V) == 0 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // BVS: Branch Not Overflow
-    pub fn BVS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        if self.getFlag(FLAGS6502::V) == 1 {
-            self.cycles += 1;
-            self.addr_abs = self.pc.wrapping_add(self.addr_rel);
-            if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00) {
-                self.cycles += 1;
-            }
-            self.pc = self.addr_abs;
-        }
-        0
-    }
-
-    // CLC: Clear Carry Bit
-    pub fn CLC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::C, false);
-        0
-    }
-    // CLD: Clear Decimal Mode
-    pub fn CLD(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::D, false);
-        0
-    }
-
-    // CLI: Clear Interrupt Disable
-    pub fn CLI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::I, false);
-        0
-    }
-
-    // CLV: Clear Overflow Flag
-    pub fn CLV(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::V, false);
-        0
-    }
-
-    // CMP: Compare Accumulator
-    // Function: Compare A with fetched value
-    // Flags Out: C, Z, N
-    pub fn CMP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.temp = (self.a as u16).wrapping_sub(self.fetched as u16);
-        self.setFlag(FLAGS6502::C, self.a >= self.fetched);
-        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
-        1
-    }
-
-    // CPX: Compare X Register
-    // Function: Compare X with fetched value
-    // Flags Out: C, Z, N
-    pub fn CPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.temp = (self.x as u16).wrapping_sub(self.fetched as u16);
-        self.setFlag(FLAGS6502::C, self.x >= self.fetched);
-        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
-        0
-    }
-
-    // CPY: Compare Y Register
-    // Function: Compare Y with fetched value
-    // Flags Out: C, Z, N
-    pub fn CPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.temp = (self.y as u16).wrapping_sub(self.fetched as u16);
-        self.setFlag(FLAGS6502::C, self.y >= self.fetched);
-        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, self.temp & 0x0080 != 0);
-        0
-    }
-
-    // ADC: Add with Carry
-    // Function: Add memory value to accumulator with carry
-    // Flags Out: C, Z, V, N
-    pub fn ADC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.temp = (self.a as u16) + (self.fetched as u16) + (self.getFlag(FLAGS6502::C) as u16);
-
-        self.setFlag(FLAGS6502::C, self.temp > 0x00FF);
-        self.setFlag(FLAGS6502::Z, (self.temp & 0x00FF) == 0);
-
-        let r = (self.temp & 0x00FF) as u8; // resultado de 8 bits
-        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-
-        // V: (~(A^M) & (A^R) & 0x80) != 0
-        self.setFlag(FLAGS6502::V, ((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0);
-
-        self.a = r;
-        1
-    }
-
-    // SBC: Subtract with Carry
-    // Subtrai um valor da memoria com o acumulador
-    // Flags Out: C, Z, V, N
-    pub fn SBC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let value = (self.fetched as u16) ^ 0x00FF;
-        let temp = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
-
-        let r = (temp & 0x00FF) as u8;
-
-        self.setFlag(FLAGS6502::C, (temp & 0xFF00) != 0);
-        self.setFlag(FLAGS6502::Z, r == 0);
-        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-
-        // V (SBC): ((A^R) & (A^M) & 0x80) != 0
-        self.setFlag(FLAGS6502::V, ((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0);
-
-        self.a = r;
-        1
-    }
-
-    // PHA: Push Accumulator
-    // Funcão: Coloca o valor do acumulador no stack
-    pub fn PHA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.write(bus, 0x100 + self.stkp as u16, self.a);
+    #[inline]
+    fn push(&mut self, bus: &mut Bus, v: u8) {
+        self.write(bus, 0x0100 | self.stkp as u16, v);
         self.stkp = self.stkp.wrapping_sub(1);
-        0
     }
 
-    // PLA: Pull Accumulator
-    // Funcão: Pega o valor do stack e coloca no acumulador
-    pub fn PLA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+    #[inline]
+    fn pull(&mut self, bus: &mut Bus) -> u8 {
         self.stkp = self.stkp.wrapping_add(1);
-        self.a = self.read(bus, 0x100 + self.stkp as u16);
-        self.setFlag(FLAGS6502::Z, self.a == 0x00);
-        self.setFlag(FLAGS6502::N, self.a & 0x80 != 0);
-        0
+        self.read(bus, 0x0100 | self.stkp as u16)
     }
 
-    // RTI: Return from Interrupt
-    pub fn RTI(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.stkp = self.stkp.wrapping_add(1);
-        self.status = self.read(bus, 0x0100 + self.stkp as u16);
-        self.status &= !(FLAGS6502::B as u8);
-        self.status |= FLAGS6502::U as u8;
+    /// Leitura descartada no topo da pilha (ciclo interno de PLA/RTS/RTI/JSR).
+    #[inline]
+    fn dummy_stack_read(&mut self, bus: &mut Bus) {
+        self.read(bus, 0x0100 | self.stkp as u16);
+    }
 
-        self.stkp = self.stkp.wrapping_add(1);
-        let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
-        self.stkp = self.stkp.wrapping_add(1);
-        let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
+    // ----------------------------------------------------------- endereçamento
 
+    /// Calcula o endereço efetivo, gastando os ciclos (e dummy reads) do modo.
+    #[inline]
+    fn operand(&mut self, bus: &mut Bus, mode: Mode) -> u16 {
+        self.crossed = false;
+        match mode {
+            Mode::Imp | Mode::Acc => {
+                self.read(bus, self.pc);
+                0
+            }
+            Mode::Imm => {
+                let a = self.pc;
+                self.pc = self.pc.wrapping_add(1);
+                a
+            }
+            Mode::Zp => self.fetch_byte(bus) as u16,
+            Mode::ZpX => {
+                let z = self.fetch_byte(bus);
+                self.read(bus, z as u16);
+                z.wrapping_add(self.x) as u16
+            }
+            Mode::ZpY => {
+                let z = self.fetch_byte(bus);
+                self.read(bus, z as u16);
+                z.wrapping_add(self.y) as u16
+            }
+            Mode::Abs => self.fetch_word(bus),
+            Mode::AbsX => {
+                let base = self.fetch_word(bus);
+                self.indexed(bus, base, self.x, false)
+            }
+            Mode::AbsXW => {
+                let base = self.fetch_word(bus);
+                self.indexed(bus, base, self.x, true)
+            }
+            Mode::AbsY => {
+                let base = self.fetch_word(bus);
+                self.indexed(bus, base, self.y, false)
+            }
+            Mode::AbsYW => {
+                let base = self.fetch_word(bus);
+                self.indexed(bus, base, self.y, true)
+            }
+            Mode::Ind => {
+                let ptr = self.fetch_word(bus);
+                let lo = self.read(bus, ptr) as u16;
+                // bug do 6502: o byte alto não cruza a página
+                let hi = self.read(bus, (ptr & 0xFF00) | (ptr.wrapping_add(1) & 0x00FF)) as u16;
+                (hi << 8) | lo
+            }
+            Mode::IndX => {
+                let z = self.fetch_byte(bus);
+                self.read(bus, z as u16);
+                let p = z.wrapping_add(self.x);
+                let lo = self.read(bus, p as u16) as u16;
+                let hi = self.read(bus, p.wrapping_add(1) as u16) as u16;
+                (hi << 8) | lo
+            }
+            Mode::IndY | Mode::IndYW => {
+                let z = self.fetch_byte(bus);
+                let lo = self.read(bus, z as u16) as u16;
+                let hi = self.read(bus, z.wrapping_add(1) as u16) as u16;
+                self.indexed(bus, (hi << 8) | lo, self.y, mode == Mode::IndYW)
+            }
+            Mode::Rel => {
+                let off = self.fetch_byte(bus) as i8;
+                self.pc.wrapping_add(off as i16 as u16)
+            }
+        }
+    }
+
+    /// Indexação com a leitura no endereço "sem carry": sempre para escrita/RMW, só ao cruzar
+    /// página para leitura.
+    #[inline]
+    fn indexed(&mut self, bus: &mut Bus, base: u16, index: u8, always_dummy: bool) -> u16 {
+        let addr = base.wrapping_add(index as u16);
+        self.base_hi = (base >> 8) as u8;
+        self.crossed = (addr & 0xFF00) != (base & 0xFF00);
+        if self.crossed || always_dummy {
+            self.read(bus, (base & 0xFF00) | (addr & 0x00FF));
+        }
+        addr
+    }
+
+    // ----------------------------------------------------------------- execução
+
+    /// Executa uma instrução completa (ou o atendimento de uma interrupção pendente ao fim dela).
+    pub fn step(&mut self, bus: &mut Bus) {
+        if self.jammed {
+            bus.tick_pre();
+            bus.tick_post();
+            return;
+        }
+        let opcode = self.fetch_byte(bus);
+        self.opcode = opcode;
+        let (op, mode) = LOOKUP[opcode as usize];
+        let addr = self.operand(bus, mode);
+        self.execute(bus, op, mode, addr);
+
+        if self.nmi_pending_prev || self.irq_run_prev {
+            self.interrupt(bus);
+        }
+    }
+
+    /// Sequência de 7 ciclos de IRQ/NMI. Se a NMI ficou pendente durante a sequência, ela
+    /// "sequestra" o vetor.
+    fn interrupt(&mut self, bus: &mut Bus) {
+        self.read(bus, self.pc);
+        self.read(bus, self.pc);
+        self.push(bus, (self.pc >> 8) as u8);
+        self.push(bus, self.pc as u8);
+        let nmi = self.nmi_pending;
+        self.push(bus, (self.status & !B) | U);
+        self.status |= I;
+        let vec = if nmi {
+            self.nmi_pending = false;
+            NMI_VECTOR
+        } else {
+            IRQ_VECTOR
+        };
+        let lo = self.read(bus, vec) as u16;
+        let hi = self.read(bus, vec + 1) as u16;
         self.pc = (hi << 8) | lo;
-        0
     }
 
-    //===========================================//
-    //#         Opcodes Nao Implementados       #//
-    //===========================================//
-    // ASL: Arithmetic Shift Left
-    pub fn ASL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = (self.fetched as u16) << 1;
-        self.setFlag(FLAGS6502::C, temp > 0x00FF);
-        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
-            self.a = (temp & 0x00FF) as u8;
+    #[inline]
+    fn branch(&mut self, bus: &mut Bus, cond: bool, target: u16) {
+        if !cond {
+            return;
+        }
+        // Um branch tomado sem cruzar página não vê uma IRQ que subiu durante o ciclo do operando:
+        // a instrução seguinte executa antes dela.
+        if self.irq_run && !self.irq_run_prev {
+            self.irq_run = false;
+        }
+        self.read(bus, self.pc);
+        if (target & 0xFF00) != (self.pc & 0xFF00) {
+            self.read(bus, (self.pc & 0xFF00) | (target & 0x00FF));
+        }
+        self.pc = target;
+    }
+
+    /// Read-modify-write: lê, reescreve o valor antigo, escreve o novo (ou opera em A).
+    #[inline]
+    fn rmw<F: FnOnce(&mut Self, u8) -> u8>(&mut self, bus: &mut Bus, mode: Mode, addr: u16, f: F) {
+        if mode == Mode::Acc {
+            self.a = f(self, self.a);
         } else {
-            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
-        }
-        0
-    }
-
-    // BIT: Bit Test
-    pub fn BIT(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = self.a & self.fetched;
-        self.setFlag(FLAGS6502::Z, temp == 0);
-        self.setFlag(FLAGS6502::N, (self.fetched & 0x80) != 0);
-        self.setFlag(FLAGS6502::V, (self.fetched & 0x40) != 0);
-        0
-    }
-
-    // BRK: Force Interrupt
-    pub fn BRK(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.pc = self.pc.wrapping_add(1);
-
-        self.setFlag(FLAGS6502::I, true);
-        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-
-        self.setFlag(FLAGS6502::B, true);
-        self.write(bus, 0x0100 + self.stkp as u16, self.status);
-        self.stkp = self.stkp.wrapping_sub(1);
-
-        let lo = self.read(bus, 0xFFFE) as u16;
-        let hi = self.read(bus, 0xFFFF) as u16;
-        self.pc = (hi << 8) | lo;
-        0
-    }
-
-    // DEC: Decrement Memory
-    pub fn DEC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = self.fetched.wrapping_sub(1);
-        self.write(bus, self.addr_abs, temp);
-        self.setFlag(FLAGS6502::Z, temp == 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
-        0
-    }
-
-    // DEX: Decrement X Register
-    pub fn DEX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.x = self.x.wrapping_sub(1);
-        self.setFlag(FLAGS6502::Z, self.x == 0);
-        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
-        0
-    }
-
-    // DEY: Decrement Y Register
-    pub fn DEY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.y = self.y.wrapping_sub(1);
-        self.setFlag(FLAGS6502::Z, self.y == 0);
-        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
-        0
-    }
-
-    // EOR: Exclusive OR
-    pub fn EOR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.a ^= self.fetched;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        1
-    }
-
-    // INC: Increment Memory
-    pub fn INC(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = self.fetched.wrapping_add(1);
-        self.write(bus, self.addr_abs, temp);
-        self.setFlag(FLAGS6502::Z, temp == 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x80) != 0);
-        0
-    }
-
-    // INX: Increment X Register
-    pub fn INX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.x = self.x.wrapping_add(1);
-        self.setFlag(FLAGS6502::Z, self.x == 0);
-        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
-        0
-    }
-
-    // INY: Increment Y Register
-    pub fn INY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.y = self.y.wrapping_add(1);
-        self.setFlag(FLAGS6502::Z, self.y == 0);
-        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
-        0
-    }
-
-    // JMP: Jump
-    pub fn JMP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.pc = self.addr_abs;
-        0
-    }
-
-    // JSR: Jump to Subroutine
-    pub fn JSR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.pc = self.pc.wrapping_sub(1);
-
-        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-
-        self.pc = self.addr_abs;
-        0
-    }
-
-    // LDA: Load Accumulator
-    pub fn LDA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.a = self.fetched;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        1
-    }
-
-    // LDX: Load X Register
-    pub fn LDX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.x = self.fetched;
-        self.setFlag(FLAGS6502::Z, self.x == 0);
-        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
-        1
-    }
-
-    // LDY: Load Y Register
-    pub fn LDY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.y = self.fetched;
-        self.setFlag(FLAGS6502::Z, self.y == 0);
-        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
-        1
-    }
-
-    // LSR: Logical Shift Right
-    pub fn LSR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.setFlag(FLAGS6502::C, (self.fetched & 0x0001) != 0);
-        let temp = self.fetched >> 1;
-        self.setFlag(FLAGS6502::Z, temp == 0);
-        self.setFlag(FLAGS6502::N, false);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
-            self.a = temp;
-        } else {
-            self.write(bus, self.addr_abs, temp);
-        }
-        0
-    }
-
-    // NOP: No Operation
-    pub fn NOP(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        match self.opcode {
-            0x1C | 0x3C | 0x5C | 0x7C | 0xDC | 0xFC => 1,
-            _ => 0,
+            let v = self.read(bus, addr);
+            self.write(bus, addr, v);
+            let r = f(self, v);
+            self.write(bus, addr, r);
         }
     }
 
-    // ORA: Logical Inclusive OR
-    pub fn ORA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.a |= self.fetched;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        1
-    }
-
-    // PHP: Push Processor Status
-    pub fn PHP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.write(bus, 0x0100 + self.stkp as u16, self.status | FLAGS6502::B as u8 | FLAGS6502::U as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-        0
-    }
-
-    // PLP: Pull Processor Status
-    pub fn PLP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.stkp = self.stkp.wrapping_add(1);
-        self.status = self.read(bus, 0x0100 + self.stkp as u16);
-        self.setFlag(FLAGS6502::U, true);
-        self.setFlag(FLAGS6502::B, false);
-        0
-    }
-
-    // ROL: Rotate Left
-    pub fn ROL(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = ((self.fetched as u16) << 1) | (self.getFlag(FLAGS6502::C) as u16);
-        self.setFlag(FLAGS6502::C, temp > 0x00FF);
-        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
-            self.a = (temp & 0x00FF) as u8;
-        } else {
-            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
-        }
-        0
-    }
-
-    // ROR: Rotate Right
-    pub fn ROR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        let temp = ((self.getFlag(FLAGS6502::C) as u16) << 7) | (self.fetched as u16 >> 1);
-        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
-        self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
-            self.a = (temp & 0x00FF) as u8;
-        } else {
-            self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
-        }
-        0
-    }
-
-    // RTS: Return from Subroutine
-    pub fn RTS(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.stkp = self.stkp.wrapping_add(1);
-        let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
-        self.stkp = self.stkp.wrapping_add(1);
-        let hi = self.read(bus, 0x0100 + self.stkp as u16) as u16;
-
-        self.pc = (hi << 8) | lo;
-        self.pc = self.pc.wrapping_add(1);
-        0
-    }
-
-    // SEC: Set Carry Flag
-    pub fn SEC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::C, true);
-        0
-    }
-
-    // SED: Set Decimal Mode
-    pub fn SED(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::D, true);
-        0
-    }
-
-    // SEI: Set Interrupt Disable
-    pub fn SEI(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.setFlag(FLAGS6502::I, true);
-        0
-    }
-
-    // STA: Store Accumulator
-    pub fn STA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.write(bus, self.addr_abs, self.a);
-        0
-    }
-
-    // STX: Store X Register
-    pub fn STX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.write(bus, self.addr_abs, self.x);
-        0
-    }
-
-    // STY: Store Y Register
-    pub fn STY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.write(bus, self.addr_abs, self.y);
-        0
-    }
-
-    // TAX: Transfer Accumulator to X
-    pub fn TAX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.x = self.a;
-        self.setFlag(FLAGS6502::Z, self.x == 0);
-        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
-        0
-    }
-
-    // TAY: Transfer Accumulator to Y
-    pub fn TAY(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.y = self.a;
-        self.setFlag(FLAGS6502::Z, self.y == 0);
-        self.setFlag(FLAGS6502::N, (self.y & 0x80) != 0);
-        0
-    }
-
-    // TSX: Transfer Stack Pointer to X
-    pub fn TSX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.x = self.stkp;
-        self.setFlag(FLAGS6502::Z, self.x == 0);
-        self.setFlag(FLAGS6502::N, (self.x & 0x80) != 0);
-        0
-    }
-
-    // TXA: Transfer X to Accumulator
-    pub fn TXA(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.a = self.x;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        0
-    }
-
-    // TXS: Transfer X to Stack Pointer
-    pub fn TXS(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.stkp = self.x;
-        0
-    }
-
-    // TYA: Transfer Y to Accumulator
-    pub fn TYA(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        self.a = self.y;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        0
-    }
-
-    //===========================================//
-    //#     Illegal/Undocumented Opcodes          #//
-    //===========================================//
-
-    // LAX: Load A and X (LDA + LDX combined)
-    pub fn LAX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        self.fetch(bus);
-        self.a = self.fetched;
-        self.x = self.fetched;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        1
-    }
-
-    // SAX: Store A AND X
-    pub fn SAX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let data = self.a & self.x;
-        self.write(bus, self.addr_abs, data);
-        0
-    }
-
-    // DCP: Decrement Memory then Compare with A
-    pub fn DCP(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // DEC
-        self.fetch(bus);
-        let temp = self.fetched.wrapping_sub(1);
-        self.write(bus, self.addr_abs, temp);
-        // CMP
-        let result = (self.a as u16).wrapping_sub(temp as u16);
-        self.setFlag(FLAGS6502::C, self.a >= temp);
-        self.setFlag(FLAGS6502::Z, (result & 0x00FF) == 0);
-        self.setFlag(FLAGS6502::N, (result & 0x0080) != 0);
-        0
-    }
-
-    // ISB/ISC: Increment Memory then SBC
-    pub fn ISB(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // INC
-        self.fetch(bus);
-        let temp = self.fetched.wrapping_add(1);
-        self.write(bus, self.addr_abs, temp);
-        // SBC
-        let value = (temp as u16) ^ 0x00FF;
-        let result = (self.a as u16) + value + (self.getFlag(FLAGS6502::C) as u16);
-        let r = (result & 0x00FF) as u8;
-        self.setFlag(FLAGS6502::C, (result & 0xFF00) != 0);
-        self.setFlag(FLAGS6502::Z, r == 0);
-        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(FLAGS6502::V, ((self.a ^ r) & (self.a ^ temp) & 0x80) != 0);
+    #[inline]
+    fn adc(&mut self, m: u8) {
+        let sum = self.a as u16 + m as u16 + self.flag(C) as u16;
+        let r = sum as u8;
+        self.set_flag(C, sum > 0xFF);
+        self.set_flag(V, (!(self.a ^ m) & (self.a ^ r) & 0x80) != 0);
         self.a = r;
-        0
+        self.set_zn(r);
     }
 
-    // SLO: Shift Left then OR with A
-    pub fn SLO(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // ASL
-        self.fetch(bus);
-        let temp = (self.fetched as u16) << 1;
-        self.setFlag(FLAGS6502::C, temp > 0x00FF);
-        let shifted = (temp & 0x00FF) as u8;
-        self.write(bus, self.addr_abs, shifted);
-        // ORA
-        self.a |= shifted;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        0
+    #[inline]
+    fn compare(&mut self, reg: u8, m: u8) {
+        self.set_flag(C, reg >= m);
+        self.set_zn(reg.wrapping_sub(m));
     }
 
-    // RLA: Rotate Left then AND with A
-    pub fn RLA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // ROL
-        self.fetch(bus);
-        let temp = ((self.fetched as u16) << 1) | (self.getFlag(FLAGS6502::C) as u16);
-        self.setFlag(FLAGS6502::C, temp > 0x00FF);
-        let rotated = (temp & 0x00FF) as u8;
-        self.write(bus, self.addr_abs, rotated);
-        // AND
-        self.a &= rotated;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        0
+    #[inline]
+    fn asl(&mut self, v: u8) -> u8 {
+        self.set_flag(C, v & 0x80 != 0);
+        let r = v << 1;
+        self.set_zn(r);
+        r
     }
 
-    // SRE: Shift Right then EOR with A
-    pub fn SRE(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // LSR
-        self.fetch(bus);
-        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
-        let shifted = self.fetched >> 1;
-        self.write(bus, self.addr_abs, shifted);
-        // EOR
-        self.a ^= shifted;
-        self.setFlag(FLAGS6502::Z, self.a == 0);
-        self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
-        0
+    #[inline]
+    fn lsr(&mut self, v: u8) -> u8 {
+        self.set_flag(C, v & 0x01 != 0);
+        let r = v >> 1;
+        self.set_zn(r);
+        r
     }
 
-    // RRA: Rotate Right then ADC
-    pub fn RRA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        // ROR
-        self.fetch(bus);
-        let temp = ((self.getFlag(FLAGS6502::C) as u16) << 7) | (self.fetched as u16 >> 1);
-        self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
-        let rotated = (temp & 0x00FF) as u8;
-        self.write(bus, self.addr_abs, rotated);
-        // ADC
-        let result = (self.a as u16) + (rotated as u16) + (self.getFlag(FLAGS6502::C) as u16);
-        self.setFlag(FLAGS6502::C, result > 0x00FF);
-        let r = (result & 0x00FF) as u8;
-        self.setFlag(FLAGS6502::Z, r == 0);
-        self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(FLAGS6502::V, ((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0);
-        self.a = r;
-        0
+    #[inline]
+    fn rol(&mut self, v: u8) -> u8 {
+        let r = (v << 1) | self.flag(C) as u8;
+        self.set_flag(C, v & 0x80 != 0);
+        self.set_zn(r);
+        r
     }
 
-    // XXX: Illegal Opcode
-    pub fn XXX(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
-        0
+    #[inline]
+    fn ror(&mut self, v: u8) -> u8 {
+        let r = (v >> 1) | ((self.flag(C) as u8) << 7);
+        self.set_flag(C, v & 0x01 != 0);
+        self.set_zn(r);
+        r
     }
 
-    pub fn is_instruction_start(&self) -> bool {
-        self.cycles == 0
+    /// Escrita `val & (H+1)` de SHA/SHX/SHY/TAS, com o byte alto corrompido ao cruzar página.
+    fn store_high_and(&mut self, bus: &mut Bus, addr: u16, val: u8) {
+        let v = val & self.base_hi.wrapping_add(1);
+        let addr = if self.crossed { ((v as u16) << 8) | (addr & 0x00FF) } else { addr };
+        self.write(bus, addr, v);
     }
 
-    // Clock
-    pub fn clock(&mut self, bus: &mut crate::bus::Bus) {
-        if self.cycles == 0 {
-            self.opcode = self.read(bus, self.pc);
-            self.pc = self.pc.wrapping_add(1); // só +1
+    fn execute(&mut self, bus: &mut Bus, op: Op, mode: Mode, addr: u16) {
+        use Op::*;
+        match op {
+            // ---- cargas e armazenamentos
+            Lda => {
+                let v = self.read(bus, addr);
+                self.a = v;
+                self.set_zn(v);
+            }
+            Ldx => {
+                let v = self.read(bus, addr);
+                self.x = v;
+                self.set_zn(v);
+            }
+            Ldy => {
+                let v = self.read(bus, addr);
+                self.y = v;
+                self.set_zn(v);
+            }
+            Sta => self.write(bus, addr, self.a),
+            Stx => self.write(bus, addr, self.x),
+            Sty => self.write(bus, addr, self.y),
 
-            let (addrmode, operate, base_cycles) = {
-                let ins = &self.lookup[self.opcode as usize];
-                (ins.addrmode, ins.operate, ins.cycles)
-            };
+            // ---- transferências
+            Tax => {
+                self.x = self.a;
+                self.set_zn(self.x);
+            }
+            Tay => {
+                self.y = self.a;
+                self.set_zn(self.y);
+            }
+            Txa => {
+                self.a = self.x;
+                self.set_zn(self.a);
+            }
+            Tya => {
+                self.a = self.y;
+                self.set_zn(self.a);
+            }
+            Tsx => {
+                self.x = self.stkp;
+                self.set_zn(self.x);
+            }
+            Txs => self.stkp = self.x,
 
-            self.cycles = base_cycles;
-            let cycle0 = addrmode(self, bus);
-            let cycle1 = operate(self, bus);
-            self.cycles = self.cycles.wrapping_add(cycle0 & cycle1);
+            // ---- pilha
+            Pha => self.push(bus, self.a),
+            Php => self.push(bus, self.status | B | U),
+            Pla => {
+                self.dummy_stack_read(bus);
+                self.a = self.pull(bus);
+                self.set_zn(self.a);
+            }
+            Plp => {
+                self.dummy_stack_read(bus);
+                self.status = (self.pull(bus) & !B) | U;
+            }
+
+            // ---- aritmética e lógica
+            Adc => {
+                let m = self.read(bus, addr);
+                self.adc(m);
+            }
+            Sbc => {
+                let m = self.read(bus, addr);
+                self.adc(!m);
+            }
+            And => {
+                self.a &= self.read(bus, addr);
+                self.set_zn(self.a);
+            }
+            Ora => {
+                self.a |= self.read(bus, addr);
+                self.set_zn(self.a);
+            }
+            Eor => {
+                self.a ^= self.read(bus, addr);
+                self.set_zn(self.a);
+            }
+            Cmp => {
+                let m = self.read(bus, addr);
+                self.compare(self.a, m);
+            }
+            Cpx => {
+                let m = self.read(bus, addr);
+                self.compare(self.x, m);
+            }
+            Cpy => {
+                let m = self.read(bus, addr);
+                self.compare(self.y, m);
+            }
+            Bit => {
+                let m = self.read(bus, addr);
+                self.set_flag(Z, self.a & m == 0);
+                self.set_flag(N, m & 0x80 != 0);
+                self.set_flag(V, m & 0x40 != 0);
+            }
+
+            // ---- incrementos e deslocamentos
+            Inc => self.rmw(bus, mode, addr, |c, v| {
+                let r = v.wrapping_add(1);
+                c.set_zn(r);
+                r
+            }),
+            Dec => self.rmw(bus, mode, addr, |c, v| {
+                let r = v.wrapping_sub(1);
+                c.set_zn(r);
+                r
+            }),
+            Inx => {
+                self.x = self.x.wrapping_add(1);
+                self.set_zn(self.x);
+            }
+            Iny => {
+                self.y = self.y.wrapping_add(1);
+                self.set_zn(self.y);
+            }
+            Dex => {
+                self.x = self.x.wrapping_sub(1);
+                self.set_zn(self.x);
+            }
+            Dey => {
+                self.y = self.y.wrapping_sub(1);
+                self.set_zn(self.y);
+            }
+            Asl => self.rmw(bus, mode, addr, Self::asl),
+            Lsr => self.rmw(bus, mode, addr, Self::lsr),
+            Rol => self.rmw(bus, mode, addr, Self::rol),
+            Ror => self.rmw(bus, mode, addr, Self::ror),
+
+            // ---- flags
+            Clc => self.set_flag(C, false),
+            Sec => self.set_flag(C, true),
+            Cli => self.set_flag(I, false),
+            Sei => self.set_flag(I, true),
+            Cld => self.set_flag(D, false),
+            Sed => self.set_flag(D, true),
+            Clv => self.set_flag(V, false),
+
+            // ---- desvios
+            Bcc => self.branch(bus, !self.flag(C), addr),
+            Bcs => self.branch(bus, self.flag(C), addr),
+            Bne => self.branch(bus, !self.flag(Z), addr),
+            Beq => self.branch(bus, self.flag(Z), addr),
+            Bpl => self.branch(bus, !self.flag(N), addr),
+            Bmi => self.branch(bus, self.flag(N), addr),
+            Bvc => self.branch(bus, !self.flag(V), addr),
+            Bvs => self.branch(bus, self.flag(V), addr),
+            Jmp => self.pc = addr,
+            Jsr => {
+                self.dummy_stack_read(bus);
+                let ret = self.pc.wrapping_sub(1);
+                self.push(bus, (ret >> 8) as u8);
+                self.push(bus, ret as u8);
+                self.pc = addr;
+            }
+            Rts => {
+                self.dummy_stack_read(bus);
+                let lo = self.pull(bus) as u16;
+                let hi = self.pull(bus) as u16;
+                self.pc = (hi << 8) | lo;
+                self.read(bus, self.pc);
+                self.pc = self.pc.wrapping_add(1);
+            }
+            Rti => {
+                self.dummy_stack_read(bus);
+                self.status = (self.pull(bus) & !B) | U;
+                let lo = self.pull(bus) as u16;
+                let hi = self.pull(bus) as u16;
+                self.pc = (hi << 8) | lo;
+            }
+            Brk => {
+                self.read(bus, addr); // byte de padding
+                self.push(bus, (self.pc >> 8) as u8);
+                self.push(bus, self.pc as u8);
+                let nmi = self.nmi_pending;
+                self.push(bus, self.status | B | U);
+                self.status |= I;
+                let vec = if nmi {
+                    self.nmi_pending = false;
+                    NMI_VECTOR
+                } else {
+                    IRQ_VECTOR
+                };
+                let lo = self.read(bus, vec) as u16;
+                let hi = self.read(bus, vec + 1) as u16;
+                self.pc = (hi << 8) | lo;
+                // I acabou de subir: não atender IRQ imediatamente
+                self.irq_run_prev = false;
+            }
+            Nop => {
+                if mode != Mode::Imp {
+                    self.read(bus, addr);
+                }
+            }
+
+            // ---- não-oficiais
+            Lax => {
+                let v = self.read(bus, addr);
+                self.a = v;
+                self.x = v;
+                self.set_zn(v);
+            }
+            Sax => self.write(bus, addr, self.a & self.x),
+            Dcp => self.rmw(bus, mode, addr, |c, v| {
+                let r = v.wrapping_sub(1);
+                c.compare(c.a, r);
+                r
+            }),
+            Isb => self.rmw(bus, mode, addr, |c, v| {
+                let r = v.wrapping_add(1);
+                c.adc(!r);
+                r
+            }),
+            Slo => self.rmw(bus, mode, addr, |c, v| {
+                let r = c.asl(v);
+                c.a |= r;
+                c.set_zn(c.a);
+                r
+            }),
+            Rla => self.rmw(bus, mode, addr, |c, v| {
+                let r = c.rol(v);
+                c.a &= r;
+                c.set_zn(c.a);
+                r
+            }),
+            Sre => self.rmw(bus, mode, addr, |c, v| {
+                let r = c.lsr(v);
+                c.a ^= r;
+                c.set_zn(c.a);
+                r
+            }),
+            Rra => self.rmw(bus, mode, addr, |c, v| {
+                let r = c.ror(v);
+                c.adc(r);
+                r
+            }),
+            Anc => {
+                self.a &= self.read(bus, addr);
+                self.set_zn(self.a);
+                self.set_flag(C, self.a & 0x80 != 0);
+            }
+            Alr => {
+                self.a &= self.read(bus, addr);
+                self.a = self.lsr(self.a);
+            }
+            Arr => {
+                self.a &= self.read(bus, addr);
+                self.a = (self.a >> 1) | ((self.flag(C) as u8) << 7);
+                self.set_zn(self.a);
+                self.set_flag(C, self.a & 0x40 != 0);
+                self.set_flag(V, ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0);
+            }
+            Xaa => {
+                // instável no hardware; constante mágica $EE
+                self.a = (self.a | 0xEE) & self.x & self.read(bus, addr);
+                self.set_zn(self.a);
+            }
+            Axs => {
+                let m = self.read(bus, addr);
+                let ax = self.a & self.x;
+                self.set_flag(C, ax >= m);
+                self.x = ax.wrapping_sub(m);
+                self.set_zn(self.x);
+            }
+            Las => {
+                let v = self.read(bus, addr) & self.stkp;
+                self.a = v;
+                self.x = v;
+                self.stkp = v;
+                self.set_zn(v);
+            }
+            Sha => self.store_high_and(bus, addr, self.a & self.x),
+            Shx => self.store_high_and(bus, addr, self.x),
+            Shy => self.store_high_and(bus, addr, self.y),
+            Tas => {
+                self.stkp = self.a & self.x;
+                self.store_high_and(bus, addr, self.stkp);
+            }
+            Jam => {
+                self.jammed = true;
+                self.pc = self.pc.wrapping_sub(1);
+            }
         }
-        self.cycles = self.cycles.wrapping_sub(1);
     }
 
-    // Reset
-    pub fn reset(&mut self, bus: &mut crate::bus::Bus) {
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
-        self.stkp = 0xFD;
-        self.status = FLAGS6502::U as u8;
+    // ------------------------------------------------------------------ reset
 
-        self.addr_abs = 0xFFFC;
-        let lo = self.read(bus, self.addr_abs);
-        let hi = self.read(bus, self.addr_abs + 1);
-
-        self.pc = ((hi as u16) << 8) | (lo as u16);
-
-        self.addr_rel = 0x0000;
-        self.addr_abs = 0x0000;
-        self.fetched = 0x00;
-
-        self.cycles = 8;
-    }
-    // Interruptiuon Request
-    pub fn irq(&mut self, bus: &mut crate::bus::Bus) {
-        if self.getFlag(FLAGS6502::I) == 0 {
-            // push PC
-            self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
-            self.stkp = self.stkp.wrapping_sub(1);
-            self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
-            self.stkp = self.stkp.wrapping_sub(1);
-
-            // push status (B=0, U=1) e seta I
-            self.setFlag(FLAGS6502::B, false);
-            self.setFlag(FLAGS6502::U, true);
-            self.setFlag(FLAGS6502::I, true);
-            self.write(bus, 0x0100 + self.stkp as u16, self.status);
-            self.stkp = self.stkp.wrapping_sub(1);
-
-            // vetor IRQ
-            let lo = self.read(bus, 0xFFFE) as u16;
-            let hi = self.read(bus, 0xFFFF) as u16;
-            self.pc = (hi << 8) | lo;
-
-            self.cycles = 7;
+    /// Reset (7 ciclos): A/X/Y e os demais bits de P são preservados; I=1; SP desce 3 (os três
+    /// "pushes" do reset são leituras); PC vem de `$FFFC`.
+    pub fn reset(&mut self, bus: &mut Bus) {
+        self.stkp = self.stkp.wrapping_sub(3);
+        self.status |= I | U;
+        self.jammed = false;
+        self.nmi_pending = false;
+        self.nmi_pending_prev = false;
+        self.irq_run = false;
+        self.irq_run_prev = false;
+        for _ in 0..5 {
+            bus.tick_pre();
+            bus.tick_post();
         }
-    }
-
-    pub fn nmi(&mut self, bus: &mut crate::bus::Bus) {
-        self.write(bus, 0x0100 + self.stkp as u16, ((self.pc >> 8) & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-        self.write(bus, 0x0100 + self.stkp as u16, (self.pc & 0x00FF) as u8);
-        self.stkp = self.stkp.wrapping_sub(1);
-
-        self.setFlag(FLAGS6502::B, false);
-        self.setFlag(FLAGS6502::U, true);
-        self.setFlag(FLAGS6502::I, true);
-        self.write(bus, 0x0100 + self.stkp as u16, self.status);
-        self.stkp = self.stkp.wrapping_sub(1);
-
-        let lo = self.read(bus, 0xFFFA) as u16;
-        let hi = self.read(bus, 0xFFFB) as u16;
+        let lo = self.read(bus, RESET_VECTOR) as u16;
+        let hi = self.read(bus, RESET_VECTOR + 1) as u16;
         self.pc = (hi << 8) | lo;
-
-        self.cycles = 8;
-    }
-
-    // Tem algumas instrucoes que somente alguns
-    // Jogos ou nenhum usa, então nao irei emula-los
-    // Mas pode ser que com o tempo eu adicione-os
-    // Eu irei coloca-los como "???"
-    // Ou, quando for realmente em branco, mas alguns
-    // Roms modificadas podem nao funcionar
-    pub fn instrucoes() -> Vec<Instruction> {
-        vec![
-            // 0x00
-            Instruction { name: "BRK", operate: Cpu6502::BRK, addrmode: Cpu6502::IMP, cycles: 7 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "PHP", operate: Cpu6502::PHP, addrmode: Cpu6502::IMP, cycles: 3 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ACC, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0x10
-            Instruction { name: "BPL", operate: Cpu6502::BPL, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "CLC", operate: Cpu6502::CLC, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ORA", operate: Cpu6502::ORA, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "ASL", operate: Cpu6502::ASL, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "SLO", operate: Cpu6502::SLO, addrmode: Cpu6502::ABX, cycles: 7 },
-            // 0x20
-            Instruction { name: "JSR", operate: Cpu6502::JSR, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "BIT", operate: Cpu6502::BIT, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "PLP", operate: Cpu6502::PLP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ACC, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "BIT", operate: Cpu6502::BIT, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0x30
-            Instruction { name: "BMI", operate: Cpu6502::BMI, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "SEC", operate: Cpu6502::SEC, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "AND", operate: Cpu6502::AND, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "ROL", operate: Cpu6502::ROL, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "RLA", operate: Cpu6502::RLA, addrmode: Cpu6502::ABX, cycles: 7 },
-            // 0x40
-            Instruction { name: "RTI", operate: Cpu6502::RTI, addrmode: Cpu6502::IMP, cycles: 6 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "PHA", operate: Cpu6502::PHA, addrmode: Cpu6502::IMP, cycles: 3 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ACC, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::ABS, cycles: 3 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0x50
-            Instruction { name: "BVC", operate: Cpu6502::BVC, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "CLI", operate: Cpu6502::CLI, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "EOR", operate: Cpu6502::EOR, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "LSR", operate: Cpu6502::LSR, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "SRE", operate: Cpu6502::SRE, addrmode: Cpu6502::ABX, cycles: 7 },
-            // 0x60
-            Instruction { name: "RTS", operate: Cpu6502::RTS, addrmode: Cpu6502::IMP, cycles: 6 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 3 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "PLA", operate: Cpu6502::PLA, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ACC, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "JMP", operate: Cpu6502::JMP, addrmode: Cpu6502::IND, cycles: 5 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0x70
-            Instruction { name: "BVS", operate: Cpu6502::BVS, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "SEI", operate: Cpu6502::SEI, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "ADC", operate: Cpu6502::ADC, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "ROR", operate: Cpu6502::ROR, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "RRA", operate: Cpu6502::RRA, addrmode: Cpu6502::ABX, cycles: 7 },
-            // 0x80
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "DEY", operate: Cpu6502::DEY, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "TXA", operate: Cpu6502::TXA, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ABS, cycles: 4 },
-            // 0x90
-            Instruction { name: "BCC", operate: Cpu6502::BCC, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::IZY, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 6 },
-            Instruction { name: "STY", operate: Cpu6502::STY, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "STX", operate: Cpu6502::STX, addrmode: Cpu6502::ZPY, cycles: 4 },
-            Instruction { name: "SAX", operate: Cpu6502::SAX, addrmode: Cpu6502::ZPY, cycles: 3 },
-            Instruction { name: "TYA", operate: Cpu6502::TYA, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABY, cycles: 5 },
-            Instruction { name: "TXS", operate: Cpu6502::TXS, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 5 },
-            Instruction { name: "STA", operate: Cpu6502::STA, addrmode: Cpu6502::ABX, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 5 },
-            // 0xA0
-            Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "TAY", operate: Cpu6502::TAY, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "TAX", operate: Cpu6502::TAX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABS, cycles: 4 },
-            // 0xB0
-            Instruction { name: "BCS", operate: Cpu6502::BCS, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ZPY, cycles: 4 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ZPY, cycles: 3 },
-            Instruction { name: "CLV", operate: Cpu6502::CLV, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "TSX", operate: Cpu6502::TSX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "LDY", operate: Cpu6502::LDY, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "LDA", operate: Cpu6502::LDA, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "LDX", operate: Cpu6502::LDX, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "LAX", operate: Cpu6502::LAX, addrmode: Cpu6502::ABY, cycles: 4 },
-            // 0xC0
-            Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "INY", operate: Cpu6502::INY, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "DEX", operate: Cpu6502::DEX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "CPY", operate: Cpu6502::CPY, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0xD0
-            Instruction { name: "BNE", operate: Cpu6502::BNE, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "CLD", operate: Cpu6502::CLD, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "CMP", operate: Cpu6502::CMP, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "DEC", operate: Cpu6502::DEC, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "DCP", operate: Cpu6502::DCP, addrmode: Cpu6502::ABX, cycles: 7 },
-            // 0xE0
-            Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZX, cycles: 6 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::IZX, cycles: 8 },
-            Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ZP0, cycles: 3 },
-            Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ZP0, cycles: 5 },
-            Instruction { name: "INX", operate: Cpu6502::INX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IMM, cycles: 2 },
-            Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "???", operate: Cpu6502::SBC, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "CPX", operate: Cpu6502::CPX, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABS, cycles: 4 },
-            Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ABS, cycles: 6 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABS, cycles: 6 },
-            // 0xF0
-            Instruction { name: "BEQ", operate: Cpu6502::BEQ, addrmode: Cpu6502::REL, cycles: 2 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::IZY, cycles: 5 },
-            Instruction { name: "???", operate: Cpu6502::XXX, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::IZY, cycles: 8 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ZPX, cycles: 4 },
-            Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ZPX, cycles: 6 },
-            Instruction { name: "SED", operate: Cpu6502::SED, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABY, cycles: 4 },
-            Instruction { name: "NOP", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 2 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABY, cycles: 7 },
-            Instruction { name: "???", operate: Cpu6502::NOP, addrmode: Cpu6502::IMP, cycles: 4 },
-            Instruction { name: "SBC", operate: Cpu6502::SBC, addrmode: Cpu6502::ABX, cycles: 4 },
-            Instruction { name: "INC", operate: Cpu6502::INC, addrmode: Cpu6502::ABX, cycles: 7 },
-            Instruction { name: "ISB", operate: Cpu6502::ISB, addrmode: Cpu6502::ABX, cycles: 7 },
-        ]
+        // sem borda espúria de NMI no power-on
+        self.nmi_level = bus.nmi_line();
+        self.nmi_pending = false;
+        self.nmi_pending_prev = false;
+        self.irq_run = false;
+        self.irq_run_prev = false;
     }
 }

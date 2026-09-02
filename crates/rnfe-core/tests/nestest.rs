@@ -7,7 +7,7 @@
 use rnfe_core::testing::nestest::{St, TOTAL_LINES, compare};
 
 /// Linhas do log que DEVEM bater. Meta: 8991.
-const VERIFIED_LINES: usize = 5004;
+const VERIFIED_LINES: usize = 8991;
 
 #[test]
 fn nestest_matches_log() {
