@@ -6,6 +6,12 @@ pub struct ColorDreams {
     chr_bank: u8,
 }
 
+impl Default for ColorDreams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ColorDreams {
     pub fn new() -> Self {
         ColorDreams { prg_bank: 0, chr_bank: 0 }

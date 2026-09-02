@@ -5,6 +5,12 @@ pub struct Camerica {
     prg_bank: u8,
 }
 
+impl Default for Camerica {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Camerica {
     pub fn new() -> Self {
         Camerica { prg_bank: 0 }

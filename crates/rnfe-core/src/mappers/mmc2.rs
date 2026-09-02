@@ -8,6 +8,12 @@ pub struct Mmc2 {
     latch: [u8; 2],
 }
 
+impl Default for Mmc2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mmc2 {
     pub fn new() -> Self {
         Mmc2 { prg_bank: 0, chr_banks: [0; 4], latch: [0xFE, 0xFE] }

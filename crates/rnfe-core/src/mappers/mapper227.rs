@@ -11,6 +11,12 @@ pub struct Mapper227 {
     fixed_bank: usize,
 }
 
+impl Default for Mapper227 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mapper227 {
     pub fn new() -> Self {
         Mapper227 { reg: 0, fixed_bank: 0 }

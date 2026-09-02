@@ -6,6 +6,12 @@ pub struct Gxrom {
     chr_bank: u8,
 }
 
+impl Default for Gxrom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gxrom {
     pub fn new() -> Self {
         Gxrom { prg_bank: 0, chr_bank: 0 }

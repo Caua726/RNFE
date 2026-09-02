@@ -24,6 +24,12 @@ pub struct Debugger {
     pub total_frames: u64,
 }
 
+impl Default for Debugger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Debugger {
     pub fn new() -> Self {
         let mut names = ["???"; 256];
@@ -215,13 +221,11 @@ impl Debugger {
         self.total_instructions += 1;
 
         // Detectar opcodes desconhecidos
-        if self.opcode_names[opcode as usize] == "???" {
-            if self.unknown_opcodes.len() < 100 {
-                let already = self.unknown_opcodes.iter().any(|(op, _)| *op == opcode);
-                if !already {
-                    self.unknown_opcodes.push((opcode, pc));
-                    log::warn!("opcode desconhecido 0x{:02X} at PC=0x{:04X}", opcode, pc);
-                }
+        if self.opcode_names[opcode as usize] == "???" && self.unknown_opcodes.len() < 100 {
+            let already = self.unknown_opcodes.iter().any(|(op, _)| *op == opcode);
+            if !already {
+                self.unknown_opcodes.push((opcode, pc));
+                log::warn!("opcode desconhecido 0x{:02X} at PC=0x{:04X}", opcode, pc);
             }
         }
 
@@ -295,7 +299,7 @@ impl Debugger {
         report.push_str("\nTop 10 opcodes mais executados:\n");
         let mut sorted: Vec<(usize, u64)> =
             self.opcode_count.iter().enumerate().filter(|(_, c)| **c > 0).map(|(i, c)| (i, *c)).collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|e| std::cmp::Reverse(e.1));
         for (i, (op, count)) in sorted.iter().take(10).enumerate() {
             report.push_str(&format!(
                 "  {}. 0x{:02X} {} = {} vezes\n",
@@ -311,11 +315,7 @@ impl Debugger {
 
     // Dump de nametable como texto
     pub fn dump_nametable(&self, bus: &Bus, nt: usize) -> Vec<u8> {
-        let mut data = vec![0u8; 960];
-        for i in 0..960 {
-            data[i] = bus.ppu.nametable[nt][i];
-        }
-        data
+        bus.ppu.nametable[nt][..960].to_vec()
     }
 
     // Dump de paleta

@@ -66,6 +66,12 @@ struct ObjectAttributeEntry {
     x: u8,
 }
 
+impl Default for Ppu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Ppu {
     pub fn new() -> Self {
         Ppu {
@@ -110,11 +116,9 @@ impl Ppu {
 
     pub fn load_chr(&mut self, chr_data: &[u8]) {
         let len = chr_data.len().min(8192);
-        for i in 0..len {
-            let table = (i >> 12) & 1;
-            let offset = i & 0x0FFF;
-            self.pattern_table[table][offset] = chr_data[i];
-        }
+        let (lo, hi) = chr_data[..len].split_at(len.min(4096));
+        self.pattern_table[0][..lo.len()].copy_from_slice(lo);
+        self.pattern_table[1][..hi.len()].copy_from_slice(hi);
     }
 
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {
@@ -268,10 +272,10 @@ impl Ppu {
                 }
             }
             self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize]
-        } else if addr >= 0x2000 && addr <= 0x3EFF {
+        } else if (0x2000..=0x3EFF).contains(&addr) {
             let (nt, offset) = self.mirror_nametable(addr);
             self.nametable[nt][offset]
-        } else if addr >= 0x3F00 && addr <= 0x3FFF {
+        } else if (0x3F00..=0x3FFF).contains(&addr) {
             let addr = addr & 0x001F;
             let addr = if addr == 0x0010 {
                 0x0000
@@ -293,12 +297,12 @@ impl Ppu {
     pub fn ppu_read(
         &mut self,
         addr: u16,
-        read_only: bool,
+        _read_only: bool,
         cartridge: Option<&mut crate::cartridge::Cartridge>,
     ) -> u8 {
         let addr = addr & 0x3FFF;
 
-        if addr >= 0x0000 && addr <= 0x1FFF {
+        if (0x0000..=0x1FFF).contains(&addr) {
             if let Some(cart) = cartridge {
                 if let Some(cart_data) = cart.ppu_read(addr) {
                     return cart_data;
@@ -321,10 +325,10 @@ impl Ppu {
             }
             // Também escrever no pattern_table local (fallback)
             self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize] = data;
-        } else if addr >= 0x2000 && addr <= 0x3EFF {
+        } else if (0x2000..=0x3EFF).contains(&addr) {
             let (nt, offset) = self.mirror_nametable(addr);
             self.nametable[nt][offset] = data;
-        } else if addr >= 0x3F00 && addr <= 0x3FFF {
+        } else if (0x3F00..=0x3FFF).contains(&addr) {
             let addr = addr & 0x001F;
             let addr = if addr == 0x0010 {
                 0x0000
@@ -344,7 +348,7 @@ impl Ppu {
     pub fn ppu_write(&mut self, addr: u16, data: u8, cartridge: Option<&mut crate::cartridge::Cartridge>) {
         let addr = addr & 0x3FFF;
 
-        if addr >= 0x0000 && addr <= 0x1FFF {
+        if (0x0000..=0x1FFF).contains(&addr) {
             if let Some(cart) = cartridge {
                 if cart.ppu_write(addr, data) {
                     return;
@@ -450,24 +454,23 @@ impl Ppu {
 
                 let mut oam_entry = 0;
                 while oam_entry < 64 && self.sprite_count < 9 {
-                    let diff = self.scanline as i16 - self.oam[(oam_entry * 4) as usize] as i16;
+                    let diff = self.scanline - self.oam[(oam_entry * 4) as usize] as i16;
                     if diff >= 0
                         && diff < if (self.control & 0x20) != 0 { 16 } else { 8 }
                         && self.sprite_count < 8
+                        && self.sprite_count < 8
                     {
-                        if self.sprite_count < 8 {
-                            if oam_entry == 0 {
-                                self.sprite_zero_hit_possible = true;
-                            }
-
-                            self.sprites_scanline[self.sprite_count] = ObjectAttributeEntry {
-                                y: self.oam[(oam_entry * 4) as usize],
-                                id: self.oam[(oam_entry * 4 + 1) as usize],
-                                attribute: self.oam[(oam_entry * 4 + 2) as usize],
-                                x: self.oam[(oam_entry * 4 + 3) as usize],
-                            };
-                            self.sprite_count += 1;
+                        if oam_entry == 0 {
+                            self.sprite_zero_hit_possible = true;
                         }
+
+                        self.sprites_scanline[self.sprite_count] = ObjectAttributeEntry {
+                            y: self.oam[(oam_entry * 4) as usize],
+                            id: self.oam[(oam_entry * 4 + 1) as usize],
+                            attribute: self.oam[(oam_entry * 4 + 2) as usize],
+                            x: self.oam[(oam_entry * 4 + 3) as usize],
+                        };
+                        self.sprite_count += 1;
                     }
                     oam_entry += 1;
                 }
@@ -476,10 +479,12 @@ impl Ppu {
 
             if self.cycle == 340 {
                 for i in 0..self.sprite_count {
-                    let mut sprite_pattern_bits_lo = 0u8;
-                    let mut sprite_pattern_bits_hi = 0u8;
-                    let mut sprite_pattern_addr_lo = 0u16;
-                    let mut sprite_pattern_addr_hi = 0u16;
+                    let mut sprite_pattern_bits_lo: u8;
+                    let mut sprite_pattern_bits_hi: u8;
+                    #[allow(clippy::needless_late_init)]
+                    let sprite_pattern_addr_lo: u16;
+                    #[allow(clippy::needless_late_init)]
+                    let sprite_pattern_addr_hi: u16;
 
                     if (self.control & 0x20) == 0 {
                         if (self.sprites_scanline[i].attribute & 0x80) == 0 {
@@ -540,12 +545,10 @@ impl Ppu {
             }
         }
 
-        if self.scanline >= 241 && self.scanline < 261 {
-            if self.scanline == 241 && self.cycle == 1 {
-                self.status |= 0x80;
-                if (self.control & 0x80) != 0 {
-                    self.nmi = true;
-                }
+        if self.scanline >= 241 && self.scanline < 261 && self.scanline == 241 && self.cycle == 1 {
+            self.status |= 0x80;
+            if (self.control & 0x80) != 0 {
+                self.nmi = true;
             }
         }
 
@@ -553,42 +556,38 @@ impl Ppu {
         let mut bg_palette = 0u8;
 
         // Temporariamente desabilitar background rendering para debug
-        if (self.mask & 0x08) != 0 {
-            if (self.mask & 0x02) != 0 || self.cycle >= 9 {
-                let bit_mux = 0x8000 >> self.fine_x;
-                let p0_pixel = if (self.bg_shifter_pattern_lo & bit_mux) > 0 { 1 } else { 0 };
-                let p1_pixel = if (self.bg_shifter_pattern_hi & bit_mux) > 0 { 1 } else { 0 };
-                bg_pixel = (p1_pixel << 1) | p0_pixel;
+        if (self.mask & 0x08) != 0 && ((self.mask & 0x02) != 0 || self.cycle >= 9) {
+            let bit_mux = 0x8000 >> self.fine_x;
+            let p0_pixel = if (self.bg_shifter_pattern_lo & bit_mux) > 0 { 1 } else { 0 };
+            let p1_pixel = if (self.bg_shifter_pattern_hi & bit_mux) > 0 { 1 } else { 0 };
+            bg_pixel = (p1_pixel << 1) | p0_pixel;
 
-                let bg_pal0 = if (self.bg_shifter_attr_lo & bit_mux) > 0 { 1 } else { 0 };
-                let bg_pal1 = if (self.bg_shifter_attr_hi & bit_mux) > 0 { 1 } else { 0 };
-                bg_palette = (bg_pal1 << 1) | bg_pal0;
-            }
+            let bg_pal0 = if (self.bg_shifter_attr_lo & bit_mux) > 0 { 1 } else { 0 };
+            let bg_pal1 = if (self.bg_shifter_attr_hi & bit_mux) > 0 { 1 } else { 0 };
+            bg_palette = (bg_pal1 << 1) | bg_pal0;
         }
 
         let mut fg_pixel = 0u8;
         let mut fg_palette = 0u8;
         let mut fg_priority = false;
 
-        if (self.mask & 0x10) != 0 {
-            if (self.mask & 0x04) != 0 || self.cycle >= 9 {
-                self.sprite_zero_being_rendered = false;
+        if (self.mask & 0x10) != 0 && ((self.mask & 0x04) != 0 || self.cycle >= 9) {
+            self.sprite_zero_being_rendered = false;
 
-                for i in 0..self.sprite_count {
-                    if self.sprites_scanline[i].x == 0 {
-                        let fg_pixel_lo = if (self.sprite_shifter_pattern_lo[i] & 0x80) > 0 { 1 } else { 0 };
-                        let fg_pixel_hi = if (self.sprite_shifter_pattern_hi[i] & 0x80) > 0 { 1 } else { 0 };
-                        fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo;
+            for i in 0..self.sprite_count {
+                if self.sprites_scanline[i].x == 0 {
+                    let fg_pixel_lo = if (self.sprite_shifter_pattern_lo[i] & 0x80) > 0 { 1 } else { 0 };
+                    let fg_pixel_hi = if (self.sprite_shifter_pattern_hi[i] & 0x80) > 0 { 1 } else { 0 };
+                    fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo;
 
-                        fg_palette = (self.sprites_scanline[i].attribute & 0x03) + 0x04;
-                        fg_priority = (self.sprites_scanline[i].attribute & 0x20) == 0;
+                    fg_palette = (self.sprites_scanline[i].attribute & 0x03) + 0x04;
+                    fg_priority = (self.sprites_scanline[i].attribute & 0x20) == 0;
 
-                        if fg_pixel != 0 {
-                            if i == 0 {
-                                self.sprite_zero_being_rendered = true;
-                            }
-                            break;
+                    if fg_pixel != 0 {
+                        if i == 0 {
+                            self.sprite_zero_being_rendered = true;
                         }
+                        break;
                     }
                 }
             }
@@ -615,17 +614,19 @@ impl Ppu {
                 palette = bg_palette;
             }
 
-            if self.sprite_zero_hit_possible && self.sprite_zero_being_rendered {
-                if (self.mask & 0x08) != 0 && (self.mask & 0x10) != 0 {
-                    if (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0 {
-                        // Left column clipping ativo, hit só a partir do pixel 8
-                        if self.cycle >= 9 && self.cycle < 258 {
-                            self.status |= 0x40;
-                        }
-                    } else {
-                        if self.cycle >= 1 && self.cycle < 258 {
-                            self.status |= 0x40;
-                        }
+            if self.sprite_zero_hit_possible
+                && self.sprite_zero_being_rendered
+                && (self.mask & 0x08) != 0
+                && (self.mask & 0x10) != 0
+            {
+                if (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0 {
+                    // Left column clipping ativo, hit só a partir do pixel 8
+                    if self.cycle >= 9 && self.cycle < 258 {
+                        self.status |= 0x40;
+                    }
+                } else {
+                    if self.cycle >= 1 && self.cycle < 258 {
+                        self.status |= 0x40;
                     }
                 }
             }

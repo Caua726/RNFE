@@ -28,7 +28,7 @@ impl Mmc3 {
 
 impl Mapper for Mmc3 {
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr >= 0x6000 && addr < 0x8000 {
+        if (0x6000..0x8000).contains(&addr) {
             return Some(data.prg_ram[(addr - 0x6000) as usize]);
         }
         if addr >= 0x8000 {
@@ -52,7 +52,7 @@ impl Mapper for Mmc3 {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
-        if addr >= 0x6000 && addr < 0x8000 {
+        if (0x6000..0x8000).contains(&addr) {
             data.prg_ram[(addr - 0x6000) as usize] = val;
             return true;
         }

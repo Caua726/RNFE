@@ -11,6 +11,12 @@ pub struct Mmc1 {
     prg_bank: u8,
 }
 
+impl Default for Mmc1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mmc1 {
     pub fn new() -> Self {
         Mmc1 { shift: 0x10, shift_count: 0, control: 0x0C, chr_bank0: 0, chr_bank1: 0, prg_bank: 0 }
@@ -33,7 +39,7 @@ impl Mapper for Mmc1 {
                         (self.prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0xC000)
                     }
                 }
-                3 | _ => {
+                _ => {
                     if addr < 0xC000 {
                         (self.prg_bank & 0x0F) as usize * 0x4000 + (addr as usize - 0x8000)
                     } else {
@@ -50,7 +56,7 @@ impl Mapper for Mmc1 {
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
-        if addr >= 0x6000 && addr < 0x8000 {
+        if (0x6000..0x8000).contains(&addr) {
             data.prg_ram[(addr - 0x6000) as usize] = val;
             return true;
         }

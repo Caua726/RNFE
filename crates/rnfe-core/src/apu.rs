@@ -381,6 +381,12 @@ pub struct Apu {
     pub dmc_read_addr: Option<u16>,
 }
 
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Apu {
     pub fn new() -> Self {
         Apu {

@@ -9,7 +9,8 @@ use rnfe_core::testing::{fnv1a64, load, write_ppm};
 use std::path::Path;
 
 /// (nome, ROM relativa a test-roms/, frames, [(frame, botões)])
-const SNAPSHOTS: &[(&str, &str, u32, &[(u32, u8)])] = &[
+type Snapshot = (&'static str, &'static str, u32, &'static [(u32, u8)]);
+const SNAPSHOTS: &[Snapshot] = &[
     ("nestest_menu", "other/nestest.nes", 60, &[]),
     ("nestest_run", "other/nestest.nes", 240, &[(30, 0x10), (32, 0x00)]), // Start: roda os testes
     ("full_palette", "full_palette/full_palette.nes", 120, &[]),

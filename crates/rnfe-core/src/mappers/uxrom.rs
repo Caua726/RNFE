@@ -5,6 +5,12 @@ pub struct Uxrom {
     bank: u8,
 }
 
+impl Default for Uxrom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Uxrom {
     pub fn new() -> Self {
         Uxrom { bank: 0 }

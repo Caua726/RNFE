@@ -8,6 +8,12 @@ pub struct Fme7 {
     chr_banks: [u8; 8],
 }
 
+impl Default for Fme7 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Fme7 {
     pub fn new() -> Self {
         Fme7 { command: 0, prg_banks: [0; 4], chr_banks: [0; 8] }

@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-06 (status/bench/snapshots)
+Tarefa: F0-07 (qualidade)
 Estado: concluída
-Próximo: F0-07 — check.sh, peak-rss.sh, rustfmt, clippy -D warnings
+Próximo: F0-08 — rnfe-frontend mínimo + rnfe-tty
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -24,7 +24,7 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - `bench --rom other/BladeBuster.nes --frames 1500`: 280 fps · 3,57 ms/frame · VmHWM 4,3 MB
 - `bench --rom mmc3_test_2/1-clocking.nes --frames 1500`: 317 fps · 3,16 ms/frame
 - `cargo test -p rnfe-core` (21 suítes blargg + nestest + snapshots + rom_parse): ~80 s
-- `status` (120 ROMs, 6 threads): 38 s · `cargo build -p rnfe-core` debug: 9,5 s
+- `status` (120 ROMs, 6 threads): 38 s · `cargo build -p rnfe-core` debug: 9,5 s · release: pico de RAM do rustc 276 MB (`scripts/peak-rss.sh`)
 - ROMs: 30 Pass / 90 KnownFail · nestest 5004/8991 · 10 snapshots
 
 ## Alvos
@@ -39,7 +39,7 @@ F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
 - [x] F0-04 NROM: máscara 32 KB (`& 0x3FFF` extra) + PRG RAM `$6000-$7FFF`
 - [x] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
 - [x] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
-- [ ] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
+- [x] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
 - [ ] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
 - [ ] F0-09 CI: ci.yml (core, desktop-check, bench)
 - [ ] F0-10 README real + CHANGELOG

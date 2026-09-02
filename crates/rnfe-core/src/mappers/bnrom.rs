@@ -5,6 +5,12 @@ pub struct Bnrom {
     prg_bank: u8,
 }
 
+impl Default for Bnrom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bnrom {
     pub fn new() -> Self {
         Bnrom { prg_bank: 0 }

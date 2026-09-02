@@ -5,6 +5,12 @@ pub struct Cnrom {
     chr_bank: u8,
 }
 
+impl Default for Cnrom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cnrom {
     pub fn new() -> Self {
         Cnrom { chr_bank: 0 }

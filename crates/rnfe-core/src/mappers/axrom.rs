@@ -6,6 +6,12 @@ pub struct Axrom {
     prg_bank: u8,
 }
 
+impl Default for Axrom {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Axrom {
     pub fn new() -> Self {
         Axrom { prg_bank: 0 }

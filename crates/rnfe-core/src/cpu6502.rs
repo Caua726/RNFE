@@ -34,6 +34,12 @@ pub struct Instruction {
 }
 //Vector<Instruction> lookup
 
+impl Default for Cpu6502 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Cpu6502 {
     pub fn new() -> Self {
         Cpu6502 {
@@ -87,7 +93,7 @@ impl Cpu6502 {
     // A instrução espera até o proximo bit para ser usado
     // Como valor, o endereco de leitura deve apontar ao
     // Proximo valor
-    pub fn IMM(&mut self, bus: &mut crate::bus::Bus) -> u8 {
+    pub fn IMM(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.addr_abs = self.pc;
         self.pc = self.pc.wrapping_add(1);
         0
@@ -111,7 +117,7 @@ impl Cpu6502 {
     // Isso é util para interagir com areas da memória
     // Como um array em C
     pub fn ZPX(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let base = self.read(bus, self.pc) as u8;
+        let base = self.read(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
         self.addr_abs = base.wrapping_add(self.x) as u16;
         0
@@ -119,7 +125,7 @@ impl Cpu6502 {
     // ZPY: Zero Paging Y
     // O Mesmo do ZPX mas com Y
     pub fn ZPY(&mut self, bus: &mut crate::bus::Bus) -> u8 {
-        let base = self.read(bus, self.pc) as u8;
+        let base = self.read(bus, self.pc);
         self.pc = self.pc.wrapping_add(1);
         self.addr_abs = base.wrapping_add(self.y) as u16;
         0
@@ -201,7 +207,7 @@ impl Cpu6502 {
         let lo: u16 = self.read(bus, (t + (self.x as u16)) & 0x00FF) as u16;
         let hi: u16 = self.read(bus, (t + (self.x as u16) + 1) & 0x00FF) as u16;
 
-        self.addr_abs = (hi << 8 | lo);
+        self.addr_abs = hi << 8 | lo;
 
         0
     }
@@ -216,7 +222,7 @@ impl Cpu6502 {
         let lo: u16 = self.read(bus, t & 0x00FF) as u16;
         let hi: u16 = self.read(bus, (t + 1) & 0x00FF) as u16;
 
-        let base = ((hi << 8) | lo) as u16;
+        let base = (hi << 8) | lo;
         self.addr_abs = base.wrapping_add(self.y as u16);
 
         if (self.addr_abs & 0xFF00) != (base & 0xFF00) { 1 } else { 0 }
@@ -252,9 +258,9 @@ impl Cpu6502 {
         let idx = self.opcode as usize;
         let am = self.lookup[idx].addrmode as usize;
 
-        if am == Cpu6502::ACC as usize {
+        if am == Cpu6502::ACC as *const () as usize {
             self.fetched = self.a;
-        } else if am != Cpu6502::IMP as usize {
+        } else if am != Cpu6502::IMP as *const () as usize {
             self.fetched = self.read(bus, self.addr_abs);
         }
         self.fetched
@@ -263,11 +269,11 @@ impl Cpu6502 {
     // AND: And
     pub fn AND(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.fetch(bus);
-        self.a = self.a & self.fetched;
+        self.a &= self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0x00);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
 
-        return 1;
+        1
     }
 
     // BCS: Branch Carry Set
@@ -281,7 +287,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BCC: Branch Carry Clear
@@ -294,7 +300,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BEQ: Branch Equal
@@ -307,7 +313,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BMI: Branch Minus
@@ -320,7 +326,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BME: Branch Not Equal
@@ -333,7 +339,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BPL: Branch Plus
@@ -346,7 +352,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BVC: Branch Overflow
@@ -359,7 +365,7 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // BVS: Branch Not Overflow
@@ -372,13 +378,13 @@ impl Cpu6502 {
             }
             self.pc = self.addr_abs;
         }
-        return 0;
+        0
     }
 
     // CLC: Clear Carry Bit
     pub fn CLC(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
         self.setFlag(FLAGS6502::C, false);
-        return 0;
+        0
     }
     // CLD: Clear Decimal Mode
     pub fn CLD(&mut self, _bus: &mut crate::bus::Bus) -> u8 {
@@ -448,7 +454,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
 
         // V: (~(A^M) & (A^R) & 0x80) != 0
-        self.setFlag(FLAGS6502::V, (((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0));
+        self.setFlag(FLAGS6502::V, ((!(self.a ^ self.fetched)) & (self.a ^ r) & 0x80) != 0);
 
         self.a = r;
         1
@@ -469,7 +475,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
 
         // V (SBC): ((A^R) & (A^M) & 0x80) != 0
-        self.setFlag(FLAGS6502::V, (((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0));
+        self.setFlag(FLAGS6502::V, ((self.a ^ r) & (self.a ^ self.fetched) & 0x80) != 0);
 
         self.a = r;
         1
@@ -498,7 +504,7 @@ impl Cpu6502 {
         self.stkp = self.stkp.wrapping_add(1);
         self.status = self.read(bus, 0x0100 + self.stkp as u16);
         self.status &= !(FLAGS6502::B as u8);
-        self.status |= (FLAGS6502::U as u8);
+        self.status |= FLAGS6502::U as u8;
 
         self.stkp = self.stkp.wrapping_add(1);
         let lo = self.read(bus, 0x0100 + self.stkp as u16) as u16;
@@ -519,7 +525,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
@@ -586,7 +592,7 @@ impl Cpu6502 {
     // EOR: Exclusive OR
     pub fn EOR(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.fetch(bus);
-        self.a = self.a ^ self.fetched;
+        self.a ^= self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         1
@@ -671,7 +677,7 @@ impl Cpu6502 {
         let temp = self.fetched >> 1;
         self.setFlag(FLAGS6502::Z, temp == 0);
         self.setFlag(FLAGS6502::N, false);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
             self.a = temp;
         } else {
             self.write(bus, self.addr_abs, temp);
@@ -690,7 +696,7 @@ impl Cpu6502 {
     // ORA: Logical Inclusive OR
     pub fn ORA(&mut self, bus: &mut crate::bus::Bus) -> u8 {
         self.fetch(bus);
-        self.a = self.a | self.fetched;
+        self.a |= self.fetched;
         self.setFlag(FLAGS6502::Z, self.a == 0);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         1
@@ -719,7 +725,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, temp > 0x00FF);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
@@ -734,7 +740,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, (self.fetched & 0x01) != 0);
         self.setFlag(FLAGS6502::Z, (temp & 0x00FF) == 0);
         self.setFlag(FLAGS6502::N, (temp & 0x0080) != 0);
-        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as usize {
+        if self.lookup[self.opcode as usize].addrmode as usize == Cpu6502::ACC as *const () as usize {
             self.a = (temp & 0x00FF) as u8;
         } else {
             self.write(bus, self.addr_abs, (temp & 0x00FF) as u8);
@@ -884,7 +890,7 @@ impl Cpu6502 {
         self.setFlag(FLAGS6502::C, (result & 0xFF00) != 0);
         self.setFlag(FLAGS6502::Z, r == 0);
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(FLAGS6502::V, (((self.a ^ r) & (self.a ^ temp) & 0x80) != 0));
+        self.setFlag(FLAGS6502::V, ((self.a ^ r) & (self.a ^ temp) & 0x80) != 0);
         self.a = r;
         0
     }
@@ -898,7 +904,7 @@ impl Cpu6502 {
         let shifted = (temp & 0x00FF) as u8;
         self.write(bus, self.addr_abs, shifted);
         // ORA
-        self.a = self.a | shifted;
+        self.a |= shifted;
         self.setFlag(FLAGS6502::Z, self.a == 0);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         0
@@ -913,7 +919,7 @@ impl Cpu6502 {
         let rotated = (temp & 0x00FF) as u8;
         self.write(bus, self.addr_abs, rotated);
         // AND
-        self.a = self.a & rotated;
+        self.a &= rotated;
         self.setFlag(FLAGS6502::Z, self.a == 0);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         0
@@ -927,7 +933,7 @@ impl Cpu6502 {
         let shifted = self.fetched >> 1;
         self.write(bus, self.addr_abs, shifted);
         // EOR
-        self.a = self.a ^ shifted;
+        self.a ^= shifted;
         self.setFlag(FLAGS6502::Z, self.a == 0);
         self.setFlag(FLAGS6502::N, (self.a & 0x80) != 0);
         0
@@ -947,7 +953,7 @@ impl Cpu6502 {
         let r = (result & 0x00FF) as u8;
         self.setFlag(FLAGS6502::Z, r == 0);
         self.setFlag(FLAGS6502::N, (r & 0x80) != 0);
-        self.setFlag(FLAGS6502::V, (((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0));
+        self.setFlag(FLAGS6502::V, ((!(self.a ^ rotated)) & (self.a ^ r) & 0x80) != 0);
         self.a = r;
         0
     }
@@ -975,7 +981,7 @@ impl Cpu6502 {
             self.cycles = base_cycles;
             let cycle0 = addrmode(self, bus);
             let cycle1 = operate(self, bus);
-            self.cycles = self.cycles.wrapping_add((cycle0 & cycle1) as u8);
+            self.cycles = self.cycles.wrapping_add(cycle0 & cycle1);
         }
         self.cycles = self.cycles.wrapping_sub(1);
     }
@@ -986,10 +992,10 @@ impl Cpu6502 {
         self.x = 0;
         self.y = 0;
         self.stkp = 0xFD;
-        self.status = 0x00 | FLAGS6502::U as u8;
+        self.status = FLAGS6502::U as u8;
 
         self.addr_abs = 0xFFFC;
-        let lo = self.read(bus, self.addr_abs + 0);
+        let lo = self.read(bus, self.addr_abs);
         let hi = self.read(bus, self.addr_abs + 1);
 
         self.pc = ((hi as u16) << 8) | (lo as u16);
