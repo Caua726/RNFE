@@ -150,6 +150,7 @@ impl Bus {
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.cpu_write(addr, data),
             0x4018..=0x401F => {}
             _ => {
+                self.cartridge.data.cpu_cycle = self.cpu_cycles;
                 self.cartridge.cpu_write(addr, data);
             }
         }

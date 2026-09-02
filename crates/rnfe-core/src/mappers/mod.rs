@@ -53,6 +53,8 @@ pub struct CartData {
     pub submapper: u8,
     /// Alguém escreveu na PRG RAM desde o último `take_prg_ram_dirty`.
     pub prg_ram_dirty: bool,
+    /// Ciclo de CPU da escrita em curso (o bus atualiza antes de `cpu_write`).
+    pub cpu_cycle: u64,
 }
 
 impl CartData {
@@ -79,6 +81,7 @@ impl CartData {
             mapper: hdr.mapper,
             submapper: hdr.submapper,
             prg_ram_dirty: false,
+            cpu_cycle: 0,
         }
     }
 
