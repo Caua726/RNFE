@@ -1,6 +1,6 @@
 # Status do RNFE
 
-Gerado por `cargo run -p rnfe-core --release --bin status` · commit `30305d6`.
+Gerado por `cargo run -p rnfe-core --release --bin status` · commit `600d960`.
 Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo test`.
 
 **nestest:** 5004/8991 linhas idênticas ao log (registradores e ciclos); primeira divergência na linha 5005
