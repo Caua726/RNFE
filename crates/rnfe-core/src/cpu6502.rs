@@ -203,6 +203,7 @@ pub static LOOKUP: [(Op, Mode); 256] = {
     ]
 };
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
 pub struct Cpu6502 {
     pub a: u8,

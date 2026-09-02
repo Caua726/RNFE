@@ -27,9 +27,19 @@ pub fn roms_dir() -> PathBuf {
 }
 
 pub fn load(rel_path: &str) -> Result<Nes, String> {
+    load_with(rel_path, 0)
+}
+
+/// Carrega a ROM; com `submapper > 0` reescreve o header como NES 2.0 com esse submapper.
+pub fn load_with(rel_path: &str, submapper: u8) -> Result<Nes, String> {
     let full = roms_dir().join(rel_path);
-    let bytes = std::fs::read(&full)
+    let mut bytes = std::fs::read(&full)
         .map_err(|e| format!("ROM ausente {} ({e}); rode scripts/fetch-roms.sh", full.display()))?;
+    if submapper > 0 && bytes.len() >= 16 {
+        bytes[7] = (bytes[7] & 0xF3) | 0x08;
+        bytes[8] = submapper << 4;
+        bytes[9..16].fill(0);
+    }
     let cart = Cartridge::from_bytes(&bytes).map_err(|e| format!("{rel_path}: {e}"))?;
     Ok(Nes::new(cart))
 }
@@ -64,7 +74,7 @@ fn last_line(s: &str) -> String {
 
 /// Roda a ROM segundo o protocolo do estilo. Determinístico: só conta frames.
 pub fn run(t: &TestRom) -> Outcome {
-    let mut nes = match load(t.path) {
+    let mut nes = match load_with(t.path, t.submapper) {
         Ok(n) => n,
         Err(e) => return Outcome::Skip(e),
     };

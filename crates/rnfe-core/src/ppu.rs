@@ -69,6 +69,8 @@ const NES_PALETTE: [[u8; 4]; 64] = [
 use crate::cartridge::{Cartridge, Mirror};
 
 /// Dots entre a escrita em `$2001` e o render ligar/desligar de fato.
+/// Dots que A12 precisa ficar baixo para a próxima subida clockar o MMC3 (~3 ciclos de M2).
+const A12_FILTER_DOTS: u64 = 10;
 const RENDER_DELAY: u8 = 2;
 /// Frames até um bit do open bus da PPU decair (~600 ms).
 const IO_DECAY_FRAMES: u8 = 36;
@@ -99,8 +101,11 @@ const fn build_palette() -> [[u8; 4]; 512] {
     out
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Ppu {
-    pub nametable: [[u8; 1024]; 2],
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::nt"))]
+    pub nametable: [[u8; 1024]; 4],
     pub palette_table: [u8; 32],
 
     // Status registers
@@ -126,6 +131,7 @@ pub struct Ppu {
     bg_shifter_attr_hi: u16,
 
     // Sprite rendering
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::bytes"))]
     pub oam: [u8; 256],
     oam_addr: u8,
     sprites_scanline: [ObjectAttributeEntry; 8],
@@ -142,6 +148,7 @@ pub struct Ppu {
     next_sprite_zero: bool,
 
     /// Framebuffer por índice de paleta (`ênfase << 6 | cor`), 256×240. RGBA via `PALETTE_RGBA`.
+    #[cfg_attr(feature = "serde", serde(skip, default = "blank_screen"))]
     pub screen: Box<[u16; 256 * 240]>,
 
     // Timing
@@ -150,8 +157,14 @@ pub struct Ppu {
 
     pub frame_complete: bool,
 
-    // Scanline callback (pra MMC3 IRQ)
-    pub scanline_trigger: bool,
+    /// Borda de subida de A12 no barramento da PPU (filtrada): o bus entrega ao mapper.
+    pub a12_rise: bool,
+    /// Dots desde o power-on (para o filtro de A12).
+    dots: u64,
+    /// Dot em que A12 ficou baixo pela última vez (`None` = está alto).
+    a12_low_since: Option<u64>,
+    /// Endereço do padrão do sprite sendo buscado (dots 257–320).
+    sprite_fetch_addr: u16,
 
     // Frame par/ímpar
     odd_frame: bool,
@@ -167,12 +180,17 @@ pub struct Ppu {
     render_delay: u8,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy)]
 struct ObjectAttributeEntry {
     y: u8,
     id: u8,
     attribute: u8,
     x: u8,
+}
+
+fn blank_screen() -> Box<[u16; 256 * 240]> {
+    vec![0u16; 256 * 240].into_boxed_slice().try_into().unwrap()
 }
 
 impl Default for Ppu {
@@ -184,7 +202,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Self {
         Ppu {
-            nametable: [[0; 1024]; 2],
+            nametable: [[0; 1024]; 4],
             palette_table: [0; 32],
             status: 0x80, // vblank flag setado no powerup
             mask: 0,
@@ -214,11 +232,14 @@ impl Ppu {
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             next_sprite_count: 0,
             next_sprite_zero: false,
-            screen: vec![0u16; 256 * 240].into_boxed_slice().try_into().unwrap(),
+            screen: blank_screen(),
             scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
             frame_complete: false,
-            scanline_trigger: false,
+            a12_rise: false,
+            dots: 0,
+            a12_low_since: None,
+            sprite_fetch_addr: 0,
             odd_frame: false,
             prevent_vbl: false,
             io_bus: 0,
@@ -227,6 +248,20 @@ impl Ppu {
             render_next: false,
             render_delay: 0,
         }
+    }
+
+    /// Cópia do estado para save state, sem duplicar o framebuffer.
+    #[cfg(feature = "serde")]
+    pub(crate) fn clone_state(&self) -> Ppu {
+        let mut p = Ppu { screen: blank_screen(), ..self.clone_without_screen() };
+        p.frame_complete = false;
+        p
+    }
+
+    #[cfg(feature = "serde")]
+    fn clone_without_screen(&self) -> Ppu {
+        // clone() copia o Box do framebuffer (123 KB) — aceitável para um save state
+        self.clone()
     }
 
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {
@@ -314,6 +349,7 @@ impl Ppu {
             self.increment_scroll_y();
         } else {
             self.vram_addr = self.vram_addr.wrapping_add(if self.control & 0x04 != 0 { 32 } else { 1 });
+            self.v_changed();
         }
     }
 
@@ -363,6 +399,7 @@ impl Ppu {
                     self.tram_addr = (self.tram_addr & 0xFF00) | data as u16;
                     self.vram_addr = self.tram_addr; // t -> v on second write
                     self.address_latch = 0;
+                    self.v_changed();
                 }
             }
             0x0007 => {
@@ -383,14 +420,45 @@ impl Ppu {
             Mirror::Horizontal => table >> 1,
             Mirror::OneScreenLo => 0,
             Mirror::OneScreenHi => 1,
+            Mirror::FourScreen => table,
         };
         (nt, offset)
+    }
+
+    /// Um endereço foi posto no barramento da PPU: detector de borda de A12 com o filtro do
+    /// MMC3 (A12 precisa ter ficado baixo por alguns ciclos de M2 para a subida contar).
+    #[inline]
+    fn bus_addr(&mut self, addr: u16) {
+        if addr & 0x1000 == 0 {
+            if self.a12_low_since.is_none() {
+                self.a12_low_since = Some(self.dots);
+            }
+        } else if let Some(t) = self.a12_low_since.take() {
+            if self.dots - t >= A12_FILTER_DOTS {
+                self.a12_rise = true;
+            }
+        }
+    }
+
+    /// Está buscando tiles (render ligado numa linha visível ou na pré-render)?
+    #[inline]
+    fn fetching(&self) -> bool {
+        self.rendering && self.scanline < 240
+    }
+
+    /// `v` mudou fora do render: o barramento da PPU mostra `v`.
+    #[inline]
+    fn v_changed(&mut self) {
+        if !self.fetching() {
+            self.bus_addr(self.vram_addr);
+        }
     }
 
     /// Leitura no barramento da PPU: CHR pelo mapper, nametables com o mirroring atual, paleta.
     #[inline]
     fn vram_read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
         let addr = addr & 0x3FFF;
+        self.bus_addr(addr);
         if addr <= 0x1FFF {
             cart.chr_read(addr)
         } else if addr <= 0x3EFF {
@@ -411,6 +479,7 @@ impl Ppu {
     #[inline]
     fn vram_write(&mut self, addr: u16, data: u8, cart: &mut Cartridge) {
         let addr = addr & 0x3FFF;
+        self.bus_addr(addr);
         if addr <= 0x1FFF {
             cart.chr_write(addr, data);
         } else if addr <= 0x3EFF {
@@ -421,8 +490,29 @@ impl Ppu {
         }
     }
 
+    /// Endereço do padrão (plano baixo) do sprite no `slot` para a linha atual; slots vazios
+    /// e a linha de pré-render usam o tile $FF, como o hardware.
+    fn sprite_pattern_addr(&self, slot: usize) -> u16 {
+        let tall = (self.control & 0x20) != 0;
+        if slot >= self.sprite_count || self.scanline < 0 {
+            return if tall { 0x1FE0 } else { ((self.control as u16 & 0x08) << 9) | 0x0FF0 };
+        }
+        let sp = self.sprites_scanline[slot];
+        let last = if tall { 15u16 } else { 7 };
+        let mut row = (self.scanline - sp.y as i16) as u16 & last;
+        if sp.attribute & 0x80 != 0 {
+            row = last - row; // flip vertical
+        }
+        if tall {
+            ((sp.id as u16 & 0x01) << 12) | ((sp.id as u16 & 0xFE) << 4) | ((row & 8) << 1) | (row & 7)
+        } else {
+            ((self.control as u16 & 0x08) << 9) | ((sp.id as u16) << 4) | row
+        }
+    }
+
     /// Um dot de PPU.
     pub fn step(&mut self, cart: &mut Cartridge) {
+        self.dots += 1;
         if self.render_delay > 0 {
             self.render_delay -= 1;
             if self.render_delay == 0 {
@@ -496,11 +586,6 @@ impl Ppu {
                 self.increment_scroll_y();
             }
 
-            // MMC3 scanline counter trigger (A12 rising edge)
-            if self.cycle == 260 && self.rendering {
-                self.scanline_trigger = true;
-            }
-
             if self.cycle == 257 {
                 self.transfer_address_x();
             }
@@ -532,32 +617,29 @@ impl Ppu {
                 self.oam_addr = 0;
             }
 
-            // Busca dos padrões dos sprites da próxima linha (feita de uma vez no dot 340)
-            if self.cycle == 340 && self.scanline >= 0 {
-                let tall = (self.control & 0x20) != 0;
-                let last = if tall { 15u16 } else { 7 };
-                for i in 0..self.sprite_count {
-                    let sp = self.sprites_scanline[i];
-                    let mut row = (self.scanline - sp.y as i16) as u16 & last;
-                    if sp.attribute & 0x80 != 0 {
-                        row = last - row; // flip vertical
+            // Busca dos padrões dos sprites da próxima linha, nos dots 257–320 como no hardware
+            // (8 slots × 8 dots: 2 leituras de nametable descartadas, depois lo e hi do padrão).
+            // Slots sem sprite buscam o tile $FF — isso é o que clocka o MMC3 em toda linha.
+            if self.rendering && (257..=320).contains(&self.cycle) {
+                let slot = ((self.cycle - 257) / 8) as usize;
+                match (self.cycle - 257) % 8 {
+                    0 | 2 => self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF)),
+                    4 => {
+                        self.sprite_fetch_addr = self.sprite_pattern_addr(slot);
+                        let lo = self.vram_read(self.sprite_fetch_addr, cart);
+                        if slot < self.sprite_count && self.scanline >= 0 {
+                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
+                            self.sprite_shifter_pattern_lo[slot] = if flip { lo.reverse_bits() } else { lo };
+                        }
                     }
-                    let addr = if tall {
-                        ((sp.id as u16 & 0x01) << 12)
-                            | ((sp.id as u16 & 0xFE) << 4)
-                            | ((row & 8) << 1)
-                            | (row & 7)
-                    } else {
-                        ((self.control as u16 & 0x08) << 9) | ((sp.id as u16) << 4) | row
-                    };
-                    let mut lo = self.vram_read(addr, cart);
-                    let mut hi = self.vram_read(addr + 8, cart);
-                    if sp.attribute & 0x40 != 0 {
-                        lo = lo.reverse_bits(); // flip horizontal
-                        hi = hi.reverse_bits();
+                    6 => {
+                        let hi = self.vram_read(self.sprite_fetch_addr + 8, cart);
+                        if slot < self.sprite_count && self.scanline >= 0 {
+                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
+                            self.sprite_shifter_pattern_hi[slot] = if flip { hi.reverse_bits() } else { hi };
+                        }
                     }
-                    self.sprite_shifter_pattern_lo[i] = lo;
-                    self.sprite_shifter_pattern_hi[i] = hi;
+                    _ => {}
                 }
             }
         }

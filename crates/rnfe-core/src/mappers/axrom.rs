@@ -1,28 +1,24 @@
-// Mapper 007 (AxROM) - 32KB PRG switching + single screen mirroring
+//! Mapper 007 (AxROM): 32 KB de PRG comutáveis + mirroring de uma tela escolhido pelo jogo.
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Axrom {
     prg_bank: u8,
 }
 
-impl Default for Axrom {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Axrom {
     pub fn new() -> Self {
-        Axrom { prg_bank: 0 }
+        Axrom::default()
     }
 }
 
 impl Mapper for Axrom {
+    #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 {
-            let offset = self.prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
-            Some(data.prg[offset % data.prg.len()])
+            Some(data.prg_at(self.prg_bank as usize * 0x8000 + (addr & 0x7FFF) as usize))
         } else {
             None
         }
@@ -38,11 +34,12 @@ impl Mapper for Axrom {
         }
     }
 
-    fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
+    fn reset(&mut self, data: &mut CartData) {
+        self.prg_bank = 0;
+        data.mirror = Mirror::OneScreenLo;
     }
 
-    fn reset(&mut self, _prg_banks: u8) {
-        self.prg_bank = 0;
+    fn state_string(&self) -> String {
+        format!("  AxROM PRG bank: {}\n", self.prg_bank)
     }
 }

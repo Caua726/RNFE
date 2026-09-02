@@ -1,28 +1,24 @@
-// Mapper 066 (GxROM) - bits 4-5 = PRG bank, bits 0-1 = CHR bank
+//! Mapper 066 (GxROM): bits 4-5 = banco de PRG (32 KB), bits 0-1 = banco de CHR (8 KB).
 use super::{CartData, Mapper};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Gxrom {
     prg_bank: u8,
     chr_bank: u8,
 }
 
-impl Default for Gxrom {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Gxrom {
     pub fn new() -> Self {
-        Gxrom { prg_bank: 0, chr_bank: 0 }
+        Gxrom::default()
     }
 }
 
 impl Mapper for Gxrom {
+    #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 {
-            let offset = self.prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
-            Some(data.prg[offset % data.prg.len()])
+            Some(data.prg_at(self.prg_bank as usize * 0x8000 + (addr & 0x7FFF) as usize))
         } else {
             None
         }
@@ -38,16 +34,12 @@ impl Mapper for Gxrom {
         }
     }
 
-    fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            let offset = self.chr_bank as usize * 0x2000 + addr as usize;
-            Some(data.chr[offset % data.chr.len()])
-        } else {
-            None
-        }
+    #[inline]
+    fn chr_offset(&self, addr: u16) -> usize {
+        self.chr_bank as usize * 0x2000 + addr as usize
     }
 
-    fn reset(&mut self, _prg_banks: u8) {
+    fn reset(&mut self, _data: &mut CartData) {
         self.prg_bank = 0;
         self.chr_bank = 0;
     }

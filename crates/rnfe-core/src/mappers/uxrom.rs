@@ -1,32 +1,25 @@
-// Mapper 002 (UxROM) - 16KB PRG switching, CHR RAM
+//! Mapper 002 (UxROM): 16 KB comutáveis em `$8000`, último banco fixo em `$C000`, CHR RAM.
 use super::{CartData, Mapper};
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
 pub struct Uxrom {
     bank: u8,
 }
 
-impl Default for Uxrom {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Uxrom {
     pub fn new() -> Self {
-        Uxrom { bank: 0 }
+        Uxrom::default()
     }
 }
 
 impl Mapper for Uxrom {
+    #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr >= 0xC000 {
-            let offset = (data.prg_banks as usize - 1) * 0x4000 + (addr as usize - 0xC000);
-            Some(data.prg[offset % data.prg.len()])
-        } else if addr >= 0x8000 {
-            let offset = self.bank as usize * 0x4000 + (addr as usize - 0x8000);
-            Some(data.prg[offset % data.prg.len()])
-        } else {
-            None
+        match addr {
+            0xC000..=0xFFFF => Some(data.prg_at((data.prg_16k() - 1) * 0x4000 + (addr & 0x3FFF) as usize)),
+            0x8000..=0xBFFF => Some(data.prg_at(self.bank as usize * 0x4000 + (addr & 0x3FFF) as usize)),
+            _ => None,
         }
     }
 
@@ -39,11 +32,11 @@ impl Mapper for Uxrom {
         }
     }
 
-    fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
+    fn reset(&mut self, _data: &mut CartData) {
+        self.bank = 0;
     }
 
-    fn reset(&mut self, _prg_banks: u8) {
-        self.bank = 0;
+    fn state_string(&self) -> String {
+        format!("  UxROM bank: {}\n", self.bank)
     }
 }

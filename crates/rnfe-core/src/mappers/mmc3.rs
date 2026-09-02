@@ -1,213 +1,172 @@
-// Mapper 004 (MMC3) - PRG/CHR bank switching + scanline IRQ
+//! Mapper 004 (MMC3): 8 registradores de banco + contador de scanline clockado por A12.
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
 pub struct Mmc3 {
     bank_select: u8,
-    prg_banks: [u8; 4],
-    chr_banks: [u8; 8],
+    regs: [u8; 8],
     irq_counter: u8,
-    irq_reload: u8,
+    irq_latch: u8,
+    /// `$C001` escrito: o próximo clock recarrega em vez de decrementar.
+    irq_reload: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    /// `$A001`: bit 7 habilita a PRG RAM, bit 6 protege contra escrita.
+    ram_ctrl: u8,
+    /// Revisão A (NEC, submapper 4.4): IRQ só na transição para 0, não a cada clock em 0.
+    rev_a: bool,
 }
 
 impl Mmc3 {
-    pub fn new(prg_banks: u8) -> Self {
+    pub fn new(data: &CartData) -> Self {
         Mmc3 {
             bank_select: 0,
-            prg_banks: [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)],
-            chr_banks: [0, 1, 2, 3, 4, 5, 6, 7],
+            regs: [0, 2, 4, 5, 6, 7, 0, 1],
             irq_counter: 0,
-            irq_reload: 0,
+            irq_latch: 0,
+            irq_reload: false,
             irq_enabled: false,
             irq_pending: false,
+            ram_ctrl: 0x80,
+            rev_a: data.submapper == 4,
         }
     }
 }
 
 impl Mapper for Mmc3 {
+    #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
-        if (0x6000..0x8000).contains(&addr) {
-            return Some(data.prg_ram[(addr - 0x6000) as usize]);
-        }
-        if addr >= 0x8000 {
-            let bank = match addr {
-                0x8000..=0x9FFF => self.prg_banks[0],
-                0xA000..=0xBFFF => self.prg_banks[1],
-                0xC000..=0xDFFF => self.prg_banks[2],
-                0xE000..=0xFFFF => self.prg_banks[3],
-                _ => 0,
-            };
-            let bank_offset = (bank as usize) * 0x2000;
-            let addr_offset = (addr & 0x1FFF) as usize;
-            if bank_offset + addr_offset < data.prg.len() {
-                Some(data.prg[bank_offset + addr_offset])
+        if addr < 0x8000 {
+            return if addr >= 0x6000 && self.ram_ctrl & 0x80 != 0 {
+                Some(data.prg_ram_at((addr & 0x1FFF) as usize))
             } else {
-                Some(0)
-            }
-        } else {
-            None
+                None
+            };
         }
+        let swap = self.bank_select & 0x40 != 0;
+        let last = data.prg_8k() - 1;
+        let bank = match (addr >> 13) & 3 {
+            0 => {
+                if swap {
+                    last - 1
+                } else {
+                    self.regs[6] as usize
+                }
+            }
+            1 => self.regs[7] as usize,
+            2 => {
+                if swap {
+                    self.regs[6] as usize
+                } else {
+                    last - 1
+                }
+            }
+            _ => last,
+        };
+        Some(data.prg_at(bank * 0x2000 + (addr & 0x1FFF) as usize))
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
-        if (0x6000..0x8000).contains(&addr) {
-            data.prg_ram[(addr - 0x6000) as usize] = val;
-            return true;
+        if addr < 0x8000 {
+            if addr >= 0x6000 {
+                if self.ram_ctrl & 0xC0 == 0x80 {
+                    data.prg_ram_set((addr & 0x1FFF) as usize, val);
+                }
+                return true;
+            }
+            return false;
         }
-        match addr {
-            0x8000..=0x9FFF => {
-                if addr % 2 == 0 {
-                    self.bank_select = val;
-                } else {
-                    let bank_register = self.bank_select & 0x07;
-                    match bank_register {
-                        0 | 1 => {
-                            self.chr_banks[bank_register as usize * 2] = val & 0xFE;
-                            self.chr_banks[bank_register as usize * 2 + 1] = (val & 0xFE) + 1;
-                        }
-                        2..=5 => {
-                            self.chr_banks[bank_register as usize + 2] = val;
-                        }
-                        6 => {
-                            self.prg_banks[if (self.bank_select & 0x40) != 0 { 2 } else { 0 }] = val;
-                        }
-                        7 => {
-                            self.prg_banks[1] = val;
-                        }
-                        _ => {}
-                    }
-                }
-                let last = (data.prg_banks * 2).wrapping_sub(1);
-                let second_last = (data.prg_banks * 2).wrapping_sub(2);
-                if (self.bank_select & 0x40) != 0 {
-                    self.prg_banks[0] = second_last;
-                } else {
-                    self.prg_banks[2] = second_last;
-                }
-                self.prg_banks[3] = last;
-                true
+        match addr & 0xE001 {
+            0x8000 => self.bank_select = val,
+            0x8001 => {
+                let r = (self.bank_select & 0x07) as usize;
+                self.regs[r] = match r {
+                    0 | 1 => val & 0xFE,
+                    6 | 7 => val & 0x3F,
+                    _ => val,
+                };
             }
-            0xA000..=0xBFFF => {
-                if addr % 2 == 0 {
-                    data.mirror = if val & 0x01 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
-                }
-                true
+            0xA000 => {
+                data.mirror = if val & 0x01 != 0 { Mirror::Horizontal } else { Mirror::Vertical };
             }
-            0xC000..=0xDFFF => {
-                if addr % 2 == 0 {
-                    self.irq_reload = val;
-                } else {
-                    self.irq_counter = 0;
-                }
-                true
+            0xA001 => self.ram_ctrl = val,
+            0xC000 => self.irq_latch = val,
+            0xC001 => {
+                // limpa o contador agora; recarrega no próximo clock (sem IRQ)
+                self.irq_counter = 0;
+                self.irq_reload = true;
             }
-            0xE000..=0xFFFF => {
-                if addr % 2 == 0 {
-                    self.irq_enabled = false;
-                    self.irq_pending = false;
-                } else {
-                    self.irq_enabled = true;
-                }
-                true
+            0xE000 => {
+                self.irq_enabled = false;
+                self.irq_pending = false; // ack
             }
-            _ => false,
+            _ => self.irq_enabled = true,
         }
+        true
     }
 
-    fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF {
-            let chr_mode = (self.bank_select & 0x80) != 0;
-            let bank = if chr_mode {
-                match addr {
-                    0x0000..=0x03FF => self.chr_banks[4],
-                    0x0400..=0x07FF => self.chr_banks[5],
-                    0x0800..=0x0BFF => self.chr_banks[6],
-                    0x0C00..=0x0FFF => self.chr_banks[7],
-                    0x1000..=0x13FF => self.chr_banks[0],
-                    0x1400..=0x17FF => self.chr_banks[1],
-                    0x1800..=0x1BFF => self.chr_banks[2],
-                    0x1C00..=0x1FFF => self.chr_banks[3],
-                    _ => 0,
-                }
-            } else {
-                match addr {
-                    0x0000..=0x03FF => self.chr_banks[0],
-                    0x0400..=0x07FF => self.chr_banks[1],
-                    0x0800..=0x0BFF => self.chr_banks[2],
-                    0x0C00..=0x0FFF => self.chr_banks[3],
-                    0x1000..=0x13FF => self.chr_banks[4],
-                    0x1400..=0x17FF => self.chr_banks[5],
-                    0x1800..=0x1BFF => self.chr_banks[6],
-                    0x1C00..=0x1FFF => self.chr_banks[7],
-                    _ => 0,
-                }
-            };
-            let offset = bank as usize * 0x0400 + (addr & 0x03FF) as usize;
-            if offset < data.chr.len() { Some(data.chr[offset]) } else { Some(0) }
-        } else {
-            None
-        }
+    fn manages_prg_ram(&self) -> bool {
+        true
     }
 
-    fn clock_scanline(&mut self) {
-        if self.irq_counter == 0 {
-            self.irq_counter = self.irq_reload;
+    #[inline]
+    fn chr_offset(&self, addr: u16) -> usize {
+        let a = addr ^ ((self.bank_select as u16 & 0x80) << 5); // inverte A12 se bit 7
+        let bank = match a >> 10 {
+            0 => self.regs[0] as usize,
+            1 => self.regs[0] as usize + 1,
+            2 => self.regs[1] as usize,
+            3 => self.regs[1] as usize + 1,
+            n => self.regs[n as usize - 2] as usize,
+        };
+        bank * 0x0400 + (addr & 0x03FF) as usize
+    }
+
+    fn a12_rise(&mut self) {
+        let before = self.irq_counter;
+        if before == 0 || self.irq_reload {
+            self.irq_counter = self.irq_latch;
         } else {
             self.irq_counter -= 1;
         }
-        if self.irq_counter == 0 && self.irq_enabled {
+        // Rev B (Sharp): IRQ sempre que o contador está em 0 após o clock (inclusive recarregado
+        // com 0, a cada clock). Rev A (NEC): só quando passou a 0 agora, ou recarregou após $C001.
+        if self.irq_counter == 0 && self.irq_enabled && (!self.rev_a || before != 0 || self.irq_reload) {
             self.irq_pending = true;
         }
+        self.irq_reload = false;
     }
 
+    #[inline]
     fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 
-    fn reset(&mut self, prg_banks: u8) {
+    fn reset(&mut self, _data: &mut CartData) {
         self.bank_select = 0;
-        self.prg_banks = [0, 1, (prg_banks * 2).wrapping_sub(2), (prg_banks * 2).wrapping_sub(1)];
-        self.chr_banks = [0, 1, 2, 3, 4, 5, 6, 7];
+        self.regs = [0, 2, 4, 5, 6, 7, 0, 1];
         self.irq_counter = 0;
-        self.irq_reload = 0;
+        self.irq_latch = 0;
+        self.irq_reload = false;
         self.irq_enabled = false;
         self.irq_pending = false;
+        self.ram_ctrl = 0x80;
     }
 
     fn state_string(&self) -> String {
-        let mut s = String::new();
-        use std::fmt::Write;
-        let _ = writeln!(
-            s,
-            "  MMC3 bank_select: ${:02X} (CHR_A12_inv={} PRG_mode={})",
+        format!(
+            "  MMC3 bank_select: ${:02X}  regs: {:?}  $A001: ${:02X}  rev {}\n  MMC3 IRQ: counter={} latch={} reload={} enabled={} pending={}\n",
             self.bank_select,
-            if self.bank_select & 0x80 != 0 { "yes" } else { "no" },
-            if self.bank_select & 0x40 != 0 { "swap" } else { "normal" }
-        );
-        let _ = writeln!(
-            s,
-            "  MMC3 PRG banks: [{}, {}, {}, {}]",
-            self.prg_banks[0], self.prg_banks[1], self.prg_banks[2], self.prg_banks[3]
-        );
-        let _ = writeln!(
-            s,
-            "  MMC3 CHR banks: [{}, {}, {}, {}, {}, {}, {}, {}]",
-            self.chr_banks[0],
-            self.chr_banks[1],
-            self.chr_banks[2],
-            self.chr_banks[3],
-            self.chr_banks[4],
-            self.chr_banks[5],
-            self.chr_banks[6],
-            self.chr_banks[7]
-        );
-        let _ = writeln!(
-            s,
-            "  MMC3 IRQ: counter={} reload={} enabled={} pending={}",
-            self.irq_counter, self.irq_reload, self.irq_enabled, self.irq_pending
-        );
-        s
+            self.regs,
+            self.ram_ctrl,
+            if self.rev_a { "A" } else { "B" },
+            self.irq_counter,
+            self.irq_latch,
+            self.irq_reload,
+            self.irq_enabled,
+            self.irq_pending
+        )
     }
 }

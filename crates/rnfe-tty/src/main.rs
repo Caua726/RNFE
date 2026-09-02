@@ -4,12 +4,13 @@
 //! 24-bit. A imagem é reduzida por média para caber no terminal; só as células que mudaram
 //! são reescritas a cada frame.
 //!
-//! Teclas: setas · Z=A · X=B · Enter=Start · Tab/C=Select · R=reset · Q ou Ctrl-C=sair
+//! Teclas: setas · Z=A · X=B · Enter=Start · Tab/C=Select · R=reset · Backspace=rewind ·
+//! 1=salvar state · 2=carregar state · Q ou Ctrl-C=sair
 //!
 //! `rnfe-tty rom.nes [--headless] [--frames N] [--draw-every N] [--panic-test]`
 
-use rnfe_core::{Buttons, Cartridge, Nes, SCREEN_H, SCREEN_W};
-use rnfe_frontend::{FramePacer, InputState, NTSC_FPS};
+use rnfe_core::{Buttons, Cartridge, Nes, SCREEN_H, SCREEN_W, Storage};
+use rnfe_frontend::{FramePacer, FsStorage, InputState, NTSC_FPS, Rewind, SaveManager};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -122,6 +123,10 @@ enum Key {
     Button(Buttons),
     Reset,
     Quit,
+    /// Backspace: volta no tempo (um state por toque; segurar repete)
+    Rewind,
+    SaveState,
+    LoadState,
 }
 
 fn spawn_input() -> mpsc::Receiver<Key> {
@@ -155,6 +160,9 @@ fn spawn_input() -> mpsc::Receiver<Key> {
                     }
                     0x03 | b'q' | b'Q' => Some(Key::Quit),
                     b'r' | b'R' => Some(Key::Reset),
+                    0x7F | 0x08 => Some(Key::Rewind),
+                    b'1' => Some(Key::SaveState),
+                    b'2' => Some(Key::LoadState),
                     b'z' | b'Z' => Some(Key::Button(Buttons::A)),
                     b'x' | b'X' => Some(Key::Button(Buttons::B)),
                     b'\r' | b'\n' => Some(Key::Button(Buttons::START)),
@@ -300,6 +308,15 @@ fn main() {
         headless(nes, args.frames);
         return;
     }
+    // Save com bateria (.sav) na pasta de dados; ~/.local/share/rnfe por padrão
+    let mut storage = FsStorage::new(FsStorage::default_dir());
+    let mut save = SaveManager::new(&nes);
+    if save.load(&mut nes, &storage) {
+        eprintln!("save carregado: {}", storage.dir().join(save.key().unwrap_or("")).display());
+    }
+    let mut rewind = Rewind::new(Rewind::DEFAULT_CAP);
+    let state_key = format!("state/{:016x}/1.rnfs", nes.cartridge().rom_hash());
+    let mut msg = String::new();
 
     let guard = match RawGuard::enter() {
         Ok(g) => g,
@@ -334,7 +351,34 @@ fn main() {
         while let Ok(k) = keys.try_recv() {
             match k {
                 Key::Quit => break 'main,
-                Key::Reset => nes.reset(),
+                Key::Reset => {
+                    nes.reset();
+                    rewind.clear();
+                }
+                Key::Rewind => {
+                    if rewind.step_back(&mut nes) {
+                        force = true;
+                    }
+                }
+                Key::SaveState => {
+                    msg = match storage.write(&state_key, &nes.save_state()) {
+                        Ok(()) => "state salvo (1)".into(),
+                        Err(e) => format!("erro: {e}"),
+                    };
+                }
+                Key::LoadState => {
+                    msg = match storage.read(&state_key) {
+                        Some(d) => match nes.load_state(&d) {
+                            Ok(()) => {
+                                rewind.clear();
+                                force = true;
+                                "state carregado (2)".into()
+                            }
+                            Err(e) => format!("erro: {e}"),
+                        },
+                        None => "sem state salvo".into(),
+                    };
+                }
                 Key::Button(b) => input.pulse(b, now(), HOLD),
             }
         }
@@ -342,6 +386,10 @@ fn main() {
         for _ in 0..due {
             nes.set_controller(0, input.current(now()));
             nes.run_frame();
+            rewind.record(&nes);
+            if let Err(e) = save.tick(&mut nes, &mut storage) {
+                eprintln!("erro ao gravar save: {e}");
+            }
             audio.clear();
             nes.drain_audio(&mut audio);
             frame_count += 1;
@@ -361,12 +409,12 @@ fn main() {
                 fps_t = now();
             }
             let status = format!(
-                "RNFE tty  {}x{} (1:{})  frame {}  {:.0} fps  |  setas/WASD Z X Enter Tab R Q",
+                "RNFE tty {}x{} frame {} {:.0} fps | Z X Enter Tab R Bksp=rewind 1/2=state Q {}",
                 renderer.cols,
                 renderer.rows * 2,
-                renderer.div,
                 frame_count,
-                fps
+                fps,
+                msg
             );
             renderer.draw(nes.framebuffer(), &status, force);
             force = false;
@@ -377,4 +425,9 @@ fn main() {
         }
     }
     drop(guard);
+    match save.flush(&mut nes, &mut storage) {
+        Ok(true) => eprintln!("save gravado em {}", storage.dir().join(save.key().unwrap_or("")).display()),
+        Ok(false) => {}
+        Err(e) => eprintln!("erro ao gravar save: {e}"),
+    }
 }

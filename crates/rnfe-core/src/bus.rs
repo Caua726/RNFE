@@ -19,6 +19,8 @@ pub struct Bus {
     pub ram: [u8; 2048],
     /// Ciclos de CPU desde o power-on (o reset conta os seus 7).
     pub cpu_cycles: u64,
+    /// O mapper quer `cpu_clock` a cada ciclo (lido uma vez do cartucho).
+    mapper_clock: bool,
     /// Página pedida por `$4014`; a CPU consome no próximo ciclo de leitura.
     oam_dma_page: Option<u8>,
     /// Último valor no barramento de dados (lido em endereços não mapeados).
@@ -32,6 +34,7 @@ pub struct Bus {
 impl Bus {
     pub fn new(cartridge: Cartridge) -> Bus {
         Bus {
+            mapper_clock: cartridge.wants_cpu_clock(),
             ppu: Ppu::new(),
             apu: Apu::new(),
             cartridge,
@@ -64,9 +67,12 @@ impl Bus {
         for _ in DOTS_BEFORE_ACCESS..3 {
             self.ppu.step(&mut self.cartridge);
         }
-        if self.ppu.scanline_trigger {
-            self.ppu.scanline_trigger = false;
-            self.cartridge.clock_scanline();
+        if self.ppu.a12_rise {
+            self.ppu.a12_rise = false;
+            self.cartridge.a12_rise();
+        }
+        if self.mapper_clock {
+            self.cartridge.cpu_clock();
         }
         self.cpu_cycles += 1;
     }
@@ -144,6 +150,7 @@ impl Bus {
             0x4000..=0x4013 | 0x4015 | 0x4017 => self.apu.cpu_write(addr, data),
             0x4018..=0x401F => {}
             _ => {
+                self.cartridge.data.cpu_cycle = self.cpu_cycles;
                 self.cartridge.cpu_write(addr, data);
             }
         }
@@ -171,6 +178,31 @@ impl Bus {
             0x4000..=0x401F => self.open_bus,
             _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
         }
+    }
+
+    /// Estado do bus para save state (feature `serde`).
+    #[cfg(feature = "serde")]
+    pub fn state(&self) -> crate::state::BusState {
+        crate::state::BusState {
+            ram: self.ram,
+            cpu_cycles: self.cpu_cycles,
+            oam_dma_page: self.oam_dma_page,
+            open_bus: self.open_bus,
+            controller: self.controller,
+            controller_state: self.controller_state,
+            controller_strobe: self.controller_strobe,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn restore(&mut self, st: crate::state::BusState) {
+        self.ram = st.ram;
+        self.cpu_cycles = st.cpu_cycles;
+        self.oam_dma_page = st.oam_dma_page;
+        self.open_bus = st.open_bus;
+        self.controller = st.controller;
+        self.controller_state = st.controller_state;
+        self.controller_strobe = st.controller_strobe;
     }
 
     /// Reset do console: RAM preservada (como no hardware), PPU/APU/mapper reiniciados.

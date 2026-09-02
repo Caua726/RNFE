@@ -11,6 +11,7 @@ use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::ui::Ui;
 use rnfe_core::Nes;
+use rnfe_frontend::{FsStorage, SaveManager};
 
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
@@ -489,6 +490,8 @@ pub struct App {
     fps_display: u32,
     toast_msg: String,
     toast_until: Instant,
+    storage: FsStorage,
+    save: SaveManager,
 }
 
 impl App {
@@ -511,12 +514,17 @@ impl App {
             fps_display: 0,
             toast_msg: String::new(),
             toast_until: Instant::now(),
+            storage: FsStorage::new(FsStorage::default_dir()),
+            save: SaveManager::none(),
         }
     }
 
     pub fn new_with_nes(mut nes: Box<Nes>) -> Self {
         let audio_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(8192)));
         let stream = Self::init_audio(audio_buffer.clone(), &mut nes);
+        let storage = FsStorage::new(FsStorage::default_dir());
+        let mut save = SaveManager::new(&nes);
+        save.load(&mut nes, &storage);
         Self {
             win: None,
             gpu: None,
@@ -535,6 +543,17 @@ impl App {
             fps_display: 0,
             toast_msg: String::new(),
             toast_until: Instant::now(),
+            storage,
+            save,
+        }
+    }
+
+    /// Grava o `.sav` pendente (ao trocar de ROM ou sair).
+    fn flush_save(&mut self) {
+        if let Some(nes) = self.nes.as_mut() {
+            if let Err(e) = self.save.flush(nes, &mut self.storage) {
+                eprintln!("erro ao gravar save: {e}");
+            }
         }
     }
 
@@ -587,6 +606,9 @@ impl App {
                 if let Some(ref old_nes) = self.nes {
                     new_nes.debugger.trace_enabled = old_nes.debugger.trace_enabled;
                 }
+                self.flush_save();
+                self.save = SaveManager::new(&new_nes);
+                self.save.load(&mut new_nes, &self.storage);
                 self.nes = Some(new_nes);
                 self.paused = false;
                 if let Ok(mut buf) = self.audio_buffer.lock() {
@@ -669,6 +691,9 @@ impl App {
             self.last_frame = Instant::now();
 
             nes.run_frame();
+            if let Err(e) = self.save.tick(nes, &mut self.storage) {
+                eprintln!("erro ao gravar save: {e}");
+            }
 
             // Enviar samples de audio
             if !nes.bus.apu.sample_buffer.is_empty() {
@@ -943,7 +968,10 @@ impl ApplicationHandler for App {
             return;
         }
         match ev {
-            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::CloseRequested => {
+                self.flush_save();
+                el.exit()
+            }
             WindowEvent::Resized(s) => {
                 if let Some(gpu) = self.gpu.as_mut() {
                     gpu.resize(s.width, s.height);
@@ -981,7 +1009,10 @@ impl ApplicationHandler for App {
                             }
                             self.paused = false;
                         }
-                        crate::ui::MenuAction::Quit => el.exit(),
+                        crate::ui::MenuAction::Quit => {
+                            self.flush_save();
+                            el.exit()
+                        }
                         crate::ui::MenuAction::None => {}
                     }
                 }
@@ -1065,7 +1096,10 @@ impl ApplicationHandler for App {
                     }
                 } else if event.state == ElementState::Pressed {
                     match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => el.exit(),
+                        PhysicalKey::Code(KeyCode::Escape) => {
+                            self.flush_save();
+                            el.exit()
+                        }
                         PhysicalKey::Code(KeyCode::KeyO) => self.open_rom(),
                         PhysicalKey::Code(KeyCode::F11) => {
                             if w.fullscreen().is_some() {

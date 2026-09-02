@@ -8,8 +8,14 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Save states (`Nes::save_state`/`load_state`) e rewind: serde + postcard, sem std neles.
+serde = ["dep:serde", "dep:postcard"]
+
 [dependencies]
 log.workspace = true
+serde = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
 
 [lints]
 workspace = true

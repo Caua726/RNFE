@@ -2,6 +2,16 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F3 Mappers, saves e rewind
+
+- F3-07 Rewind: `rnfe_frontend::Rewind` (anel de states a cada 5 frames, limite de memória, padrão 32 MB); no tty Backspace volta no tempo, 1/2 salvam/carregam state em `state/<hash>/1.rnfs`.
+- F3-06 Save states: feature `serde` no núcleo (serde + postcard, sem std neles) com `Nes::save_state()`/`load_state()` — header `RNFS` + versão + `rom_hash`, payload com CPU, PPU (sem framebuffer), APU (sem buffer de áudio), bus, PRG RAM, CHR RAM e mapper; ~15 KB (23 KB com CHR RAM). `tests/savestate.rs`: round-trip NROM/MMC1/MMC3/APU com hash de frame e ciclos iguais, `save(load(s)) == s`, rejeição de ROM/versão/lixo. `check.sh` e o CI testam com a feature.
+- F3-05 Persistência: trait `Storage` (+ `MemoryStorage`) no núcleo; `FsStorage` (tmp+rename, `$RNFE_DATA_DIR` / `$XDG_DATA_HOME/rnfe` / `~/.local/share/rnfe`) e `SaveManager` (`sav/<hash>.sav`, grava no máximo a cada 300 frames se a PRG RAM mudou, flush ao trocar de ROM/sair) em `rnfe-frontend`; tty e desktop usam.
+- F3-04 FME-7: contador de IRQ de 16 bits por ciclo de CPU (comandos $D/$E/$F, ack em $D) e janela `$6000` ROM/RAM; testes sintéticos em `tests/mappers.rs`.
+- F3-03 MMC1: segunda escrita de um RMW ignorada (via `CartData::cpu_cycle`), SUROM/SOROM/SXROM (bit 4 do CHR escolhe 256 KB de PRG; bits 2-3 o banco de PRG RAM), bit 4 de `$E000` desliga a PRG RAM, mirroring do header até a 1ª escrita no control.
+- F3-02 PPU: detector de borda de A12 com filtro (todo endereço no barramento, inclusive `v` fora do render e as buscas descartadas dos slots de sprite); busca de sprites nos dots 257–320 como no hardware (slots vazios buscam `$FF`). MMC3: latch/reload flag (`$C001`), ack por nível (`$E000`), `$A001` (PRG RAM enable/protect), revisão A por submapper 4.4. mmc3_test_2 6/6, mmc3_irq_tests 6/6 (`docs/dev_docs/a12-mmc3.md`).
+- F3-01 Cartucho reescrito: header **NES 2.0** (mapper de 12 bits, submapper, tamanhos exponenciais, PRG/CHR RAM), bateria, four-screen (4 nametables na PPU), `RomHeader` público, `rom_hash()` FNV-1a, `prg_ram()`/`take_prg_ram_dirty()`; PRG/CHR preenchidos até potência de 2 (acesso por máscara, sem divisão nem bounds check); trait `Mapper` novo (`chr_offset`, `ppu_write`, `a12_rise`, `cpu_clock` sob demanda, `irq_pending` nível, `audio_output`) e `enum MapperKind` com despacho por `match` (sem `dyn`); os 14 mappers reescritos (DxROM com máscara correta de CHR, mapper 227 com banco fixo L, FME-7 com RAM/ROM em `$6000`).
+
 ## Não publicado — F2 APU e PPU exatos
 
 - F2-07 PPU: framebuffer por índice de paleta (9 bits: ênfase + cor), `PALETTE_RGBA` de 512 cores gerada em `const fn`, RGBA convertido sob demanda em `Nes::framebuffer()`, `framebuffer_indexed()` para frontends com paleta na GPU; grayscale e ênfase no render; backdrop mostra `palette[v]` com render desligado (full_palette exibe as 512 cores). Exemplo `ppu_dump`.

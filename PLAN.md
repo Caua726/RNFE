@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F2 inteira — marco M2 fechado, merge em main
-Estado: concluída
-Próximo: F3-01 [S] — trait Mapper novo + enum MapperKind + NES 2.0 (branch fase-3-mappers-saves)
+Tarefa: F3-07 — rewind (F3 inteira feita)
+Estado: concluída — fechar marco M3 (STATUS, merge em main)
+Próximo: F4-01 [S] — rnfe-gui reestruturado (branch fase-4-web)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -37,6 +37,11 @@ M2, 02/09/2026:
 - ROMs: 104 Pass / 12 KnownFail (11 são MMC3/A12 → F3-02; 1 é a leitura dupla de `$2007`)
 - `bench` BladeBuster: **3,8 ms/frame** (mínimo de 3 corridas) — piorou ~1,3 ms desde M1 com a APU/PPU por ciclo (frame counter, sprites, open bus). Fica para F7-01/F7-02 medir por subsistema; o celular também oscila de frequência (medições variam 3,2–5,0 ms).
 - `framebuffer()` agora converte de índices sob demanda (61 KB×2 em vez de 184 KB de RGBA na PPU); `framebuffer_indexed()` + `ppu::PALETTE_RGBA` para paleta na GPU
+
+M3, 02/09/2026:
+- ROMs: **115 Pass / 1 KnownFail** (só a leitura dupla de `$2007`); mmc3_test_2 6/6, mmc3_irq_tests 6/6; 7 testes sintéticos de mapper; 6 de save state; 3 de save; 2 de rewind
+- `bench` BladeBuster (MMC3): **3,16 ms/frame** (mínimo de 3), VmHWM 4,4 MB — igual/melhor que M2 apesar do A12 por acesso e do `MapperKind` por `match`
+- save state ≈ 15 KB (23 KB com CHR RAM); `cargo test` com `--features rnfe-core/serde`: ~35 s (blargg 25 s)
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -75,13 +80,13 @@ M2, 02/09/2026:
 - [x] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
 
 ## F3 — Mappers, saves, rewind (`fase-3-mappers-saves`) · marco M3
-- [ ] F3-01 [S] trait `Mapper` novo + `enum MapperKind`; NES 2.0; bateria; four-screen; bounds; CHR só via cartucho
-- [ ] F3-02 `A12Watcher` na PPU + MMC3 rev B (reload flag, ack nivelado, `$A001`); rev A por submapper
-- [ ] F3-03 MMC1: writes consecutivos, SUROM/SOROM/SXROM, PRG RAM enable, CHR RAM banking
-- [ ] F3-04 FME-7 IRQ + `$6000`
-- [ ] F3-05 persistência: trait `Storage`; `FsStorage` + `SaveManager`; `.sav`
-- [ ] F3-06 save states: feature `serde` (postcard), `static LOOKUP`, header RNFS, round-trip test
-- [ ] F3-07 rewind
+- [x] F3-01 [S] trait `Mapper` novo + `enum MapperKind`; NES 2.0; bateria; four-screen; bounds; CHR só via cartucho
+- [x] F3-02 `A12Watcher` na PPU + MMC3 rev B (reload flag, ack nivelado, `$A001`); rev A por submapper
+- [x] F3-03 MMC1: writes consecutivos, SUROM/SOROM/SXROM, PRG RAM enable, CHR RAM banking
+- [x] F3-04 FME-7 IRQ + `$6000`
+- [x] F3-05 persistência: trait `Storage`; `FsStorage` + `SaveManager`; `.sav`
+- [x] F3-06 save states: feature `serde` (postcard), `static LOOKUP`, header RNFS, round-trip test
+- [x] F3-07 rewind
 
 ## F4 — Web (`fase-4-web`) · marco M4: Pages jogável no celular com toque e som
 - [ ] F4-01 [S] rnfe-gui: app/gpu(async)/audio/platform/ui; `Arc<Window>`; `about_to_wait` + WaitUntil; ring SPSC; web_time; UserEvent; áudio lazy

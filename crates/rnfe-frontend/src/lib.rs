@@ -3,11 +3,19 @@
 //! Nada aqui conhece janela, GPU, áudio ou relógio de sistema: o tempo entra como
 //! [`std::time::Duration`] medido pelo chamador, para funcionar igual em nativo e wasm.
 
+pub mod fs_storage;
 pub mod input;
 pub mod pacer;
+#[cfg(feature = "state")]
+pub mod rewind;
+pub mod save_manager;
 
+pub use fs_storage::FsStorage;
 pub use input::InputState;
 pub use pacer::FramePacer;
+#[cfg(feature = "state")]
+pub use rewind::Rewind;
+pub use save_manager::SaveManager;
 
 /// Frequência de quadros do NTSC (Hz).
 pub const NTSC_FPS: f64 = 60.098_814;

@@ -1,6 +1,6 @@
 # Status do RNFE
 
-Gerado por `cargo run -p rnfe-core --release --bin status` · commit `55f9184`.
+Gerado por `cargo run -p rnfe-core --release --bin status` · commit `6f4a1f6`.
 Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo test`.
 
 **nestest:** 8991/8991 linhas idênticas ao log (registradores e ciclos)
@@ -133,17 +133,17 @@ Não edite à mão: a fonte é `crates/rnfe-core/src/testing/list.rs` + `cargo t
 
 | ROM | Estilo | Esperado | Resultado | Detalhe |
 |---|---|---|---|---|
-| `mmc3_test_2/rom_singles/1-clocking.nes` | $6000 | KnownFail | ❌ | IRQ por pulso fixo, não por A12 (F3-02) — código 0x03: Failed #3 |
-| `mmc3_test_2/rom_singles/2-details.nes` | $6000 | KnownFail | ❌ | A12 (F3-02) — código 0x02: Failed #2 |
-| `mmc3_test_2/rom_singles/3-A12_clocking.nes` | $6000 | KnownFail | ❌ | A12 (F3-02) — código 0x04: Failed #4 |
-| `mmc3_test_2/rom_singles/4-scanline_timing.nes` | $6000 | KnownFail | ❌ | A12 (F3-02) — código 0x02: Failed #2 |
-| `mmc3_test_2/rom_singles/5-MMC3.nes` | $6000 | KnownFail | ❌ | A12 (F3-02) — código 0x02: Failed #2 |
-| `mmc3_test_2/rom_singles/6-MMC3_alt.nes` | $6000 | KnownFail | ❌ | variante A (F3-02) — código 0x02: Failed #2 |
-| `mmc3_irq_tests/1.Clocking.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #3 |
-| `mmc3_irq_tests/2.Details.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #2 |
-| `mmc3_irq_tests/3.A12_clocking.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #4 |
+| `mmc3_test_2/rom_singles/1-clocking.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_test_2/rom_singles/2-details.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_test_2/rom_singles/3-A12_clocking.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_test_2/rom_singles/4-scanline_timing.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_test_2/rom_singles/5-MMC3.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_test_2/rom_singles/6-MMC3_alt.nes` | $6000 | Pass | ✅ |  |
+| `mmc3_irq_tests/1.Clocking.nes` | tela | Pass | ✅ |  |
+| `mmc3_irq_tests/2.Details.nes` | tela | Pass | ✅ |  |
+| `mmc3_irq_tests/3.A12_clocking.nes` | tela | Pass | ✅ |  |
 | `mmc3_irq_tests/4.Scanline_timing.nes` | tela | Pass | ✅ |  |
-| `mmc3_irq_tests/5.MMC3_rev_A.nes` | tela | KnownFail | ❌ | variante A (F3-02) — FAILED #2 |
-| `mmc3_irq_tests/6.MMC3_rev_B.nes` | tela | KnownFail | ❌ | A12 (F3-02) — FAILED #2 |
+| `mmc3_irq_tests/5.MMC3_rev_A.nes` | tela | Pass | ✅ |  |
+| `mmc3_irq_tests/6.MMC3_rev_B.nes` | tela | Pass | ✅ |  |
 
-## Resumo: 104 ✅ · 12 ❌ esperados · 0 ⚠️ · 0 🔴 · 0 ⏭ (de 116 ROMs)
+## Resumo: 115 ✅ · 1 ❌ esperados · 0 ⚠️ · 0 🔴 · 0 ⏭ (de 116 ROMs)

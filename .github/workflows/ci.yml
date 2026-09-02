@@ -34,8 +34,8 @@ jobs:
           key: test-roms-${{ hashFiles('scripts/fetch-roms.sh') }}
       - run: bash scripts/fetch-roms.sh
       - run: cargo fmt --all -- --check
-      - run: cargo clippy -p rnfe-core -p rnfe-frontend -p rnfe-tty --all-targets -- -D warnings
-      - run: cargo test -p rnfe-core -p rnfe-frontend
+      - run: cargo clippy -p rnfe-core -p rnfe-frontend -p rnfe-tty --all-targets --features rnfe-core/serde -- -D warnings
+      - run: cargo test -p rnfe-core -p rnfe-frontend --features rnfe-core/serde
       - name: STATUS.md no resumo do job
         if: always()
         run: |
