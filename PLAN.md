@@ -15,8 +15,8 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 
 ## Onde parei
 Tarefa: F5 inteira (rnfe-android + JNI/SAF, projeto Gradle, CI android + release.yml, README)
-Estado: concluída no celular; marco M5 = APK do CI instalado e rodando no g56 (push + conferir job android)
-Próximo: push → job android verde → instalar o APK do artefato no g56 → F6-01 (mix de expansão, branch fase-6-mappers-ext)
+Estado: CI verde (job android gera o APK); APK de debug copiado para Downloads/rnfe-debug.apk no g56 — falta o teste manual (instalar, abrir ROM, toque, som)
+Próximo: F6-01 (mix de expansão, branch fase-6-mappers-ext); se o APK falhar no g56, corrigir antes
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -44,6 +44,8 @@ M3, 02/09/2026:
 - save state ≈ 15 KB (23 KB com CHR RAM); `cargo test` com `--features rnfe-core/serde`: ~35 s (blargg 25 s)
 
 M4, 02/09/2026 (CI ubuntu): 5 jobs verdes no 1º push; wasm 3,82 MB (1,43 MB gzip, meta < 2 MB); https://caua726.github.io/RNFE/ no ar.
+
+M5, 02/09/2026 (CI ubuntu): job android verde (cargo-ndk -P 26 + gradle); APK de debug 7,9 MB (a .so tinha símbolos; `CARGO_PROFILE_RELEASE_STRIP=symbols` no job a partir de agora — meta < 5 MB fica para F7-03).
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
