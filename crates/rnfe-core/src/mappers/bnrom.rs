@@ -1,27 +1,22 @@
-// Mapper 034 (BNROM) - 32KB PRG switching, CHR RAM
+//! Mapper 034 (BNROM): 32 KB de PRG comutáveis, CHR RAM.
 use super::{CartData, Mapper};
 
+#[derive(Default)]
 pub struct Bnrom {
     prg_bank: u8,
 }
 
-impl Default for Bnrom {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Bnrom {
     pub fn new() -> Self {
-        Bnrom { prg_bank: 0 }
+        Bnrom::default()
     }
 }
 
 impl Mapper for Bnrom {
+    #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 {
-            let offset = self.prg_bank as usize * 0x8000 + (addr as usize - 0x8000);
-            Some(data.prg[offset % data.prg.len()])
+            Some(data.prg_at(self.prg_bank as usize * 0x8000 + (addr & 0x7FFF) as usize))
         } else {
             None
         }
@@ -36,11 +31,7 @@ impl Mapper for Bnrom {
         }
     }
 
-    fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr <= 0x1FFF { Some(data.chr[addr as usize]) } else { None }
-    }
-
-    fn reset(&mut self, _prg_banks: u8) {
+    fn reset(&mut self, _data: &mut CartData) {
         self.prg_bank = 0;
     }
 }

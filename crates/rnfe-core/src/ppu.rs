@@ -100,7 +100,7 @@ const fn build_palette() -> [[u8; 4]; 512] {
 }
 
 pub struct Ppu {
-    pub nametable: [[u8; 1024]; 2],
+    pub nametable: [[u8; 1024]; 4],
     pub palette_table: [u8; 32],
 
     // Status registers
@@ -184,7 +184,7 @@ impl Default for Ppu {
 impl Ppu {
     pub fn new() -> Self {
         Ppu {
-            nametable: [[0; 1024]; 2],
+            nametable: [[0; 1024]; 4],
             palette_table: [0; 32],
             status: 0x80, // vblank flag setado no powerup
             mask: 0,
@@ -383,6 +383,7 @@ impl Ppu {
             Mirror::Horizontal => table >> 1,
             Mirror::OneScreenLo => 0,
             Mirror::OneScreenHi => 1,
+            Mirror::FourScreen => table,
         };
         (nt, offset)
     }

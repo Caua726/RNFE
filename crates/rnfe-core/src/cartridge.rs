@@ -1,4 +1,6 @@
-use crate::mappers::{self, CartData, Mapper};
+//! Cartucho: header iNES / NES 2.0, ROMs, PRG RAM e o mapper.
+
+use crate::mappers::{CartData, Mapper, MapperKind, SUPPORTED_MAPPERS};
 use std::fmt;
 
 /// Erro ao interpretar uma ROM iNES.
@@ -10,6 +12,8 @@ pub enum RomError {
     Truncated { expected: usize, got: usize },
     /// Mapper sem implementação.
     UnsupportedMapper(u16),
+    /// Header pede algo que não faz sentido (ROM sem PRG, tamanho absurdo).
+    BadHeader(&'static str),
 }
 
 impl fmt::Display for RomError {
@@ -20,17 +24,12 @@ impl fmt::Display for RomError {
                 write!(f, "ROM truncada: header pede {} bytes, arquivo tem {}", expected, got)
             }
             RomError::UnsupportedMapper(id) => write!(f, "mapper {} não suportado", id),
+            RomError::BadHeader(why) => write!(f, "header inválido: {}", why),
         }
     }
 }
 
 impl std::error::Error for RomError {}
-
-pub struct Cartridge {
-    pub data: CartData,
-    mapper_id: u8,
-    mapper: Box<dyn Mapper>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mirror {
@@ -38,99 +37,202 @@ pub enum Mirror {
     Vertical,
     OneScreenLo,
     OneScreenHi,
+    /// 4 nametables físicas no cartucho (Gauntlet, Rad Racer II).
+    FourScreen,
 }
 
-const SUPPORTED_MAPPERS: &[u8] = &[0, 1, 2, 3, 4, 7, 9, 11, 34, 66, 69, 71, 206, 227];
+/// Limite de bom senso para cada ROM (o maior cartucho licenciado tem 1 MB).
+const MAX_ROM: usize = 64 << 20;
 
-impl Cartridge {
-    /// Interpreta uma ROM iNES a partir dos bytes do arquivo.
-    pub fn from_bytes(buffer: &[u8]) -> Result<Self, RomError> {
-        if buffer.len() < 16 || &buffer[0..4] != b"NES\x1A" {
+/// O que o header diz, já decodificado (iNES 1 ou NES 2.0).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RomHeader {
+    pub nes2: bool,
+    pub mapper: u16,
+    pub submapper: u8,
+    pub prg_len: usize,
+    pub chr_len: usize,
+    pub prg_ram_len: usize,
+    pub chr_ram_len: usize,
+    pub battery: bool,
+    pub four_screen: bool,
+    pub trainer: bool,
+    pub mirror: Mirror,
+}
+
+impl RomHeader {
+    /// Decodifica os 16 bytes do header.
+    pub fn parse(h: &[u8]) -> Result<RomHeader, RomError> {
+        if h.len() < 16 || &h[0..4] != b"NES\x1A" {
             return Err(RomError::BadMagic);
         }
-
-        let prg_banks = buffer[4];
-        let chr_banks = buffer[5];
-        let mapper1 = buffer[6];
-        let mapper2 = buffer[7];
-
-        // Trainer de 512 bytes, se presente
-        let mut file_offset = 16;
-        if (mapper1 & 0x04) != 0 {
-            file_offset += 512;
+        let nes2 = h[7] & 0x0C == 0x08;
+        let battery = h[6] & 0x02 != 0;
+        let trainer = h[6] & 0x04 != 0;
+        let four_screen = h[6] & 0x08 != 0;
+        let mirror = if four_screen {
+            Mirror::FourScreen
+        } else if h[6] & 0x01 != 0 {
+            Mirror::Vertical
+        } else {
+            Mirror::Horizontal
+        };
+        let mut mapper = ((h[7] & 0xF0) | (h[6] >> 4)) as u16;
+        let mut submapper = 0;
+        let (prg_len, chr_len, prg_ram_len, chr_ram_len);
+        if nes2 {
+            mapper |= ((h[8] & 0x0F) as u16) << 8;
+            submapper = h[8] >> 4;
+            prg_len = nes2_rom_size(h[4], h[9] & 0x0F, 16384)?;
+            chr_len = nes2_rom_size(h[5], h[9] >> 4, 8192)?;
+            // byte 10/11: nibble baixo = RAM volátil, alto = não volátil; 0 = ausente, senão 64 << n
+            let shift = |n: u8| if n == 0 { 0 } else { 64usize << n };
+            prg_ram_len = shift(h[10] & 0x0F).max(shift(h[10] >> 4));
+            chr_ram_len = shift(h[11] & 0x0F).max(shift(h[11] >> 4));
+        } else {
+            // iNES 1: se os bytes 12-15 têm lixo, o "mapper alto" do byte 7 não é confiável
+            if h[12..16].iter().any(|&b| b != 0) {
+                mapper &= 0x0F;
+            }
+            prg_len = h[4] as usize * 16384;
+            chr_len = h[5] as usize * 8192;
+            prg_ram_len = if h[8] == 0 { 8192 } else { h[8] as usize * 8192 };
+            chr_ram_len = if chr_len == 0 { 8192 } else { 0 };
         }
+        if prg_len == 0 {
+            return Err(RomError::BadHeader("ROM sem PRG"));
+        }
+        if prg_len > MAX_ROM || chr_len > MAX_ROM {
+            return Err(RomError::BadHeader("ROM maior que 64 MB"));
+        }
+        Ok(RomHeader {
+            nes2,
+            mapper,
+            submapper,
+            prg_len,
+            chr_len,
+            prg_ram_len,
+            chr_ram_len,
+            battery,
+            four_screen,
+            trainer,
+            mirror,
+        })
+    }
+}
 
-        let mapper_id = (mapper2 & 0xF0) | (mapper1 >> 4);
+/// Tamanho NES 2.0: 12 bits normais, ou forma exponencial `2^E × (MM×2+1)` se o nibble alto é $F.
+fn nes2_rom_size(lo: u8, hi: u8, unit: usize) -> Result<usize, RomError> {
+    if hi == 0x0F {
+        let exp = (lo >> 2) as u32;
+        let mult = (lo & 0x03) as usize * 2 + 1;
+        if exp > 40 {
+            return Err(RomError::BadHeader("tamanho exponencial absurdo"));
+        }
+        Ok((1usize << exp) * mult)
+    } else {
+        Ok((((hi as usize) << 8) | lo as usize) * unit)
+    }
+}
 
-        // iNES bit0=1 -> vertical, bit0=0 -> horizontal
-        let mirror = if (mapper1 & 0x01) != 0 { Mirror::Vertical } else { Mirror::Horizontal };
+pub struct Cartridge {
+    pub data: CartData,
+    mapper: MapperKind,
+    rom_hash: u64,
+    wants_cpu_clock: bool,
+}
 
-        let prg_size = prg_banks as usize * 16384;
-        let chr_size = chr_banks as usize * 8192;
-        let expected = file_offset + prg_size + chr_size;
+impl Cartridge {
+    /// Interpreta uma ROM iNES / NES 2.0 a partir dos bytes do arquivo.
+    pub fn from_bytes(buffer: &[u8]) -> Result<Self, RomError> {
+        let hdr = RomHeader::parse(buffer)?;
+        if !SUPPORTED_MAPPERS.contains(&hdr.mapper) {
+            return Err(RomError::UnsupportedMapper(hdr.mapper));
+        }
+        let mut offset = 16 + if hdr.trainer { 512 } else { 0 };
+        let expected = offset + hdr.prg_len + hdr.chr_len;
         if buffer.len() < expected {
             return Err(RomError::Truncated { expected, got: buffer.len() });
         }
-
-        let prg_memory = buffer[file_offset..file_offset + prg_size].to_vec();
-        file_offset += prg_size;
-
-        let chr_memory = if chr_size > 0 {
-            buffer[file_offset..file_offset + chr_size].to_vec()
+        let prg = buffer[offset..offset + hdr.prg_len].to_vec();
+        offset += hdr.prg_len;
+        let (chr, chr_is_ram) = if hdr.chr_len > 0 {
+            (buffer[offset..offset + hdr.chr_len].to_vec(), false)
         } else {
-            vec![0; 8192] // CHR RAM
+            (vec![0u8; hdr.chr_ram_len.clamp(8192, 512 * 1024)], true)
         };
-
-        if !SUPPORTED_MAPPERS.contains(&mapper_id) {
-            return Err(RomError::UnsupportedMapper(mapper_id as u16));
-        }
+        let rom_hash = fnv1a(&prg, fnv1a(if chr_is_ram { &[] } else { &chr }, FNV_OFFSET));
 
         log::info!(
-            "ROM: PRG {} x 16K, CHR {} x 8K, mapper {}, mirror {:?}",
-            prg_banks,
-            chr_banks,
-            mapper_id,
-            mirror
+            "ROM: {} PRG {} KB, CHR {} KB{}, mapper {}.{}, {:?}{}",
+            if hdr.nes2 { "NES 2.0" } else { "iNES" },
+            hdr.prg_len / 1024,
+            chr.len() / 1024,
+            if chr_is_ram { " (RAM)" } else { "" },
+            hdr.mapper,
+            hdr.submapper,
+            hdr.mirror,
+            if hdr.battery { ", bateria" } else { "" }
         );
 
-        let mapper = mappers::create_mapper(mapper_id, prg_banks);
-
-        Ok(Cartridge {
-            data: CartData {
-                prg: prg_memory,
-                chr: chr_memory,
-                prg_ram: vec![0; 8192],
-                prg_banks,
-                chr_banks,
-                mirror,
-            },
-            mapper_id,
-            mapper,
-        })
+        let mut data = CartData::new(prg, chr, chr_is_ram, &hdr);
+        let mut mapper =
+            MapperKind::create(hdr.mapper, &data).ok_or(RomError::UnsupportedMapper(hdr.mapper))?;
+        mapper.reset(&mut data);
+        let wants_cpu_clock = mapper.wants_cpu_clock();
+        Ok(Cartridge { data, mapper, rom_hash, wants_cpu_clock })
     }
 
-    pub fn mapper_id(&self) -> u8 {
-        self.mapper_id
+    pub fn mapper_id(&self) -> u16 {
+        self.data.mapper
+    }
+
+    pub fn submapper(&self) -> u8 {
+        self.data.submapper
+    }
+
+    /// FNV-1a de PRG+CHR ROM: identifica a ROM para saves e save states.
+    pub fn rom_hash(&self) -> u64 {
+        self.rom_hash
+    }
+
+    pub fn has_battery(&self) -> bool {
+        self.data.battery
+    }
+
+    pub fn prg_ram(&self) -> &[u8] {
+        &self.data.prg_ram
+    }
+
+    pub fn prg_ram_mut(&mut self) -> &mut [u8] {
+        &mut self.data.prg_ram
+    }
+
+    /// `true` se houve escrita na PRG RAM desde a última chamada.
+    pub fn take_prg_ram_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.data.prg_ram_dirty)
     }
 
     /// Resumo de uma linha (para logs e a tela inicial).
     pub fn describe(&self) -> String {
         format!(
-            "PRG {}K, CHR {}{}, mapper {}, {:?}",
+            "PRG {}K, CHR {}K{}, mapper {} ({}), {:?}{}",
             self.data.prg_banks as usize * 16,
-            if self.data.chr_banks == 0 { 8 } else { self.data.chr_banks as usize * 8 },
-            if self.data.chr_banks == 0 { "K RAM" } else { "K" },
-            self.mapper_id,
-            self.data.mirror
+            self.data.chr.len() / 1024,
+            if self.data.chr_is_ram { " RAM" } else { "" },
+            self.data.mapper,
+            self.mapper.name(),
+            self.get_mirror(),
+            if self.data.battery { ", bateria" } else { "" }
         )
     }
 
-    /// Leitura pela CPU. Mappers que não tratam `$6000-$7FFF` ganham os 8 KB de PRG RAM
-    /// por padrão (muitos ROMs de teste e homebrews contam com WRAM mesmo sem bateria).
+    /// Leitura pela CPU. Mappers que não tratam `$6000-$7FFF` ganham a PRG RAM por padrão
+    /// (muitos ROMs de teste e homebrews contam com WRAM mesmo sem bateria).
     #[inline]
     pub fn cpu_read(&self, addr: u16) -> Option<u8> {
         match self.mapper.cpu_read(addr, &self.data) {
-            None if (0x6000..=0x7FFF).contains(&addr) => Some(self.data.prg_ram[(addr & 0x1FFF) as usize]),
+            None if (0x6000..=0x7FFF).contains(&addr) => Some(self.data.prg_ram_at((addr & 0x1FFF) as usize)),
             r => r,
         }
     }
@@ -141,7 +243,7 @@ impl Cartridge {
             return true;
         }
         if (0x6000..=0x7FFF).contains(&addr) {
-            self.data.prg_ram[(addr & 0x1FFF) as usize] = data;
+            self.data.prg_ram_set((addr & 0x1FFF) as usize, data);
             return true;
         }
         false
@@ -150,30 +252,34 @@ impl Cartridge {
     /// Leitura de CHR (`$0000-$1FFF` da PPU) pelo mapper.
     #[inline]
     pub fn chr_read(&mut self, addr: u16) -> u8 {
-        self.mapper.ppu_read(addr, &self.data).unwrap_or(0)
+        self.mapper.ppu_read(addr, &self.data)
     }
 
-    /// Escrita em CHR RAM (ignorada em CHR ROM).
+    /// Escrita em CHR (só tem efeito em CHR RAM).
     #[inline]
     pub fn chr_write(&mut self, addr: u16, data: u8) {
-        if self.data.chr_banks == 0 {
-            let idx = (addr & 0x1FFF) as usize;
-            if idx < self.data.chr.len() {
-                self.data.chr[idx] = data;
-            }
-        }
+        self.mapper.ppu_write(addr, data, &mut self.data);
     }
 
+    #[inline]
     pub fn get_mirror(&self) -> Mirror {
-        self.data.mirror
+        if self.data.four_screen { Mirror::FourScreen } else { self.data.mirror }
     }
 
-    pub fn get_chr_data(&self) -> &[u8] {
-        &self.data.chr
+    /// Borda de subida de A12 na PPU (contador de scanline do MMC3).
+    #[inline]
+    pub fn a12_rise(&mut self) {
+        self.mapper.a12_rise();
     }
 
-    pub fn clock_scanline(&mut self) {
-        self.mapper.clock_scanline();
+    #[inline]
+    pub fn wants_cpu_clock(&self) -> bool {
+        self.wants_cpu_clock
+    }
+
+    #[inline]
+    pub fn cpu_clock(&mut self) {
+        self.mapper.cpu_clock();
     }
 
     /// Nível da linha IRQ do mapper.
@@ -182,26 +288,41 @@ impl Cartridge {
         self.mapper.irq_pending()
     }
 
+    /// Áudio de expansão do cartucho, em [-1, 1].
+    #[inline]
+    pub fn audio_output(&self) -> f32 {
+        self.mapper.audio_output()
+    }
+
     pub fn reset(&mut self) {
-        self.mapper.reset(self.data.prg_banks);
+        self.mapper.reset(&mut self.data);
     }
 
     /// Estado interno do mapper, em texto (diagnóstico).
     pub fn mapper_state(&self) -> String {
         let mut s = format!(
-            "  Mapper: {}  PRG banks: {}  CHR banks: {}\n",
-            self.mapper_id, self.data.prg_banks, self.data.chr_banks
+            "  Mapper: {} ({})  PRG banks: {}  CHR banks: {}\n",
+            self.data.mapper,
+            self.mapper.name(),
+            self.data.prg_banks,
+            self.data.chr_banks
         );
         s.push_str(&self.mapper.state_string());
         s
     }
 
-    // Debug: ler CHR sem side effects
+    /// CHR pelo mapeamento atual, sem efeitos colaterais (debug).
     pub fn cpu_read_chr_debug(&self, addr: u16) -> Option<u8> {
-        if addr <= 0x1FFF {
-            if (addr as usize) < self.data.chr.len() { Some(self.data.chr[addr as usize]) } else { Some(0) }
-        } else {
-            None
-        }
+        if addr <= 0x1FFF { Some(self.data.chr_at(self.mapper.chr_offset(addr))) } else { None }
     }
+}
+
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+
+fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
 }

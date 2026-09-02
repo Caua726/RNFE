@@ -20,7 +20,7 @@ pub mod ppu;
 pub mod testing;
 
 pub use buttons::Buttons;
-pub use cartridge::{Cartridge, Mirror, RomError};
+pub use cartridge::{Cartridge, Mirror, RomError, RomHeader};
 pub use nes::Nes;
 
 /// Largura da imagem gerada pela PPU, em pixels.

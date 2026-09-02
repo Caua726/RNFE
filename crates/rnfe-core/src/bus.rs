@@ -19,6 +19,8 @@ pub struct Bus {
     pub ram: [u8; 2048],
     /// Ciclos de CPU desde o power-on (o reset conta os seus 7).
     pub cpu_cycles: u64,
+    /// O mapper quer `cpu_clock` a cada ciclo (lido uma vez do cartucho).
+    mapper_clock: bool,
     /// Página pedida por `$4014`; a CPU consome no próximo ciclo de leitura.
     oam_dma_page: Option<u8>,
     /// Último valor no barramento de dados (lido em endereços não mapeados).
@@ -32,6 +34,7 @@ pub struct Bus {
 impl Bus {
     pub fn new(cartridge: Cartridge) -> Bus {
         Bus {
+            mapper_clock: cartridge.wants_cpu_clock(),
             ppu: Ppu::new(),
             apu: Apu::new(),
             cartridge,
@@ -66,7 +69,10 @@ impl Bus {
         }
         if self.ppu.scanline_trigger {
             self.ppu.scanline_trigger = false;
-            self.cartridge.clock_scanline();
+            self.cartridge.a12_rise();
+        }
+        if self.mapper_clock {
+            self.cartridge.cpu_clock();
         }
         self.cpu_cycles += 1;
     }

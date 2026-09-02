@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F2 inteira — marco M2 fechado, merge em main
-Estado: concluída
-Próximo: F3-01 [S] — trait Mapper novo + enum MapperKind + NES 2.0 (branch fase-3-mappers-saves)
+Tarefa: F3-01 [S] — trait Mapper novo + MapperKind + NES 2.0
+Estado: concluída (branch fase-3-mappers-saves)
+Próximo: F3-02 — A12Watcher na PPU + MMC3 rev B
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -75,7 +75,7 @@ M2, 02/09/2026:
 - [x] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
 
 ## F3 — Mappers, saves, rewind (`fase-3-mappers-saves`) · marco M3
-- [ ] F3-01 [S] trait `Mapper` novo + `enum MapperKind`; NES 2.0; bateria; four-screen; bounds; CHR só via cartucho
+- [x] F3-01 [S] trait `Mapper` novo + `enum MapperKind`; NES 2.0; bateria; four-screen; bounds; CHR só via cartucho
 - [ ] F3-02 `A12Watcher` na PPU + MMC3 rev B (reload flag, ack nivelado, `$A001`); rev A por submapper
 - [ ] F3-03 MMC1: writes consecutivos, SUROM/SOROM/SXROM, PRG RAM enable, CHR RAM banking
 - [ ] F3-04 FME-7 IRQ + `$6000`

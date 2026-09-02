@@ -2,6 +2,10 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F3 Mappers, saves e rewind
+
+- F3-01 Cartucho reescrito: header **NES 2.0** (mapper de 12 bits, submapper, tamanhos exponenciais, PRG/CHR RAM), bateria, four-screen (4 nametables na PPU), `RomHeader` público, `rom_hash()` FNV-1a, `prg_ram()`/`take_prg_ram_dirty()`; PRG/CHR preenchidos até potência de 2 (acesso por máscara, sem divisão nem bounds check); trait `Mapper` novo (`chr_offset`, `ppu_write`, `a12_rise`, `cpu_clock` sob demanda, `irq_pending` nível, `audio_output`) e `enum MapperKind` com despacho por `match` (sem `dyn`); os 14 mappers reescritos (DxROM com máscara correta de CHR, mapper 227 com banco fixo L, FME-7 com RAM/ROM em `$6000`).
+
 ## Não publicado — F2 APU e PPU exatos
 
 - F2-07 PPU: framebuffer por índice de paleta (9 bits: ênfase + cor), `PALETTE_RGBA` de 512 cores gerada em `const fn`, RGBA convertido sob demanda em `Nes::framebuffer()`, `framebuffer_indexed()` para frontends com paleta na GPU; grayscale e ênfase no render; backdrop mostra `palette[v]` com render desligado (full_palette exibe as 512 cores). Exemplo `ppu_dump`.
