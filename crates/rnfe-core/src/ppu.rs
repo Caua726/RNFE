@@ -70,6 +70,8 @@ use crate::cartridge::{Cartridge, Mirror};
 
 /// Dots entre a escrita em `$2001` e o render ligar/desligar de fato.
 const RENDER_DELAY: u8 = 2;
+/// Frames até um bit do open bus da PPU decair (~600 ms).
+const IO_DECAY_FRAMES: u8 = 36;
 
 pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
@@ -129,6 +131,10 @@ pub struct Ppu {
     odd_frame: bool,
     /// `$2002` lido um dot antes do VBL: a flag não é setada neste frame (e não há NMI).
     prevent_vbl: bool,
+    /// Open bus da PPU ("decay register"): cada bit guarda o último valor que passou pelo
+    /// barramento e decai para 0 depois de ~600 ms sem ser renovado.
+    io_bus: u8,
+    io_decay: [u8; 8],
     /// Render ligado (bits 3/4 de `$2001`), com o atraso de `RENDER_DELAY` dots do hardware.
     rendering: bool,
     render_next: bool,
@@ -189,6 +195,8 @@ impl Ppu {
             scanline_trigger: false,
             odd_frame: false,
             prevent_vbl: false,
+            io_bus: 0,
+            io_decay: [0; 8],
             rendering: false,
             render_next: false,
             render_delay: 0,
@@ -207,10 +215,34 @@ impl Ppu {
         }
     }
 
+    /// Renova os bits `mask` do open bus com `value`.
+    #[inline]
+    fn refresh_bus(&mut self, mask: u8, value: u8) {
+        self.io_bus = (self.io_bus & !mask) | (value & mask);
+        for bit in 0..8 {
+            if mask & (1 << bit) != 0 {
+                self.io_decay[bit] = IO_DECAY_FRAMES;
+            }
+        }
+    }
+
+    /// Chamado a cada frame: bits do open bus não renovados decaem para 0.
+    fn decay_bus(&mut self) {
+        for bit in 0..8 {
+            if self.io_decay[bit] > 0 {
+                self.io_decay[bit] -= 1;
+                if self.io_decay[bit] == 0 {
+                    self.io_bus &= !(1 << bit);
+                }
+            }
+        }
+    }
+
     pub fn cpu_read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
         match addr {
             0x0002 => {
-                let data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
+                let data = (self.status & 0xE0) | (self.io_bus & 0x1F);
+                self.refresh_bus(0xE0, self.status);
                 self.status &= 0x7F;
                 self.address_latch = 0;
                 // Lido um dot antes de (241,1): lê 0 e o VBL deste frame é suprimido
@@ -222,24 +254,45 @@ impl Ppu {
             0x0004 => {
                 let v = self.oam[self.oam_addr as usize];
                 // bits 2-4 do byte de atributo não existem no hardware
-                if self.oam_addr & 3 == 2 { v & 0xE3 } else { v }
+                let v = if self.oam_addr & 3 == 2 { v & 0xE3 } else { v };
+                self.refresh_bus(0xFF, v);
+                v
             }
             0x0007 => {
-                let mut data = self.ppu_data_buffer;
-                self.ppu_data_buffer = self.vram_read(self.vram_addr, cart);
-                // Paletas retornam imediatamente, buffer recebe o nametable abaixo
-                if (self.vram_addr & 0x3FFF) >= 0x3F00 {
-                    data = self.ppu_data_buffer;
+                let data = if (self.vram_addr & 0x3FFF) >= 0x3F00 {
+                    // Paleta: sai direto (6 bits + open bus nos 2 altos); o buffer recebe o
+                    // nametable "embaixo" da paleta
+                    let pal = self.vram_read(self.vram_addr, cart) & 0x3F;
                     self.ppu_data_buffer = self.vram_read(self.vram_addr - 0x1000, cart);
-                }
-                self.vram_addr = self.vram_addr.wrapping_add(if self.control & 0x04 != 0 { 32 } else { 1 });
+                    self.refresh_bus(0x3F, pal);
+                    pal | (self.io_bus & 0xC0)
+                } else {
+                    let data = self.ppu_data_buffer;
+                    self.ppu_data_buffer = self.vram_read(self.vram_addr, cart);
+                    self.refresh_bus(0xFF, data);
+                    data
+                };
+                self.increment_vram_addr();
                 data
             }
-            _ => 0,
+            _ => self.io_bus,
+        }
+    }
+
+    /// Incremento de `v` após `$2007`: +1/+32 fora do render; durante o render o hardware
+    /// faz um incremento de X grosso e um de Y.
+    #[inline]
+    fn increment_vram_addr(&mut self) {
+        if self.rendering && self.scanline < 240 {
+            self.increment_scroll_x();
+            self.increment_scroll_y();
+        } else {
+            self.vram_addr = self.vram_addr.wrapping_add(if self.control & 0x04 != 0 { 32 } else { 1 });
         }
     }
 
     pub fn cpu_write(&mut self, addr: u16, data: u8, cart: &mut Cartridge) {
+        self.refresh_bus(0xFF, data);
         match addr {
             0x0000 => {
                 // NMI é nível (status.7 & control.7); a CPU detecta a borda
@@ -288,11 +341,7 @@ impl Ppu {
             }
             0x0007 => {
                 self.vram_write(self.vram_addr, data, cart);
-                if (self.control & 0x04) != 0 {
-                    self.vram_addr = self.vram_addr.wrapping_add(32);
-                } else {
-                    self.vram_addr = self.vram_addr.wrapping_add(1);
-                }
+                self.increment_vram_addr();
             }
             _ => {}
         }
@@ -523,6 +572,7 @@ impl Ppu {
                 self.scanline = -1;
                 self.frame_complete = true;
                 self.odd_frame = !self.odd_frame;
+                self.decay_bus();
             }
         }
     }

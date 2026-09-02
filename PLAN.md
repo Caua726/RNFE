@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F2-06 — avaliação de sprites como no hardware
+Tarefa: F2-05 — open bus da PPU
 Estado: concluída
-Próximo: F2-05 — open bus da PPU, $2007 durante render; depois F2-07 (paleta 512)
+Próximo: F2-07 — paleta de 512 cores (framebuffer por índice), depois marco M2
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -65,7 +65,7 @@ M1, 02/09/2026 (mesma máquina/perfil):
 - [x] F2-02 noise/DMC por ciclo; DMC IRQ; DMA do DMC com stall de 4; `$4000-$4013` open bus
 - [x] F2-03 length counter halt/reload ordering
 - [x] F2-04 VBL/NMI exatos: (241,1), prevent_vbl, supressão, odd-frame em (261,339)
-- [ ] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
+- [x] F2-05 open bus da PPU; `$2004`/`$2007` durante render; CPU open bus
 - [x] F2-06 avaliação de sprites em lote no dot 65 com `overflow_dot`; sprite 0 hit x<255
 - [ ] F2-07 paleta 512 cores: framebuffer por índice + LUT; grayscale/emphasis; backdrop
 
