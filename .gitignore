@@ -1,1 +1,5 @@
 /target/
+/dist/
+/test-roms/
+*.sav
+*.rnfs

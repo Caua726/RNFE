@@ -5,7 +5,6 @@ mod apu;
 mod cartridge;
 mod mappers;
 mod display;
-mod font;
 mod ui;
 mod debug;
 mod diagnostic;

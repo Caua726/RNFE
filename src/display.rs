@@ -9,7 +9,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 use wgpu::util::DeviceExt;
 
-use crate::{font, nes::Nes, ui::Ui};
+use crate::{nes::Nes, ui::Ui};
 
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
