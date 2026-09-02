@@ -14,12 +14,18 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F0-05 (harness)
-Estado: concluída — 120 ROMs na tabela: 30 Pass / 90 KnownFail; nestest VERIFIED_LINES=5004
-Próximo: F0-06 — status, bench, snapshots, linha de base
+Tarefa: F0-06 (status/bench/snapshots)
+Estado: concluída
+Próximo: F0-07 — check.sh, peak-rss.sh, rustfmt, clippy -D warnings
 
 ## Linha de base
-(preenchida em F0-06)
+F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
+- `bench --rom other/nestest.nes --frames 3000`: **299 fps · 3,34 ms/frame · 5,0× tempo real · VmHWM 3,5 MB**
+- `bench --rom other/BladeBuster.nes --frames 1500`: 280 fps · 3,57 ms/frame · VmHWM 4,3 MB
+- `bench --rom mmc3_test_2/1-clocking.nes --frames 1500`: 317 fps · 3,16 ms/frame
+- `cargo test -p rnfe-core` (21 suítes blargg + nestest + snapshots + rom_parse): ~80 s
+- `status` (120 ROMs, 6 threads): 38 s · `cargo build -p rnfe-core` debug: 9,5 s
+- ROMs: 30 Pass / 90 KnownFail · nestest 5004/8991 · 10 snapshots
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -32,7 +38,7 @@ Próximo: F0-06 — status, bench, snapshots, linha de base
 - [x] F0-03 core: `Cartridge::from_bytes` + `RomError`; `println!`→`log`; `diagnostic_report()->String`; `Buttons`; `Nes::new(cart)`; `run_frame/step_instruction/peek/set_controller/drain_audio/framebuffer` (RGBA8)
 - [x] F0-04 NROM: máscara 32 KB (`& 0x3FFF` extra) + PRG RAM `$6000-$7FFF`
 - [x] F0-05 harness: `src/testing/{list,runner}.rs`, `tests/blargg.rs` (KnownFail que passa = falha), `tests/nestest.rs` (`VERIFIED_LINES=5004`), `scripts/fetch-roms.sh`
-- [ ] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
+- [x] F0-06 bins: `status` → docs/STATUS.md; `bench` (fps, ns/frame, VmHWM, `--profile`); `tests/snapshots.rs`; linha de base
 - [ ] F0-07 qualidade: `scripts/check.sh`, `scripts/peak-rss.sh`, rustfmt.toml, `[workspace.lints]`; clippy -D warnings limpo
 - [ ] F0-08 rnfe-frontend mínimo (FramePacer, InputState) + rnfe-tty (half-blocks, stty, panic hook)
 - [ ] F0-09 CI: ci.yml (core, desktop-check, bench)

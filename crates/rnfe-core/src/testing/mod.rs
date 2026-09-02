@@ -3,6 +3,7 @@
 //! Não faz parte da API do emulador; fica no crate para que a tabela de ROMs exista em um só lugar.
 
 pub mod list;
+pub mod nestest;
 pub mod runner;
 
 pub use list::{Expect, Style, TestRom, NESTEST_LOG, NESTEST_ROM, TESTS};
