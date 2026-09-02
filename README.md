@@ -2,8 +2,12 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU, APU e 14 mappers, com um
-núcleo **sem dependências** que roda em qualquer lugar — desktop, terminal, e (em breve) web e Android.
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 14 mappers,
+save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
+desktop, terminal e (em breve) Android.
+
+**Jogar agora:** <https://caua726.github.io/RNFE/> — abra uma ROM `.nes`, toque na tela (celular)
+ou use o teclado. Saves e save states ficam no `localStorage` do navegador.
 
 > *A NES/Famicom emulator in Rust. The core has zero dependencies and is verified against
 > nestest and the blargg test ROMs on every commit — see [docs/STATUS.md](docs/STATUS.md).*
@@ -11,15 +15,18 @@ núcleo **sem dependências** que roda em qualquer lugar — desktop, terminal, 
 ## Estado
 
 O progresso é medido por ROMs de teste, não por sensação: [docs/STATUS.md](docs/STATUS.md) é
-gerado a cada marco e lista as 120 ROMs (blargg e outras) com o resultado atual, e o
-`nestest` é comparado instrução a instrução com o log de referência.
+gerado a cada marco e lista as 116 ROMs (blargg e outras) com o resultado atual — 115 passam —
+e o `nestest` é comparado instrução a instrução (8 991 linhas) com o log de referência.
 
 O plano de trabalho, com o que vem a seguir, está em [PLAN.md](PLAN.md).
 
 ## Rodar
 
 ```sh
-# desktop (Linux/Windows/macOS) — janela com wgpu + som
+# web — https://caua726.github.io/RNFE/ (build local: rustup target add wasm32-unknown-unknown; cargo install trunk)
+trunk serve                    # http://127.0.0.1:8080/RNFE/
+
+# desktop (Linux/Windows/macOS) — janela com wgpu, som e gamepad
 cargo run -p rnfe-desktop --release -- caminho/para/jogo.nes
 
 # terminal (inclusive Termux no Android) — sem dependências além do próprio Rust
@@ -30,30 +37,40 @@ cargo run -p rnfe-core --release --bin bench -- --rom jogo.nes --frames 3000
 ```
 
 No desktop, `cargo run -p rnfe-desktop` sem argumentos abre a janela com o botão **Open ROM**.
+Saves de bateria (`.sav`) e save states ficam em `~/.local/share/rnfe` (`$RNFE_DATA_DIR` muda).
+
+Publicação na web: o job `web` do CI faz o `trunk build` e o job `pages` publica em GitHub Pages
+a cada push em `main` — no repositório, uma vez, ative **Settings → Pages → Source: GitHub Actions**.
 
 ### Testes
 
 ```sh
 bash scripts/fetch-roms.sh     # baixa as ROMs de teste (clone esparso de nes-test-roms)
-cargo test                     # núcleo + frontend: nestest, 21 suítes blargg, snapshots
+cargo test                     # núcleo + frontend: nestest, 21 suítes blargg, mappers, save states, snapshots
 bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que o CI roda)
 ```
 
-`cargo test`/`cargo build` na raiz tocam só o núcleo, o frontend comum e o tty — o desktop
-(wgpu/winit) compila com `-p rnfe-desktop` e é verificado no CI.
+`cargo test`/`cargo build` na raiz tocam só o núcleo, o frontend comum e o tty — o desktop e a web
+(wgpu/winit) compilam com `-p rnfe-desktop` / `--target wasm32-unknown-unknown` e são verificados no CI.
 
 ## Controles
 
-| NES | Desktop | Terminal |
-|---|---|---|
-| D-pad | setas | setas ou WASD |
-| A / B | Z / X | Z / X |
-| Start / Select | Enter / Tab | Enter / Tab (ou C) |
-| Reset | R | R |
-| Pausa / menu | Esc | — |
-| Abrir ROM | O | — |
-| Sair | Esc (sem ROM) | Q ou Ctrl-C |
-| Debug | F3 overlay · F4 cobertura · F5 trace · F6 diagnóstico · F11 tela cheia | — |
+| NES | Desktop / Web (teclado) | Toque (web, celular) | Gamepad | Terminal |
+|---|---|---|---|---|
+| D-pad | setas | d-pad na tela | d-pad ou analógico esquerdo | setas ou WASD |
+| A / B | Z / X | A / B | Sul·Leste / Oeste·Norte | Z / X |
+| Start / Select | Enter / Tab | START / SELECT | Start / Select | Enter / Tab (ou C) |
+| Reset | R | menu → Reset | — | R |
+| Pausa / menu | Esc | MENU | — | — |
+| Abrir ROM | O ou clique | toque em Open ROM | — | — |
+| Save / load state | F5 / F7 | menu | — | 1 / 2 |
+| Rewind (segurar) | Backspace | — | — | Backspace |
+| Turbo (segurar) | Espaço | — | — | — |
+| Sair | Esc (sem ROM) | — | — | Q ou Ctrl-C |
+| Debug | F3 overlay · F4 cobertura · F6 diagnóstico · F9 trace · F11 tela cheia | — | — | — |
+
+Os controles de toque aparecem no primeiro toque; em retrato a imagem fica em cima e os botões
+embaixo, em paisagem ficam nas laterais.
 
 ## Mappers
 
@@ -77,11 +94,14 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 ## Estrutura
 
 ```
-crates/rnfe-core       núcleo: cpu6502, ppu, apu, bus, cartridge, mappers — sem dependências
-crates/rnfe-frontend   cadência de frames e input, comuns a todo frontend — sem dependências
+crates/rnfe-core       núcleo: cpu6502, ppu, apu, bus, cartridge, mappers, storage, state — sem dependências
+                       (feature `serde`: save states com serde + postcard)
+crates/rnfe-frontend   comum a todo frontend, sem dependências: pacer, input, toque, anel de áudio,
+                       FsStorage, SaveManager (.sav), Rewind
 crates/rnfe-tty        frontend de terminal (half-blocks, cor 24-bit)
-crates/rnfe-gui        frontend gráfico (winit + wgpu + cpal), compartilhado por desktop e web
-crates/rnfe-desktop    binário de desktop
+crates/rnfe-gui        frontend gráfico (winit + wgpu + cpal + gilrs), o mesmo código no desktop e na web
+crates/rnfe-desktop    binário de desktop (fino)
+crates/rnfe-web        binário wasm32 + index.html (Trunk); saves no localStorage
 scripts/               fetch-roms.sh · check.sh · peak-rss.sh
 docs/STATUS.md         resultado das ROMs de teste (gerado)
 PLAN.md                plano de trabalho e ponto onde parou

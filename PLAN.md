@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F3-07 — rewind (F3 inteira feita)
-Estado: concluída — fechar marco M3 (STATUS, merge em main)
-Próximo: F4-01 [S] — rnfe-gui reestruturado (branch fase-4-web)
+Tarefa: F4 inteira (gui reestruturado, web, toque, CI Pages, gamepad)
+Estado: concluída no celular (clippy wasm32 limpo); marco M4 depende do push (CI desktop + Pages)
+Próximo: push → conferir CI (desktop-check, web, pages) e jogar em https://caua726.github.io/RNFE/ no celular; depois F5-01 (Android)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -89,11 +89,11 @@ M3, 02/09/2026:
 - [x] F3-07 rewind
 
 ## F4 — Web (`fase-4-web`) · marco M4: Pages jogável no celular com toque e som
-- [ ] F4-01 [S] rnfe-gui: app/gpu(async)/audio/platform/ui; `Arc<Window>`; `about_to_wait` + WaitUntil; ring SPSC; web_time; UserEvent; áudio lazy
-- [ ] F4-02 wasm32: rnfe-web, index.html, WebStorage, webgl fallback, rfd async, Trunk.toml; toolchain no celular
-- [ ] F4-03 toque: TouchLayout/InputState multi-touch; overlay em ui.rs
-- [ ] F4-04 CI web + deploy Pages
-- [ ] F4-05 gamepads
+- [x] F4-01 [S] rnfe-gui: app/gpu(async)/audio/platform/ui; `Arc<Window>`; `about_to_wait` + WaitUntil; ring SPSC; web_time; UserEvent; áudio lazy
+- [x] F4-02 wasm32: rnfe-web, index.html, WebStorage, webgl fallback, rfd async, Trunk.toml; toolchain no celular
+- [x] F4-03 toque: TouchLayout/InputState multi-touch; overlay em ui.rs
+- [x] F4-04 CI web + deploy Pages
+- [x] F4-05 gamepads
 
 ## F5 — Android (`fase-5-android`) · marco M5: APK arm64 roda SMB1 com toque e som
 - [ ] F5-01 rnfe-android cdylib (android-activity, FsStorage, oboe, SAF)
