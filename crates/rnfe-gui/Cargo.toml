@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 rnfe-core.workspace = true
+rnfe-frontend.workspace = true
 wgpu.workspace = true
 winit = { workspace = true, features = ["x11", "wayland"] }
 pollster.workspace = true

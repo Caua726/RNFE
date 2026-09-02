@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F3-04 — FME-7 IRQ + janela $6000
+Tarefa: F3-05 — persistência (Storage, FsStorage, SaveManager)
 Estado: concluída (branch fase-3-mappers-saves)
-Próximo: F3-05 — persistência: trait Storage no core, FsStorage + SaveManager no frontend
+Próximo: F3-06 — save states (feature serde + postcard, header RNFS)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -79,7 +79,7 @@ M2, 02/09/2026:
 - [x] F3-02 `A12Watcher` na PPU + MMC3 rev B (reload flag, ack nivelado, `$A001`); rev A por submapper
 - [x] F3-03 MMC1: writes consecutivos, SUROM/SOROM/SXROM, PRG RAM enable, CHR RAM banking
 - [x] F3-04 FME-7 IRQ + `$6000`
-- [ ] F3-05 persistência: trait `Storage`; `FsStorage` + `SaveManager`; `.sav`
+- [x] F3-05 persistência: trait `Storage`; `FsStorage` + `SaveManager`; `.sav`
 - [ ] F3-06 save states: feature `serde` (postcard), `static LOOKUP`, header RNFS, round-trip test
 - [ ] F3-07 rewind
 

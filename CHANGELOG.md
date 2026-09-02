@@ -4,6 +4,7 @@ Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
 ## Não publicado — F3 Mappers, saves e rewind
 
+- F3-05 Persistência: trait `Storage` (+ `MemoryStorage`) no núcleo; `FsStorage` (tmp+rename, `$RNFE_DATA_DIR` / `$XDG_DATA_HOME/rnfe` / `~/.local/share/rnfe`) e `SaveManager` (`sav/<hash>.sav`, grava no máximo a cada 300 frames se a PRG RAM mudou, flush ao trocar de ROM/sair) em `rnfe-frontend`; tty e desktop usam.
 - F3-04 FME-7: contador de IRQ de 16 bits por ciclo de CPU (comandos $D/$E/$F, ack em $D) e janela `$6000` ROM/RAM; testes sintéticos em `tests/mappers.rs`.
 - F3-03 MMC1: segunda escrita de um RMW ignorada (via `CartData::cpu_cycle`), SUROM/SOROM/SXROM (bit 4 do CHR escolhe 256 KB de PRG; bits 2-3 o banco de PRG RAM), bit 4 de `$E000` desliga a PRG RAM, mirroring do header até a 1ª escrita no control.
 - F3-02 PPU: detector de borda de A12 com filtro (todo endereço no barramento, inclusive `v` fora do render e as buscas descartadas dos slots de sprite); busca de sprites nos dots 257–320 como no hardware (slots vazios buscam `$FF`). MMC3: latch/reload flag (`$C001`), ack por nível (`$E000`), `$A001` (PRG RAM enable/protect), revisão A por submapper 4.4. mmc3_test_2 6/6, mmc3_irq_tests 6/6 (`docs/dev_docs/a12-mmc3.md`).

@@ -1608,6 +1608,7 @@ dependencies = [
  "pollster",
  "rfd",
  "rnfe-core",
+ "rnfe-frontend",
  "wgpu",
  "winit",
 ]

@@ -9,7 +9,7 @@
 //! `rnfe-tty rom.nes [--headless] [--frames N] [--draw-every N] [--panic-test]`
 
 use rnfe_core::{Buttons, Cartridge, Nes, SCREEN_H, SCREEN_W};
-use rnfe_frontend::{FramePacer, InputState, NTSC_FPS};
+use rnfe_frontend::{FramePacer, FsStorage, InputState, NTSC_FPS, SaveManager};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -300,6 +300,12 @@ fn main() {
         headless(nes, args.frames);
         return;
     }
+    // Save com bateria (.sav) na pasta de dados; ~/.local/share/rnfe por padrão
+    let mut storage = FsStorage::new(FsStorage::default_dir());
+    let mut save = SaveManager::new(&nes);
+    if save.load(&mut nes, &storage) {
+        eprintln!("save carregado: {}", storage.dir().join(save.key().unwrap_or("")).display());
+    }
 
     let guard = match RawGuard::enter() {
         Ok(g) => g,
@@ -342,6 +348,9 @@ fn main() {
         for _ in 0..due {
             nes.set_controller(0, input.current(now()));
             nes.run_frame();
+            if let Err(e) = save.tick(&mut nes, &mut storage) {
+                eprintln!("erro ao gravar save: {e}");
+            }
             audio.clear();
             nes.drain_audio(&mut audio);
             frame_count += 1;
@@ -377,4 +386,9 @@ fn main() {
         }
     }
     drop(guard);
+    match save.flush(&mut nes, &mut storage) {
+        Ok(true) => eprintln!("save gravado em {}", storage.dir().join(save.key().unwrap_or("")).display()),
+        Ok(false) => {}
+        Err(e) => eprintln!("erro ao gravar save: {e}"),
+    }
 }
