@@ -2,6 +2,8 @@
 //!
 //! O frontend (desktop, web, tty, Android) só precisa de [`Nes`] e [`Cartridge`].
 
+#![forbid(unsafe_code)]
+
 pub mod apu;
 pub mod bus;
 pub mod buttons;

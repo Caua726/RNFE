@@ -2,6 +2,8 @@ use crate::bus::Bus;
 use crate::cpu6502::Cpu6502;
 
 pub struct Debugger {
+    /// `on_instruction` só roda quando ligado (custa ~10% do frame).
+    pub enabled: bool,
     // CPU instruction coverage
     pub opcode_count: [u64; 256], // quantas vezes cada opcode foi executado
     pub opcode_names: [&'static str; 256],
@@ -209,6 +211,7 @@ impl Debugger {
             watches: Vec::new(),
             total_instructions: 0,
             total_frames: 0,
+            enabled: false,
         }
     }
 

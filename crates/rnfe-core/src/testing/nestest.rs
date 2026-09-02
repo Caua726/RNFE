@@ -70,29 +70,20 @@ pub fn compare() -> Result<NestestResult, String> {
     let cart = Cartridge::from_bytes(&rom).map_err(|e| e.to_string())?;
     let mut bus = Bus::new(cart);
     let mut cpu = Cpu6502::new();
-    cpu.reset(&mut bus);
-    while !cpu.is_instruction_start() {
-        cpu.clock(&mut bus);
-    }
+    cpu.reset(&mut bus); // 7 ciclos, como o CYC:7 da primeira linha do log
     cpu.pc = 0xC000;
     cpu.status = 0x24;
     cpu.stkp = 0xFD;
-    let mut cyc: u64 = 7;
 
     let mut first_bad = None;
     for (i, expected) in log.iter().enumerate().take(TOTAL_LINES) {
-        let ours = St { pc: cpu.pc, a: cpu.a, x: cpu.x, y: cpu.y, p: cpu.status, sp: cpu.stkp, cyc };
+        let ours =
+            St { pc: cpu.pc, a: cpu.a, x: cpu.x, y: cpu.y, p: cpu.status, sp: cpu.stkp, cyc: bus.cpu_cycles };
         if ours != St::parse(expected) {
             first_bad = Some((i, ours));
             break;
         }
-        loop {
-            cpu.clock(&mut bus);
-            cyc += 1;
-            if cpu.is_instruction_start() {
-                break;
-            }
-        }
+        cpu.step(&mut bus);
     }
     Ok(NestestResult {
         matched: first_bad.map_or(TOTAL_LINES, |(i, _)| i),

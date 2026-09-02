@@ -162,10 +162,8 @@ impl Mapper for Mmc3 {
         }
     }
 
-    fn mapper_irq(&mut self) -> bool {
-        let pending = self.irq_pending;
-        self.irq_pending = false;
-        pending
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
     }
 
     fn reset(&mut self, prg_banks: u8) {

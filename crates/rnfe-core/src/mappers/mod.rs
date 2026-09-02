@@ -29,7 +29,8 @@ pub trait Mapper {
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool;
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> Option<u8>;
     fn clock_scanline(&mut self) {}
-    fn mapper_irq(&mut self) -> bool {
+    /// Nível da linha IRQ (fica alto até o jogo reconhecer no mapper).
+    fn irq_pending(&self) -> bool {
         false
     }
     fn reset(&mut self, prg_banks: u8);

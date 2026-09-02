@@ -68,14 +68,7 @@ pub const TESTS: &[TestRom] = &[
     t("instr_timing", "instr_timing/rom_singles/2-branch_timing.nes", "cpu", Mem, Pass, 2000),
     t("instr_misc", "instr_misc/rom_singles/01-abs_x_wrap.nes", "cpu", Mem, Pass, 1000),
     t("instr_misc", "instr_misc/rom_singles/02-branch_wrap.nes", "cpu", Mem, Pass, 1000),
-    t(
-        "instr_misc",
-        "instr_misc/rom_singles/03-dummy_reads.nes",
-        "cpu",
-        Mem,
-        KF("sem dummy reads (F1-06)"),
-        1000,
-    ),
+    t("instr_misc", "instr_misc/rom_singles/03-dummy_reads.nes", "cpu", Mem, Pass, 1000),
     t(
         "instr_misc",
         "instr_misc/rom_singles/04-dummy_reads_apu.nes",
@@ -124,8 +117,8 @@ pub const TESTS: &[TestRom] = &[
         KF("polling de interrupção (F1-07)"),
         1000,
     ),
-    t("cpu_dummy", "cpu_dummy_reads/cpu_dummy_reads.nes", "cpu", Screen, KF("sem dummy reads (F1-06)"), 600),
-    t("cpu_dummy", "cpu_dummy_writes/cpu_dummy_writes_oam.nes", "cpu", Mem, KF("a verificar"), 2000),
+    t("cpu_dummy", "cpu_dummy_reads/cpu_dummy_reads.nes", "cpu", Screen, Pass, 600),
+    t("cpu_dummy", "cpu_dummy_writes/cpu_dummy_writes_oam.nes", "cpu", Mem, Pass, 2000),
     t("cpu_dummy", "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes", "cpu", Mem, KF("a verificar"), 2000),
     t(
         "cpu_exec_space",
@@ -159,7 +152,7 @@ pub const TESTS: &[TestRom] = &[
         2000,
     ),
     t("ppu_vbl_nmi", "ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes", "ppu", Mem, Pass, 2000),
-    t("ppu_vbl_nmi", "ppu_vbl_nmi/rom_singles/04-nmi_control.nes", "ppu", Mem, KF("NMI (F2-04)"), 2000),
+    t("ppu_vbl_nmi", "ppu_vbl_nmi/rom_singles/04-nmi_control.nes", "ppu", Mem, Pass, 2000),
     t("ppu_vbl_nmi", "ppu_vbl_nmi/rom_singles/05-nmi_timing.nes", "ppu", Mem, KF("NMI (F2-04)"), 2000),
     t(
         "ppu_vbl_nmi",
@@ -378,7 +371,7 @@ pub const TESTS: &[TestRom] = &[
     t("mmc3_irq", "mmc3_irq_tests/1.Clocking.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
     t("mmc3_irq", "mmc3_irq_tests/2.Details.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
     t("mmc3_irq", "mmc3_irq_tests/3.A12_clocking.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
-    t("mmc3_irq", "mmc3_irq_tests/4.Scanline_timing.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
+    t("mmc3_irq", "mmc3_irq_tests/4.Scanline_timing.nes", "mapper", Screen, Pass, 600),
     t("mmc3_irq", "mmc3_irq_tests/5.MMC3_rev_A.nes", "mapper", Screen, KF("variante A (F3-02)"), 600),
     t("mmc3_irq", "mmc3_irq_tests/6.MMC3_rev_B.nes", "mapper", Screen, KF("A12 (F3-02)"), 600),
 ];

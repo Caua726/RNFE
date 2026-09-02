@@ -66,11 +66,11 @@ const NES_PALETTE: [[u8; 4]; 64] = [
     [0, 0, 0, 255],
 ];
 
+use crate::cartridge::{Cartridge, Mirror};
+
 pub struct Ppu {
     pub nametable: [[u8; 1024]; 2],
     pub palette_table: [u8; 32],
-    pub pattern_table: [[u8; 4096]; 2],
-    pub cart_ptr: Option<*mut crate::cartridge::Cartridge>,
 
     // Status registers
     pub status: u8,
@@ -113,17 +113,11 @@ pub struct Ppu {
 
     pub frame_complete: bool,
 
-    // NMI
-    nmi: bool,
-
     // Scanline callback (pra MMC3 IRQ)
     pub scanline_trigger: bool,
 
     // Frame par/ímpar
     odd_frame: bool,
-
-    // Mirroring (0=vertical, 1=horizontal, 2=onescreen_lo, 3=onescreen_hi)
-    pub mirror_mode: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -145,8 +139,6 @@ impl Ppu {
         Ppu {
             nametable: [[0; 1024]; 2],
             palette_table: [0; 32],
-            pattern_table: [[0; 4096]; 2],
-            cart_ptr: None,
             status: 0x80, // vblank flag setado no powerup
             mask: 0,
             control: 0,
@@ -175,18 +167,9 @@ impl Ppu {
             scanline: 241, // NES powerup: PPU começa em vblank
             cycle: 0,
             frame_complete: false,
-            nmi: false,
             scanline_trigger: false,
             odd_frame: false,
-            mirror_mode: 0,
         }
-    }
-
-    pub fn load_chr(&mut self, chr_data: &[u8]) {
-        let len = chr_data.len().min(8192);
-        let (lo, hi) = chr_data[..len].split_at(len.min(4096));
-        self.pattern_table[0][..lo.len()].copy_from_slice(lo);
-        self.pattern_table[1][..hi.len()].copy_from_slice(hi);
     }
 
     pub fn cpu_read_debug(&self, addr: u16) -> u8 {
@@ -197,66 +180,36 @@ impl Ppu {
         }
     }
 
-    pub fn cpu_read(&mut self, addr: u16, read_only: bool) -> u8 {
-        let mut data = 0x00;
-
-        if read_only {
-            match addr {
-                0x0000 => {}
-                0x0001 => {}
-                0x0002 => data = self.status,
-                0x0003 => {}
-                0x0004 => {}
-                0x0005 => {}
-                0x0006 => {}
-                0x0007 => {}
-                _ => {}
+    pub fn cpu_read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
+        match addr {
+            0x0002 => {
+                let data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
+                self.status &= 0x7F;
+                self.address_latch = 0;
+                data
             }
-        } else {
-            match addr {
-                0x0000 => {}
-                0x0001 => {}
-                0x0002 => {
-                    data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F);
-                    self.status &= 0x7F;
-                    self.address_latch = 0;
-                }
-                0x0003 => {}
-                0x0004 => data = self.oam[self.oam_addr as usize],
-                0x0005 => {}
-                0x0006 => {}
-                0x0007 => {
+            0x0004 => self.oam[self.oam_addr as usize],
+            0x0007 => {
+                let mut data = self.ppu_data_buffer;
+                self.ppu_data_buffer = self.vram_read(self.vram_addr, cart);
+                // Paletas retornam imediatamente, buffer recebe o nametable abaixo
+                if (self.vram_addr & 0x3FFF) >= 0x3F00 {
                     data = self.ppu_data_buffer;
-                    self.ppu_data_buffer = self.ppu_read_internal(self.vram_addr);
-
-                    // Paletas retornam imediatamente, buffer recebe o nametable abaixo
-                    if self.vram_addr >= 0x3F00 {
-                        data = self.ppu_data_buffer;
-                        self.ppu_data_buffer = self.ppu_read_internal(self.vram_addr - 0x1000);
-                    }
-
-                    if (self.control & 0x04) != 0 {
-                        self.vram_addr = self.vram_addr.wrapping_add(32);
-                    } else {
-                        self.vram_addr = self.vram_addr.wrapping_add(1);
-                    }
+                    self.ppu_data_buffer = self.vram_read(self.vram_addr - 0x1000, cart);
                 }
-                _ => {}
+                self.vram_addr = self.vram_addr.wrapping_add(if self.control & 0x04 != 0 { 32 } else { 1 });
+                data
             }
+            _ => 0,
         }
-
-        data
     }
 
-    pub fn cpu_write(&mut self, addr: u16, data: u8) {
+    pub fn cpu_write(&mut self, addr: u16, data: u8, cart: &mut Cartridge) {
         match addr {
             0x0000 => {
-                let old_nmi = self.control & 0x80;
+                // NMI é nível (status.7 & control.7); a CPU detecta a borda
                 self.control = data;
                 self.tram_addr = (self.tram_addr & 0xF3FF) | ((data as u16 & 0x03) << 10);
-                if old_nmi == 0 && (data & 0x80) != 0 && (self.status & 0x80) != 0 {
-                    self.nmi = true;
-                }
             }
             0x0001 => {
                 self.mask = data;
@@ -292,7 +245,7 @@ impl Ppu {
                 }
             }
             0x0007 => {
-                self.ppu_write_internal(self.vram_addr, data);
+                self.vram_write(self.vram_addr, data, cart);
                 if (self.control & 0x04) != 0 {
                     self.vram_addr = self.vram_addr.wrapping_add(32);
                 } else {
@@ -303,132 +256,56 @@ impl Ppu {
         }
     }
 
-    fn mirror_nametable(&self, addr: u16) -> (usize, usize) {
+    #[inline]
+    fn mirror_nametable(addr: u16, mirror: Mirror) -> (usize, usize) {
         let addr = addr & 0x0FFF;
         let table = (addr >> 10) as usize; // 0-3
         let offset = (addr & 0x03FF) as usize;
-        let nt = match self.mirror_mode {
-            0 => table & 1,  // Vertical: 0->0, 1->1, 2->0, 3->1
-            1 => table >> 1, // Horizontal: 0->0, 1->0, 2->1, 3->1
-            2 => 0,          // OneScreen Lo: tudo pra nametable 0
-            3 => 1,          // OneScreen Hi: tudo pra nametable 1
-            _ => table & 1,
+        let nt = match mirror {
+            Mirror::Vertical => table & 1,
+            Mirror::Horizontal => table >> 1,
+            Mirror::OneScreenLo => 0,
+            Mirror::OneScreenHi => 1,
         };
         (nt, offset)
     }
 
-    // Atualizar pattern tables a partir do cartridge (chamado pelo Nes)
-    pub fn update_chr_from_cartridge(&mut self, cartridge: &mut crate::cartridge::Cartridge) {
-        for addr in 0..0x2000u16 {
-            if let Some(byte) = cartridge.ppu_read(addr) {
-                let table = ((addr & 0x1000) >> 12) as usize;
-                let offset = (addr & 0x0FFF) as usize;
-                self.pattern_table[table][offset] = byte;
-            }
-        }
-    }
-
-    fn ppu_read_internal(&mut self, addr: u16) -> u8 {
+    /// Leitura no barramento da PPU: CHR pelo mapper, nametables com o mirroring atual, paleta.
+    #[inline]
+    fn vram_read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
         let addr = addr & 0x3FFF;
-
         if addr <= 0x1FFF {
-            // Read CHR through cartridge mapper if available (supports bank switching)
-            if let Some(cart_ptr) = self.cart_ptr {
-                let cart = unsafe { &mut *cart_ptr };
-                if let Some(data) = cart.ppu_read(addr) {
-                    return data;
-                }
-            }
-            self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize]
-        } else if (0x2000..=0x3EFF).contains(&addr) {
-            let (nt, offset) = self.mirror_nametable(addr);
+            cart.chr_read(addr)
+        } else if addr <= 0x3EFF {
+            let (nt, offset) = Self::mirror_nametable(addr, cart.get_mirror());
             self.nametable[nt][offset]
-        } else if (0x3F00..=0x3FFF).contains(&addr) {
-            let addr = addr & 0x001F;
-            let addr = if addr == 0x0010 {
-                0x0000
-            } else if addr == 0x0014 {
-                0x0004
-            } else if addr == 0x0018 {
-                0x0008
-            } else if addr == 0x001C {
-                0x000C
-            } else {
-                addr
-            };
-            self.palette_table[addr as usize] & if (self.mask & 0x01) != 0 { 0x30 } else { 0x3F }
         } else {
-            0
+            let addr = Self::palette_index(addr);
+            self.palette_table[addr] & if (self.mask & 0x01) != 0 { 0x30 } else { 0x3F }
         }
     }
 
-    pub fn ppu_read(
-        &mut self,
-        addr: u16,
-        _read_only: bool,
-        cartridge: Option<&mut crate::cartridge::Cartridge>,
-    ) -> u8 {
-        let addr = addr & 0x3FFF;
-
-        if (0x0000..=0x1FFF).contains(&addr) {
-            if let Some(cart) = cartridge {
-                if let Some(cart_data) = cart.ppu_read(addr) {
-                    return cart_data;
-                }
-            }
-        }
-
-        self.ppu_read_internal(addr)
+    #[inline]
+    fn palette_index(addr: u16) -> usize {
+        let addr = addr & 0x001F;
+        (if addr & 0x0013 == 0x0010 { addr & 0x000F } else { addr }) as usize
     }
 
-    fn ppu_write_internal(&mut self, addr: u16, data: u8) {
+    #[inline]
+    fn vram_write(&mut self, addr: u16, data: u8, cart: &mut Cartridge) {
         let addr = addr & 0x3FFF;
-
         if addr <= 0x1FFF {
-            // Escrever no cartridge CHR RAM se disponível
-            if let Some(cart) = self.cart_ptr {
-                unsafe {
-                    (*cart).ppu_write_chr(addr, data);
-                }
-            }
-            // Também escrever no pattern_table local (fallback)
-            self.pattern_table[((addr & 0x1000) >> 12) as usize][(addr & 0x0FFF) as usize] = data;
-        } else if (0x2000..=0x3EFF).contains(&addr) {
-            let (nt, offset) = self.mirror_nametable(addr);
+            cart.chr_write(addr, data);
+        } else if addr <= 0x3EFF {
+            let (nt, offset) = Self::mirror_nametable(addr, cart.get_mirror());
             self.nametable[nt][offset] = data;
-        } else if (0x3F00..=0x3FFF).contains(&addr) {
-            let addr = addr & 0x001F;
-            let addr = if addr == 0x0010 {
-                0x0000
-            } else if addr == 0x0014 {
-                0x0004
-            } else if addr == 0x0018 {
-                0x0008
-            } else if addr == 0x001C {
-                0x000C
-            } else {
-                addr
-            };
-            self.palette_table[addr as usize] = data;
+        } else {
+            self.palette_table[Self::palette_index(addr)] = data;
         }
     }
 
-    pub fn ppu_write(&mut self, addr: u16, data: u8, cartridge: Option<&mut crate::cartridge::Cartridge>) {
-        let addr = addr & 0x3FFF;
-
-        if (0x0000..=0x1FFF).contains(&addr) {
-            if let Some(cart) = cartridge {
-                if cart.ppu_write(addr, data) {
-                    return;
-                }
-            }
-        }
-
-        self.ppu_write_internal(addr, data);
-    }
-
-    pub fn clock(&mut self, cartridge: Option<&mut crate::cartridge::Cartridge>) {
-        self.cart_ptr = cartridge.map(|c| c as *mut _);
+    /// Um dot de PPU.
+    pub fn step(&mut self, cart: &mut Cartridge) {
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
             if self.scanline == 0 && self.cycle == 0 && self.odd_frame && (self.mask & 0x18) != 0 {
@@ -451,14 +328,15 @@ impl Ppu {
                 match (self.cycle - 1) % 8 {
                     0 => {
                         self.load_background_shifters();
-                        self.bg_next_tile_id = self.ppu_read_internal(0x2000 | (self.vram_addr & 0x0FFF));
+                        self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
                     }
                     2 => {
-                        self.bg_next_tile_attr = self.ppu_read_internal(
+                        self.bg_next_tile_attr = self.vram_read(
                             0x23C0
                                 | (self.vram_addr & 0x0C00)
                                 | ((self.vram_addr >> 4) & 0x38)
                                 | ((self.vram_addr >> 2) & 0x07),
+                            cart,
                         );
                         if (self.vram_addr & 0x0040) != 0 {
                             self.bg_next_tile_attr >>= 4;
@@ -469,18 +347,20 @@ impl Ppu {
                         self.bg_next_tile_attr &= 0x03;
                     }
                     4 => {
-                        self.bg_next_tile_lsb = self.ppu_read_internal(
+                        self.bg_next_tile_lsb = self.vram_read(
                             ((self.control as u16 & 0x10) << 8)
                                 + (self.bg_next_tile_id as u16 * 16)
                                 + ((self.vram_addr >> 12) & 0x07),
+                            cart,
                         );
                     }
                     6 => {
-                        self.bg_next_tile_msb = self.ppu_read_internal(
+                        self.bg_next_tile_msb = self.vram_read(
                             ((self.control as u16 & 0x10) << 8)
                                 + (self.bg_next_tile_id as u16 * 16)
                                 + ((self.vram_addr >> 12) & 0x07)
                                 + 8,
+                            cart,
                         );
                     }
                     7 => {
@@ -504,7 +384,7 @@ impl Ppu {
             }
 
             if self.cycle == 338 || self.cycle == 340 {
-                self.bg_next_tile_id = self.ppu_read_internal(0x2000 | (self.vram_addr & 0x0FFF));
+                self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
             }
 
             if self.scanline == -1 && self.cycle >= 280 && self.cycle < 305 {
@@ -591,8 +471,8 @@ impl Ppu {
                     }
 
                     sprite_pattern_addr_hi = sprite_pattern_addr_lo + 8;
-                    sprite_pattern_bits_lo = self.ppu_read_internal(sprite_pattern_addr_lo);
-                    sprite_pattern_bits_hi = self.ppu_read_internal(sprite_pattern_addr_hi);
+                    sprite_pattern_bits_lo = self.vram_read(sprite_pattern_addr_lo, cart);
+                    sprite_pattern_bits_hi = self.vram_read(sprite_pattern_addr_hi, cart);
 
                     if (self.sprites_scanline[i].attribute & 0x40) != 0 {
                         fn flip_byte(b: u8) -> u8 {
@@ -613,11 +493,8 @@ impl Ppu {
             }
         }
 
-        if self.scanline >= 241 && self.scanline < 261 && self.scanline == 241 && self.cycle == 1 {
+        if self.scanline == 241 && self.cycle == 1 {
             self.status |= 0x80;
-            if (self.control & 0x80) != 0 {
-                self.nmi = true;
-            }
         }
 
         // Mux de pixel, sprite 0 hit e escrita na tela: só na janela visível (240 linhas × dots 1..=256).
@@ -638,7 +515,6 @@ impl Ppu {
             }
         }
 
-        // cart_ptr permanece setado - limpo no próximo clock cycle pelo nes.rs
         self.cycle += 1;
         if self.cycle >= 341 {
             self.cycle = 0;
@@ -832,9 +708,9 @@ impl Ppu {
         NES_PALETTE[(color_index & 0x3F) as usize]
     }
 
-    pub fn get_nmi(&mut self) -> bool {
-        let temp = self.nmi;
-        self.nmi = false;
-        temp
+    /// Nível da saída /NMI da PPU: VBL ligado e NMI habilitado em `$2000`.
+    #[inline]
+    pub fn nmi_output(&self) -> bool {
+        (self.status & 0x80) != 0 && (self.control & 0x80) != 0
     }
 }

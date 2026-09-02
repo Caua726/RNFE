@@ -81,10 +81,6 @@ pub fn diagnostic_report(cpu: &Cpu6502, bus: &Bus) -> String {
 
     // 4. Pattern tables
     let _ = writeln!(o, "\n[PATTERN TABLE]");
-    let pt0 = bus.ppu.pattern_table[0].iter().filter(|b| **b != 0).count();
-    let pt1 = bus.ppu.pattern_table[1].iter().filter(|b| **b != 0).count();
-    let _ = writeln!(o, "  PT0: {}/4096 bytes nonzero", pt0);
-    let _ = writeln!(o, "  PT1: {}/4096 bytes nonzero", pt1);
     let cart_nonzero =
         (0..0x2000u16).filter_map(|a| bus.cartridge.cpu_read_chr_debug(a)).filter(|b| *b != 0).count();
     let _ = writeln!(o, "  Cartridge CHR (via mapper): {}/8192 bytes nonzero", cart_nonzero);

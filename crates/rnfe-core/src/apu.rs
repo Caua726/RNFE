@@ -410,6 +410,12 @@ impl Apu {
         }
     }
 
+    /// Nível da linha IRQ da APU (frame counter e DMC) — implementado em F2-01/F2-02.
+    #[inline]
+    pub fn irq_line(&self) -> bool {
+        false
+    }
+
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.sample_rate = rate;
     }
