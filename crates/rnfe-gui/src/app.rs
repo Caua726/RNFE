@@ -9,7 +9,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 use wgpu::util::DeviceExt;
 
-use crate::{nes::Nes, ui::Ui};
+use crate::ui::Ui;
+use rnfe_core::Nes;
 
 const NES_WIDTH: u32 = 256;
 const NES_HEIGHT: u32 = 240;
@@ -848,7 +849,7 @@ impl ApplicationHandler for App {
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }
                             PhysicalKey::Code(KeyCode::F6) => {
-                                crate::diagnostic::run_diagnostic(&nes.cpu, &nes.bus);
+                                rnfe_core::diagnostic::run_diagnostic(&nes.cpu, &nes.bus);
                                 self.toast_msg = "Diagnostic -> terminal".into();
                                 self.toast_until = Instant::now() + Duration::from_secs(2);
                             }

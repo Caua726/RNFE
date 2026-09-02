@@ -1,0 +1,14 @@
+[package]
+name = "rnfe-core"
+description = "Núcleo do emulador de Famicom RNFE: CPU 6502, PPU, APU, bus, cartuchos e mappers. Sem dependências."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

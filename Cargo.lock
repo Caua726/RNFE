@@ -3,19 +3,6 @@
 version = 4
 
 [[package]]
-name = "RNFE"
-version = "0.0.1"
-dependencies = [
- "bytemuck",
- "cpal",
- "fontdue",
- "pollster",
- "rfd",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1588,6 +1575,31 @@ dependencies = [
  "wayland-protocols",
  "web-sys",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rnfe-core"
+version = "0.1.0"
+
+[[package]]
+name = "rnfe-desktop"
+version = "0.1.0"
+dependencies = [
+ "rnfe-gui",
+]
+
+[[package]]
+name = "rnfe-gui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cpal",
+ "fontdue",
+ "pollster",
+ "rfd",
+ "rnfe-core",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
