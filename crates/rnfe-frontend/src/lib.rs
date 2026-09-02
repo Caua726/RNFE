@@ -6,11 +6,15 @@
 pub mod fs_storage;
 pub mod input;
 pub mod pacer;
+#[cfg(feature = "state")]
+pub mod rewind;
 pub mod save_manager;
 
 pub use fs_storage::FsStorage;
 pub use input::InputState;
 pub use pacer::FramePacer;
+#[cfg(feature = "state")]
+pub use rewind::Rewind;
 pub use save_manager::SaveManager;
 
 /// Frequência de quadros do NTSC (Hz).

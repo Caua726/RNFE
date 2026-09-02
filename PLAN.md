@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F3-05 — persistência (Storage, FsStorage, SaveManager)
-Estado: concluída (branch fase-3-mappers-saves)
-Próximo: F3-06 — save states (feature serde + postcard, header RNFS)
+Tarefa: F3-07 — rewind (F3 inteira feita)
+Estado: concluída — fechar marco M3 (STATUS, merge em main)
+Próximo: F4-01 [S] — rnfe-gui reestruturado (branch fase-4-web)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -80,8 +80,8 @@ M2, 02/09/2026:
 - [x] F3-03 MMC1: writes consecutivos, SUROM/SOROM/SXROM, PRG RAM enable, CHR RAM banking
 - [x] F3-04 FME-7 IRQ + `$6000`
 - [x] F3-05 persistência: trait `Storage`; `FsStorage` + `SaveManager`; `.sav`
-- [ ] F3-06 save states: feature `serde` (postcard), `static LOOKUP`, header RNFS, round-trip test
-- [ ] F3-07 rewind
+- [x] F3-06 save states: feature `serde` (postcard), `static LOOKUP`, header RNFS, round-trip test
+- [x] F3-07 rewind
 
 ## F4 — Web (`fase-4-web`) · marco M4: Pages jogável no celular com toque e som
 - [ ] F4-01 [S] rnfe-gui: app/gpu(async)/audio/platform/ui; `Arc<Window>`; `about_to_wait` + WaitUntil; ring SPSC; web_time; UserEvent; áudio lazy

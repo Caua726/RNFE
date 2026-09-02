@@ -8,6 +8,11 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["state"]
+# Save states e rewind (liga `serde` no núcleo).
+state = ["rnfe-core/serde"]
+
 [dependencies]
 rnfe-core.workspace = true
 

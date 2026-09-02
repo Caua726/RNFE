@@ -4,6 +4,8 @@ Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
 ## Não publicado — F3 Mappers, saves e rewind
 
+- F3-07 Rewind: `rnfe_frontend::Rewind` (anel de states a cada 5 frames, limite de memória, padrão 32 MB); no tty Backspace volta no tempo, 1/2 salvam/carregam state em `state/<hash>/1.rnfs`.
+- F3-06 Save states: feature `serde` no núcleo (serde + postcard, sem std neles) com `Nes::save_state()`/`load_state()` — header `RNFS` + versão + `rom_hash`, payload com CPU, PPU (sem framebuffer), APU (sem buffer de áudio), bus, PRG RAM, CHR RAM e mapper; ~15 KB (23 KB com CHR RAM). `tests/savestate.rs`: round-trip NROM/MMC1/MMC3/APU com hash de frame e ciclos iguais, `save(load(s)) == s`, rejeição de ROM/versão/lixo. `check.sh` e o CI testam com a feature.
 - F3-05 Persistência: trait `Storage` (+ `MemoryStorage`) no núcleo; `FsStorage` (tmp+rename, `$RNFE_DATA_DIR` / `$XDG_DATA_HOME/rnfe` / `~/.local/share/rnfe`) e `SaveManager` (`sav/<hash>.sav`, grava no máximo a cada 300 frames se a PRG RAM mudou, flush ao trocar de ROM/sair) em `rnfe-frontend`; tty e desktop usam.
 - F3-04 FME-7: contador de IRQ de 16 bits por ciclo de CPU (comandos $D/$E/$F, ack em $D) e janela `$6000` ROM/RAM; testes sintéticos em `tests/mappers.rs`.
 - F3-03 MMC1: segunda escrita de um RMW ignorada (via `CartData::cpu_cycle`), SUROM/SOROM/SXROM (bit 4 do CHR escolhe 256 KB de PRG; bits 2-3 o banco de PRG RAM), bit 4 de `$E000` desliga a PRG RAM, mirroring do header até a 1ª escrita no control.
