@@ -753,7 +753,9 @@ impl Apu {
 
     /// Um ciclo de CPU.
     #[inline]
-    pub fn clock(&mut self) {
+    /// Um ciclo de CPU. `expansion` é chamado só quando a APU gera uma amostra (~44 kHz) e
+    /// devolve o áudio do cartucho (VRC6, N163, MMC5, 5B…), já na escala do mix da 2A03.
+    pub fn clock(&mut self, expansion: impl FnOnce() -> f32) {
         self.cycle += 1;
 
         // --- frame counter
@@ -808,7 +810,7 @@ impl Apu {
         self.sample_clock += self.sample_step;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
-            let raw = self.mix();
+            let raw = self.mix() + expansion();
             // High-pass 1 (~90 Hz)
             let alpha1: f32 = 0.999835;
             let hp1 = alpha1 * self.hp1_prev_out + raw - self.hp1_prev_in;

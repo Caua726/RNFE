@@ -1,4 +1,5 @@
-//! Mapper 069 (FME-7 / Sunsoft 5B): 4 bancos de PRG de 8 KB, 8 de CHR de 1 KB, IRQ por contador.
+//! Mapper 069 (FME-7 / Sunsoft 5B): 4 bancos de PRG de 8 KB, 8 de CHR de 1 KB, IRQ por contador,
+//! e o áudio do 5B (3 canais quadrados do YM2149; `$C000` escolhe o registrador, `$E000` escreve).
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
@@ -14,7 +15,63 @@ pub struct Fme7 {
     irq_count_enabled: bool,
     irq_enabled: bool,
     irq_pending: bool,
+    audio: Sunsoft5b,
 }
+
+/// YM2149 reduzido: 3 tons quadrados com período de 12 bits e volume logarítmico de 4 bits.
+/// (Sem envelope nem ruído: os jogos do 5B usam praticamente só os tons.)
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
+struct Sunsoft5b {
+    reg_select: u8,
+    regs: [u8; 16],
+    /// Divisor de 8 ciclos de CPU (o tom vira a cada 8 × período).
+    divider: u8,
+    counters: [u16; 3],
+    outputs: [bool; 3],
+}
+
+impl Sunsoft5b {
+    fn write(&mut self, val: u8) {
+        self.regs[(self.reg_select & 0x0F) as usize] = val;
+    }
+
+    fn clock(&mut self) {
+        self.divider = self.divider.wrapping_add(1);
+        if self.divider & 7 != 0 {
+            return;
+        }
+        for ch in 0..3 {
+            let period = (self.regs[ch * 2] as u16 | ((self.regs[ch * 2 + 1] as u16 & 0x0F) << 8)).max(1);
+            self.counters[ch] += 1;
+            if self.counters[ch] >= period {
+                self.counters[ch] = 0;
+                self.outputs[ch] = !self.outputs[ch];
+            }
+        }
+    }
+
+    fn output(&self) -> f32 {
+        let mut sum = 0.0;
+        for ch in 0..3 {
+            let enabled = self.regs[7] & (1 << ch) == 0; // ativo em 0
+            if !enabled || !self.outputs[ch] {
+                continue;
+            }
+            let vol = (self.regs[8 + ch] & 0x0F) as usize;
+            if vol > 0 {
+                sum += VOLUME[vol];
+            }
+        }
+        sum * 0.12
+    }
+}
+
+/// ~3 dB por passo (AY/YM): amplitude relativa de cada nível de volume.
+const VOLUME: [f32; 16] = [
+    0.0, 0.0079, 0.0112, 0.0158, 0.0224, 0.0316, 0.0447, 0.0631, 0.0891, 0.1259, 0.1778, 0.2512, 0.3548,
+    0.5012, 0.7079, 1.0,
+];
 
 impl Fme7 {
     pub fn new() -> Self {
@@ -26,6 +83,7 @@ impl Fme7 {
             irq_count_enabled: false,
             irq_enabled: false,
             irq_pending: false,
+            audio: Sunsoft5b::default(),
         }
     }
 }
@@ -98,6 +156,14 @@ impl Mapper for Fme7 {
                 }
                 true
             }
+            0xC000..=0xDFFF => {
+                self.audio.reg_select = val;
+                true
+            }
+            0xE000..=0xFFFF => {
+                self.audio.write(val);
+                true
+            }
             _ => false,
         }
     }
@@ -107,7 +173,13 @@ impl Mapper for Fme7 {
     }
 
     #[inline]
+    fn audio_output(&self) -> f32 {
+        self.audio.output()
+    }
+
+    #[inline]
     fn cpu_clock(&mut self) {
+        self.audio.clock();
         if self.irq_count_enabled {
             let (v, wrapped) = self.irq_counter.overflowing_sub(1);
             self.irq_counter = v;
@@ -139,6 +211,7 @@ impl Mapper for Fme7 {
         self.irq_count_enabled = false;
         self.irq_enabled = false;
         self.irq_pending = false;
+        self.audio = Sunsoft5b::default();
     }
 
     fn state_string(&self) -> String {

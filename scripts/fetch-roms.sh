@@ -8,7 +8,7 @@ SUBDIRS=(other instr_test-v5 instr_timing instr_misc cpu_interrupts_v2 cpu_dummy
   cpu_exec_space cpu_reset branch_timing_tests ppu_vbl_nmi vbl_nmi_timing sprite_hit_tests_2005.10.05
   sprite_overflow_tests oam_read oam_stress ppu_open_bus ppu_read_buffer full_palette nmi_sync scanline
   apu_test blargg_apu_2005.07.30 apu_reset apu_mixer dmc_tests dmc_dma_during_read4
-  mmc3_test_2 mmc3_irq_tests MMC1_A12 read_joy3)
+  mmc3_test_2 mmc3_irq_tests MMC1_A12 read_joy3 mmc5test mmc5test_v2 exram)
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" sparse-checkout set "${SUBDIRS[@]}"
   git -C "$DIR" pull -q --ff-only || true

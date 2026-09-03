@@ -55,7 +55,8 @@ impl Bus {
     pub fn tick_pre(&mut self) {
         // A APU avança antes do acesso: uma leitura de $4015 vê o mesmo estado que a linha IRQ
         // amostrada no fim deste ciclo.
-        self.apu.clock();
+        let cart = &self.cartridge;
+        self.apu.clock(|| cart.audio_output());
         for _ in 0..DOTS_BEFORE_ACCESS {
             self.ppu.step(&mut self.cartridge);
         }
