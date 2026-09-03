@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: correções da revisão do APK (dois agentes: código do gui + fontes do winit/cpal/wgpu)
-Estado: 13 correções aplicadas (DPI, alpha premultiplicado, overlay só quando muda, Voltar, áudio, toque, GPU downlevel, cutout); PR aberto
-Próximo: o usuário testa o APK novo no g56 (desinstalar o anterior); se ainda houver problema, parear a depuração sem fio para eu ver logcat/capturas
+Tarefa: passada de UI/UX (menus arredondados, ação ao soltar, sliders, slots de state, reset confirmado, ações rápidas)
+Estado: código pronto e verificado no celular; PR → CI → APK
+Próximo: o usuário testa o APK no g56; próximos candidatos: editor de posição dos botões de toque, capturas de tela, lista de recentes com miniatura
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):

@@ -11,6 +11,7 @@ fn main() {
         Some("start") => Screen::Start,
         Some("settings") => Screen::Settings,
         Some("recents") => Screen::Recents,
+        Some("states") => Screen::States,
         _ => Screen::Paused,
     };
     let st = MenuState {
@@ -23,6 +24,8 @@ fn main() {
             RecentRom { hash: 2, name: "nestest".into() },
         ],
         version: "0.2.0".into(),
+        slots: [true, false, false],
+        ..Default::default()
     };
     let dpi: f32 =
         args.get(4).and_then(|s| s.parse().ok()).unwrap_or(if w.min(h) >= 1000.0 { 2.6 } else { 1.0 });
