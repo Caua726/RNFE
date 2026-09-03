@@ -53,6 +53,15 @@ Bluetooth também funciona. Saves e save states ficam na pasta interna do app.
 Publicação na web: o job `web` do CI faz o `trunk build` e o job `pages` publica em GitHub Pages
 a cada push em `main` — no repositório, uma vez, ative **Settings → Pages → Source: GitHub Actions**.
 
+### Exemplos
+
+```sh
+cargo run -p rnfe-core --release --features serde --example embed -- jogo.nes   # embutir o núcleo: vídeo, áudio, save state
+cargo run -p rnfe-core --release --example run_rom -- -v nestest                  # veredito de uma ROM de teste
+cargo run -p rnfe-core --release --example ppu_dump -- jogo.nes 120 tela.png      # estado da PPU + captura
+cargo run -p rnfe-frontend --example menu_layout -- 1080 2340 settings            # menus de toque em ASCII
+```
+
 ### Testes
 
 ```sh
@@ -81,7 +90,10 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 | Debug | F3 overlay · F4 cobertura · F6 diagnóstico · F9 trace · F11 tela cheia | — | — | — |
 
 Os controles de toque aparecem no primeiro toque; em retrato a imagem fica em cima e os botões
-embaixo, em paisagem ficam nas laterais.
+embaixo, em paisagem ficam nas laterais. O botão **MENU** (ou Esc) abre o menu de pausa: salvar e
+carregar state, voltar 5 s, turbo, reset, abrir outra ROM e **Ajustes** — tamanho e opacidade dos
+botões de toque, botões sempre visíveis, tamanho do texto, alto contraste, vibração, escala
+inteira e volume. Tudo fica guardado, junto com a lista de ROMs recentes (reabrem sem o seletor).
 
 ## Mappers
 
@@ -110,8 +122,8 @@ embaixo, em paisagem ficam nas laterais.
 ```
 crates/rnfe-core       núcleo: cpu6502, ppu, apu, bus, cartridge, mappers, storage, state — sem dependências
                        (feature `serde`: save states com serde + postcard)
-crates/rnfe-frontend   comum a todo frontend, sem dependências: pacer, input, toque, anel de áudio,
-                       FsStorage, SaveManager (.sav), Rewind
+crates/rnfe-frontend   comum a todo frontend (só `log`): pacer, input, toque, anel de áudio, menus,
+                       ajustes e recentes, FsStorage, SaveManager (.sav), Rewind
 crates/rnfe-tty        frontend de terminal (half-blocks, cor 24-bit)
 crates/rnfe-gui        frontend gráfico (winit + wgpu + cpal + gilrs), o mesmo código no desktop e na web
 crates/rnfe-desktop    binário de desktop (fino)

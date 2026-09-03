@@ -16,15 +16,19 @@ use winit::platform::android::activity::AndroidApp;
 
 static PROXY: Mutex<Option<EventLoopProxy<UserEvent>>> = Mutex::new(None);
 
-/// Chama `MainActivity.pickRom()` pela JNI.
-fn call_pick_rom(app: &AndroidApp) -> Result<(), String> {
+/// Chama um método `void` sem argumentos da `MainActivity` pela JNI.
+fn call_activity(app: &AndroidApp, method: &str) -> Result<(), String> {
     // SAFETY: os ponteiros vêm do android-activity e são a JavaVM e a Activity vivas deste app.
     let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
         .map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
-    env.call_method(&activity, "pickRom", "()V", &[]).map_err(|e| e.to_string())?;
+    env.call_method(&activity, method, "()V", &[]).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn call_pick_rom(app: &AndroidApp) -> Result<(), String> {
+    call_activity(app, "pickRom")
 }
 
 /// Chamado pelo Java com o conteúdo da ROM escolhida (ou vazio se cancelou).
@@ -64,6 +68,12 @@ fn android_main(app: AndroidApp) {
         if let Err(e) = call_pick_rom(&picker_app) {
             log::error!("pickRom: {e}");
             let _ = proxy.send_event(UserEvent::RomLoadFailed(e));
+        }
+    }));
+    let haptic_app = app.clone();
+    launch.haptic = Some(Box::new(move || {
+        if let Err(e) = call_activity(&haptic_app, "vibrate") {
+            log::debug!("vibrate: {e}");
         }
     }));
     if let Err(e) = rnfe_gui::run_android(app, launch) {

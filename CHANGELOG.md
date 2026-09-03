@@ -2,6 +2,13 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F8 APK polido
+
+- F8-05 Acessibilidade: ajustes de tamanho e opacidade dos botões de toque, botões sempre visíveis, tamanho do texto, alto contraste (tema próprio, contorno escuro nos controles), vibração ao tocar (Android via JNI), escala inteira, volume — persistidos em `config`. Exemplos `embed` (núcleo) e `menu_layout` (menus em ASCII); 6 testes novos (config, recentes, layout dos menus em 4 tamanhos, hit-test, ajustes).
+- F8-03 Android: tela sempre ligada, permissão de vibração; fila de áudio visível no overlay de debug.
+- F8-02 Menus de toque (modelo puro em `rnfe_frontend::menu`, desenho no gui): início (Abrir ROM, Recentes, Ajustes), pausa (continuar, salvar/carregar state, voltar 5 s, turbo, reset, outra ROM, ajustes, sair no desktop), ajustes, recentes (as ROMs abertas ficam guardadas no Storage e reabrem sem o seletor).
+- F8-01 APK: ícone adaptativo, versão 0.2.0, assinatura de release com keystore gerada no celular e guardada em secrets do GitHub (CI e Release assinam), `scripts/apk.sh` baixa e instala o APK do último CI.
+
 ## Não publicado — F7 Performance e tamanho
 
 - F7-04 Frontend: fila de áudio de 100 ms na web e no Android (50 ms no desktop); contador de frames pulados (o laço já desenha só uma vez por chamada quando atrasa) no overlay de debug.

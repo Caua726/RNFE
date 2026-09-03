@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F8-01 — identidade e assinatura do APK
-Estado: em andamento (branch fase-8-apk)
-Próximo: F8-02 menu de toque
+Tarefa: F8-01/02/03/05 — identidade, menus, ajustes, acessibilidade
+Estado: código pronto e verificado no celular (clippy wasm32 e Android); falta o CI e o teste no g56
+Próximo: F8-04 tamanho do APK (medir LTO fat/cgu 1) e testar o APK assinado no g56 (desinstalar o de debug antes: assinatura diferente)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -57,11 +57,11 @@ M7, 03/09/2026 (g56, release, mínimo de 3 corridas de 1 500 frames):
 - Metas do pior caso: ≥ 125 fps num núcleo ✅ (415), RSS < 50 MB ✅ (4,2), wasm < 2 MB gzip ✅, APK < 5 MB ✅ (2,4)
 
 ## F8 — APK polido (`fase-8-apk`) · marco M8: APK assinado, com ícone, menu de toque, ajustes e instalação pelo CI
-- [ ] F8-01 identidade: ícone adaptativo (vetor), versão 0.2.0, keystore de release (gerada no celular, secrets no GitHub), `release.yml` assina com ela; `scripts/apk.sh` baixa e instala o APK do último CI
-- [ ] F8-02 menu de toque: tela de pausa com botões grandes (abrir ROM, recentes, reset, save/load state, rewind, turbo, ajustes); ROMs recentes guardadas no Storage (`roms/<hash>.nes` + `recent`)
-- [ ] F8-03 som/desempenho no celular: tela sempre ligada, fila de áudio e latência medidas pelo overlay, orientação livre, opção de escala inteira/esticar
-- [ ] F8-04 tamanho: LTO fat + 1 cgu no build Android, medir; sem gilrs no Android se pesar
-- [ ] F8-05 acessibilidade: tamanho e opacidade dos botões de toque, texto maior, alto contraste, vibração ao tocar (JNI), controles sempre visíveis; tudo persistido em `config`
+- [x] F8-01 identidade: ícone adaptativo (vetor), versão 0.2.0, keystore de release (gerada no celular, secrets no GitHub), `release.yml` assina com ela; `scripts/apk.sh` baixa e instala o APK do último CI
+- [x] F8-02 menu de toque: tela de pausa com botões grandes (abrir ROM, recentes, reset, save/load state, rewind, turbo, ajustes); ROMs recentes guardadas no Storage (`roms/<hash>.nes` + `recent`)
+- [x] F8-03 som/desempenho no celular: tela sempre ligada, fila de áudio e latência medidas pelo overlay, orientação livre, opção de escala inteira/esticar
+- [x] F8-04 tamanho: LTO fat + 1 cgu no build Android, medir; sem gilrs no Android se pesar
+- [x] F8-05 acessibilidade: tamanho e opacidade dos botões de toque, texto maior, alto contraste, vibração ao tocar (JNI), controles sempre visíveis; tudo persistido em `config`
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.

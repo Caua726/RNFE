@@ -15,6 +15,7 @@ state = ["rnfe-core/serde"]
 
 [dependencies]
 rnfe-core.workspace = true
+log.workspace = true
 
 [lints]
 workspace = true

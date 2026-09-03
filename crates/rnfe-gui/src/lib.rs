@@ -18,20 +18,24 @@ pub use app::{App, UserEvent};
 /// `UserEvent::RomLoaded` (ou `RomLoadFailed`). Sem ele, o frontend usa o `rfd`.
 pub type RomPicker = Box<dyn Fn(EventLoopProxy<UserEvent>) + Send + Sync>;
 
+/// Vibração curta ao tocar num botão (Android via JNI; outras plataformas não têm).
+pub type Haptic = Box<dyn Fn() + Send + Sync>;
+
 /// O que o binário entrega ao frontend para começar.
 pub struct Launch {
     /// Console já carregado (ou `None` para a tela inicial).
     pub nes: Option<Box<Nes>>,
     pub rom_name: String,
-    /// Onde ficam `.sav` e save states.
+    /// Onde ficam `.sav`, save states, ajustes e ROMs recentes.
     pub storage: Box<dyn Storage>,
     /// Seletor de ROM próprio (Android usa o SAF por JNI).
     pub picker: Option<RomPicker>,
+    pub haptic: Option<Haptic>,
 }
 
 impl Launch {
     pub fn new(storage: Box<dyn Storage>) -> Launch {
-        Launch { nes: None, rom_name: String::new(), storage, picker: None }
+        Launch { nes: None, rom_name: String::new(), storage, picker: None, haptic: None }
     }
 }
 

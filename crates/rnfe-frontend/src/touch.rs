@@ -49,14 +49,20 @@ pub struct TouchLayout {
 }
 
 impl TouchLayout {
-    /// Layout para uma janela `w`×`h` (pixels físicos).
+    /// Layout para uma janela `w`×`h` (pixels físicos), com os controles no tamanho padrão.
     pub fn for_size(w: f32, h: f32) -> TouchLayout {
+        Self::for_size_scaled(w, h, 1.0)
+    }
+
+    /// Como `for_size`, com os botões multiplicados por `scale` (0,6–1,6).
+    pub fn for_size_scaled(w: f32, h: f32, scale: f32) -> TouchLayout {
         let portrait = h > w;
         let unit = if portrait { w } else { h }; // lado menor
-        let dpad_r = unit * 0.17;
-        let ab_r = unit * 0.085;
-        let pill_w = unit * 0.16;
-        let pill_h = unit * 0.06;
+        let scale = scale.clamp(0.5, 2.0);
+        let dpad_r = unit * 0.17 * scale;
+        let ab_r = unit * 0.085 * scale;
+        let pill_w = unit * 0.16 * scale;
+        let pill_h = unit * 0.06 * scale;
         let m = unit * 0.05; // margem
         if portrait {
             // Zona de controle: abaixo da imagem (que ocupa w × w×240/256 no topo)
