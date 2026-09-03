@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 14 mappers,
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 18 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 
@@ -92,12 +92,15 @@ embaixo, em paisagem ficam nas laterais.
 | 2 | UxROM | Castlevania, Contra, Mega Man |
 | 3 | CNROM | Arkanoid, Gradius |
 | 4 | MMC3 | Super Mario Bros. 3, Kirby's Adventure |
+| 5 | MMC5 (+ áudio) | Castlevania III, Just Breed — sem a divisão vertical ainda |
 | 7 | AxROM | Battletoads, Marble Madness |
 | 9 | MMC2 | Punch-Out!! |
 | 11 | Color Dreams | — |
+| 19 | Namco 163 (+ áudio wavetable) | Rolling Thunder, Megami Tensei II |
+| 24 / 26 | VRC6 (+ áudio) | Akumajou Densetsu, Madara |
 | 34 | BNROM | Deadly Towers |
 | 66 | GxROM | Dragon Ball, Doraemon |
-| 69 | FME-7 | Batman: Return of the Joker, Gimmick! |
+| 69 | FME-7 / Sunsoft 5B (+ áudio) | Batman: Return of the Joker, Gimmick! |
 | 71 | Camerica | Micro Machines |
 | 206 | DxROM / Namco 118 | Gauntlet, Karnov |
 | 227 | 1200-in-1 | multicarts |

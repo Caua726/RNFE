@@ -290,3 +290,79 @@ fn n163_banks_nametables_irq_audio() {
     cart.cpu_write(0xE000, 0x40); // som desligado
     assert_eq!(cart.audio_output(), 0.0);
 }
+
+#[test]
+fn mmc5_prg_modes_multiplier_fill_exram_and_scanlines() {
+    let mut cart = rom(5, 8, 0); // 128 KB = 16 bancos de 8 KB (valor = índice de 16 KB)
+    // power-on: modo 3, $5117 = $FF → último banco em $E000
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0x5100, 3);
+    cart.cpu_write(0x5114, 0x80 | 2); // $8000 ← banco 8 KB 2 (= 16 KB 1)
+    cart.cpu_write(0x5115, 0x80 | 5);
+    cart.cpu_write(0x5116, 0x80 | 9);
+    assert_eq!(cart.cpu_read(0x8000), Some(1));
+    assert_eq!(cart.cpu_read(0xA000), Some(2));
+    assert_eq!(cart.cpu_read(0xC000), Some(4));
+    cart.cpu_write(0x5100, 0); // 32 KB por $5117 = $FF → bancos 12-15
+    assert_eq!(cart.cpu_read(0x8000), Some(6));
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0x5100, 1); // 16 KB: $5115 (5 → par 4-5) e $5117
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    assert_eq!(cart.cpu_read(0xA000), Some(2));
+    assert_eq!(cart.cpu_read(0xC000), Some(7));
+
+    // PRG RAM: só grava com $5102 = 2 e $5103 = 1
+    cart.cpu_write(0x6000, 0x11);
+    assert_eq!(cart.cpu_read(0x6000), Some(0));
+    cart.cpu_write(0x5102, 2);
+    cart.cpu_write(0x5103, 1);
+    cart.cpu_write(0x6000, 0x11);
+    assert_eq!(cart.cpu_read(0x6000), Some(0x11));
+
+    // multiplicador
+    cart.cpu_write(0x5205, 200);
+    cart.cpu_write(0x5206, 3);
+    assert_eq!(cart.cpu_read(0x5205), Some((600 & 0xFF) as u8));
+    assert_eq!(cart.cpu_read(0x5206), Some((600u16 >> 8) as u8));
+
+    // nametables: $2000 fill, $2400 ExRAM, $2800 CIRAM 0, $2C00 CIRAM 1
+    let mut ciram = [[0u8; 1024]; 4];
+    ciram[1][0x10] = 0xC1;
+    cart.cpu_write(0x5105, 0b01_00_10_11);
+    cart.cpu_write(0x5106, 0x42);
+    cart.cpu_write(0x5107, 2);
+    assert_eq!(cart.nt_read(0x2010, &ciram), 0x42, "fill tile");
+    assert_eq!(cart.nt_read(0x23C5, &ciram), 0xAA, "fill attr 2 replicado");
+    cart.cpu_write(0x5104, 0); // ExRAM como nametable
+    cart.nt_write(0x2410, 0x77, &mut ciram);
+    assert_eq!(cart.nt_read(0x2410, &ciram), 0x77);
+    assert_eq!(cart.nt_read(0x2C10, &ciram), 0xC1);
+    cart.cpu_write(0x5104, 2); // ExRAM como RAM da CPU
+    assert_eq!(cart.cpu_read(0x5C10), Some(0x77));
+
+    // detecção de scanline: 3 leituras iguais → in_frame; depois cada trio conta uma linha
+    assert_eq!(cart.cpu_read(0x5204), Some(0x00));
+    cart.cpu_write(0x5203, 2);
+    cart.cpu_write(0x5204, 0x80);
+    for _ in 0..3 {
+        cart.nt_read(0x2800, &ciram);
+    }
+    assert_eq!(cart.cpu_read(0x5204), Some(0x40), "in_frame, scanline 0");
+    cart.nt_read(0x2801, &ciram); // quebra a sequência
+    for _ in 0..3 {
+        cart.nt_read(0x2802, &ciram);
+    }
+    assert!(!cart.irq_pending(), "scanline 1");
+    cart.nt_read(0x2803, &ciram);
+    for _ in 0..3 {
+        cart.nt_read(0x2804, &ciram);
+    }
+    assert!(cart.irq_pending(), "scanline 2 == $5203");
+    assert_eq!(cart.cpu_read(0x5204), Some(0xC0));
+    cart.cpu_read_mut(0x5204);
+    assert!(!cart.irq_pending(), "ler $5204 reconhece");
+    for _ in 0..400 {
+        cart.cpu_clock();
+    }
+    assert_eq!(cart.cpu_read(0x5204), Some(0x00), "sem leituras → fim do frame");
+}

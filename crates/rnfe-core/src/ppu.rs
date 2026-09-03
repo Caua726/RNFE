@@ -360,6 +360,7 @@ impl Ppu {
                 // NMI é nível (status.7 & control.7); a CPU detecta a borda
                 self.control = data;
                 self.tram_addr = (self.tram_addr & 0xF3FF) | ((data as u16 & 0x03) << 10);
+                cart.data.ppu_sprites_16 = data & 0x20 != 0;
             }
             0x0001 => {
                 self.mask = data;
@@ -591,6 +592,12 @@ impl Ppu {
             // overflow) e o dot em que a flag de overflow seria setada.
             if self.cycle == 65 && self.scanline >= 0 && self.rendering {
                 self.evaluate_sprites();
+            }
+            if self.cycle == 257 {
+                cart.data.ppu_sprite_fetch = true;
+            }
+            if self.cycle == 321 || self.cycle == 1 {
+                cart.data.ppu_sprite_fetch = false;
             }
             if self.cycle == 257 {
                 self.sprites_scanline = self.next_sprites;

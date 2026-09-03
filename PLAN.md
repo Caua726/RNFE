@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F5 inteira (rnfe-android + JNI/SAF, projeto Gradle, CI android + release.yml, README)
-Estado: CI verde (job android gera o APK); APK de debug copiado para Downloads/rnfe-debug.apk no g56 — falta o teste manual (instalar, abrir ROM, toque, som)
-Próximo: F6-01 (mix de expansão, branch fase-6-mappers-ext); se o APK falhar no g56, corrigir antes
+Tarefa: F6 inteira (áudio de expansão, VRC6, N163, MMC5)
+Estado: concluída — marco M6 (APK da F5 testado pelo usuário no g56: rodou)
+Próximo: F7-01 — bench de referência + perfil por subsistema (branch fase-7-perf)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -46,6 +46,8 @@ M3, 02/09/2026:
 M4, 02/09/2026 (CI ubuntu): 5 jobs verdes no 1º push; wasm 3,82 MB (1,43 MB gzip, meta < 2 MB); https://caua726.github.io/RNFE/ no ar.
 
 M5, 02/09/2026 (CI ubuntu): job android verde (cargo-ndk -P 26 + gradle); APK de debug 7,9 MB (a .so tinha símbolos; `CARGO_PROFILE_RELEASE_STRIP=symbols` no job a partir de agora — meta < 5 MB fica para F7-03).
+
+M6, 03/09/2026: 18 mappers (+5, 19, 24, 26); áudio de expansão pelo `Apu::clock(expansion)` só na amostra; nametables pelo mapper (`nt_source`); MMC5 sem split vertical, validado só por teste sintético + telas dos mmc5test/exram (sem imagem de referência). 12 testes sintéticos de mapper.
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -105,10 +107,10 @@ M5, 02/09/2026 (CI ubuntu): job android verde (cargo-ndk -P 26 + gradle); APK de
 - [x] F5-03 README Android
 
 ## F6 — Mappers estendidos e áudio (`fase-6-mappers-ext`) · marco M6
-- [ ] F6-01 mix de expansão na amostra + áudio 5B (FME-7)
-- [ ] F6-02 VRC6
-- [ ] F6-03 Namco 163
-- [ ] F6-04 MMC5 (+ split, atributo estendido, áudio)
+- [x] F6-01 mix de expansão na amostra + áudio 5B (FME-7)
+- [x] F6-02 VRC6
+- [x] F6-03 Namco 163
+- [x] F6-04 MMC5 (+ split, atributo estendido, áudio)
 
 ## F7 — Performance e tamanho (`fase-7-perf`) · marco M7: metas do pior caso
 - [ ] F7-01 bench de referência numa ROM de jogo

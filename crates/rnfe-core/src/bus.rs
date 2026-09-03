@@ -124,7 +124,7 @@ impl Bus {
             0x4016 => self.read_controller(0) | (self.open_bus & 0xE0),
             0x4017 => self.read_controller(1) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
-            _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
+            _ => self.cartridge.cpu_read_mut(addr).unwrap_or(self.open_bus),
         };
         self.open_bus = v;
         v

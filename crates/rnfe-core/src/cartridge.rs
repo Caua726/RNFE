@@ -270,6 +270,14 @@ impl Cartridge {
         }
     }
 
+    /// Leitura pela CPU com efeitos colaterais (o bus usa esta; o debugger usa `cpu_read`).
+    #[inline]
+    pub fn cpu_read_mut(&mut self, addr: u16) -> Option<u8> {
+        let v = self.cpu_read(addr);
+        self.mapper.on_cpu_read(addr);
+        v
+    }
+
     #[inline]
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         if self.mapper.cpu_write(addr, data, &mut self.data) {
