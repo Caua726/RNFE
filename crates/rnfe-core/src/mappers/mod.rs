@@ -163,6 +163,15 @@ pub trait Mapper {
     fn chr_offset(&self, addr: u16) -> usize {
         addr as usize
     }
+    /// O mapeamento de CHR muda sem escrita da CPU (latches do MMC2, fase da busca no MMC5,
+    /// CIRAM em CHR no N163): o cartucho não pode cachear `chr_offset` por banco de 1 KB.
+    fn chr_dynamic(&self) -> bool {
+        false
+    }
+    /// `nt_source` tem efeito colateral ou depende de estado além dos registradores (MMC5).
+    fn nt_dynamic(&self) -> bool {
+        false
+    }
     /// Leitura de CHR pela PPU (sobrescrever só quando a leitura tem efeito colateral).
     #[inline]
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> u8 {
@@ -335,6 +344,12 @@ impl Mapper for MapperKind {
     #[inline]
     fn ppu_write(&mut self, addr: u16, val: u8, data: &mut CartData) {
         dispatch!(self, m => m.ppu_write(addr, val, data))
+    }
+    fn chr_dynamic(&self) -> bool {
+        dispatch!(self, m => m.chr_dynamic())
+    }
+    fn nt_dynamic(&self) -> bool {
+        dispatch!(self, m => m.nt_dynamic())
     }
     #[inline]
     fn nt_source(&mut self, addr: u16, data: &CartData) -> Option<NtSource> {

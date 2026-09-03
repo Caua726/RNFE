@@ -1,6 +1,8 @@
-//! Mede a velocidade do núcleo: `bench --rom x.nes [--frames N]`.
+//! Mede a velocidade do núcleo: `bench --rom x.nes [--frames N] [--profile]`.
 //!
 //! Imprime fps, ns/frame e o pico de RSS do processo (VmHWM, Linux/Android).
+//! `--profile` roda também a PPU sozinha (mesmo número de dots) e a APU sozinha (mesmos
+//! ciclos) para estimar quanto do frame é de cada subsistema — o resto é CPU + bus.
 
 use std::time::Instant;
 
@@ -16,6 +18,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut rom = None;
     let mut frames: u32 = 3000;
+    let mut profile = false;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -27,6 +30,7 @@ fn main() {
                 frames = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(frames);
                 i += 1;
             }
+            "--profile" => profile = true,
             other => {
                 eprintln!("argumento desconhecido: {other}\nuso: bench --rom <rom.nes> [--frames N]");
                 std::process::exit(2);
@@ -72,4 +76,35 @@ fn main() {
         proc_status("VmRSS:").map_or("n/a".into(), |v| v.to_string()),
         if cfg!(debug_assertions) { "debug" } else { "release" },
     );
+
+    if profile {
+        // PPU sozinha: os mesmos 89 342 dots por frame, sem CPU
+        let dots = frames as u64 * 89_342;
+        let t = Instant::now();
+        for _ in 0..dots {
+            nes.bus.ppu.step(&mut nes.bus.cartridge);
+        }
+        let ppu = t.elapsed();
+        // APU sozinha: os mesmos ~29 781 ciclos por frame
+        let cycles = frames as u64 * 29_781;
+        let t = Instant::now();
+        for _ in 0..cycles {
+            nes.bus.apu.clock(|| 0.0);
+            if nes.bus.apu.sample_buffer.len() > 4096 {
+                nes.bus.apu.sample_buffer.clear();
+            }
+        }
+        let apu = t.elapsed();
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3 / frames as f64;
+        let rest = ns_frame / 1e6 - ms(ppu) - ms(apu);
+        println!(
+            "profile: ppu={:.3} ms/frame ({:.0}%)  apu={:.3} ms/frame ({:.0}%)  cpu+bus≈{:.3} ms/frame ({:.0}%)",
+            ms(ppu),
+            ms(ppu) / (ns_frame / 1e6) * 100.0,
+            ms(apu),
+            ms(apu) / (ns_frame / 1e6) * 100.0,
+            rest,
+            rest / (ns_frame / 1e6) * 100.0
+        );
+    }
 }

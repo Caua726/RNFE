@@ -52,6 +52,10 @@ impl Mapper for Mmc2 {
         true
     }
 
+    fn chr_dynamic(&self) -> bool {
+        true
+    }
+
     #[inline]
     fn chr_offset(&self, addr: u16) -> usize {
         let bank = if addr < 0x1000 {

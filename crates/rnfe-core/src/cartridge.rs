@@ -163,6 +163,14 @@ fn nes2_rom_size(lo: u8, hi: u8, unit: usize) -> Result<usize, RomError> {
     }
 }
 
+/// Entrada do cache de nametable por quadrante.
+#[derive(Debug, Clone, Copy)]
+enum NtCache {
+    Ciram(u8),
+    Chr(usize),
+    Value(u8),
+}
+
 pub struct Cartridge {
     pub data: CartData,
     mapper: MapperKind,
@@ -170,6 +178,13 @@ pub struct Cartridge {
     wants_cpu_clock: bool,
     /// PRG RAM padrão em `$6000-$7FFF` quando o mapper não trata o endereço.
     prg_ram_fallback: bool,
+    /// Base física de cada banco de 1 KB de CHR (recalculada após cada escrita da CPU).
+    chr_cache: [usize; 8],
+    chr_dynamic: bool,
+    nt_cache: [NtCache; 4],
+    nt_dynamic: bool,
+    /// Nível da linha IRQ do mapper, atualizado a cada chamada que pode mudá-lo.
+    irq: bool,
 }
 
 impl Cartridge {
@@ -211,7 +226,20 @@ impl Cartridge {
         mapper.reset(&mut data);
         let wants_cpu_clock = mapper.wants_cpu_clock();
         let prg_ram_fallback = !mapper.manages_prg_ram();
-        Ok(Cartridge { data, mapper, rom_hash, wants_cpu_clock, prg_ram_fallback })
+        let mut cart = Cartridge {
+            chr_dynamic: mapper.chr_dynamic(),
+            nt_dynamic: mapper.nt_dynamic(),
+            data,
+            mapper,
+            rom_hash,
+            wants_cpu_clock,
+            prg_ram_fallback,
+            chr_cache: [0; 8],
+            nt_cache: [NtCache::Ciram(0); 4],
+            irq: false,
+        };
+        cart.refresh_caches();
+        Ok(cart)
     }
 
     pub fn mapper_id(&self) -> u16 {
@@ -270,17 +298,44 @@ impl Cartridge {
         }
     }
 
+    /// Recalcula os caches de CHR e nametable (o mapeamento só muda por escrita da CPU,
+    /// exceto nos mappers `*_dynamic`, que são consultados a cada acesso).
+    fn refresh_caches(&mut self) {
+        if !self.chr_dynamic {
+            for (i, base) in self.chr_cache.iter_mut().enumerate() {
+                *base = self.mapper.chr_offset((i * 0x400) as u16);
+            }
+        }
+        if !self.nt_dynamic {
+            let mirror = self.get_mirror();
+            for q in 0..4 {
+                let addr = 0x2000 + (q as u16) * 0x400;
+                self.nt_cache[q] = match self.mapper.nt_source(addr, &self.data) {
+                    None => NtCache::Ciram(mirror_nametable(addr, mirror).0 as u8),
+                    Some(NtSource::Ciram(p)) => NtCache::Ciram(p & 3),
+                    Some(NtSource::Chr(o)) => NtCache::Chr(o & !0x3FF),
+                    Some(NtSource::Value(v)) => NtCache::Value(v),
+                };
+            }
+        }
+    }
+
     /// Leitura pela CPU com efeitos colaterais (o bus usa esta; o debugger usa `cpu_read`).
     #[inline]
     pub fn cpu_read_mut(&mut self, addr: u16) -> Option<u8> {
         let v = self.cpu_read(addr);
         self.mapper.on_cpu_read(addr);
+        self.irq = self.mapper.irq_pending();
         v
     }
 
     #[inline]
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         if self.mapper.cpu_write(addr, data, &mut self.data) {
+            if !(0x6000..0x8000).contains(&addr) {
+                self.refresh_caches();
+                self.irq = self.mapper.irq_pending();
+            }
             return true;
         }
         if self.prg_ram_fallback && (0x6000..=0x7FFF).contains(&addr) {
@@ -294,7 +349,17 @@ impl Cartridge {
     /// para uma página específica da VRAM ou devolver um valor próprio.
     #[inline]
     pub fn nt_read(&mut self, addr: u16, ciram: &[[u8; 1024]; 4]) -> u8 {
-        match self.mapper.nt_source(addr, &self.data) {
+        if !self.nt_dynamic {
+            let off = (addr & 0x03FF) as usize;
+            return match self.nt_cache[(addr >> 10) as usize & 3] {
+                NtCache::Ciram(p) => ciram[p as usize][off],
+                NtCache::Chr(base) => self.data.chr_at(base + off),
+                NtCache::Value(v) => v,
+            };
+        }
+        let src = self.mapper.nt_source(addr, &self.data);
+        self.irq = self.mapper.irq_pending(); // MMC5 detecta scanlines (e dispara IRQ) aqui
+        match src {
             None => {
                 let (nt, off) = mirror_nametable(addr, self.get_mirror());
                 ciram[nt][off]
@@ -307,6 +372,15 @@ impl Cartridge {
 
     #[inline]
     pub fn nt_write(&mut self, addr: u16, val: u8, ciram: &mut [[u8; 1024]; 4]) {
+        if !self.nt_dynamic {
+            let off = (addr & 0x03FF) as usize;
+            match self.nt_cache[(addr >> 10) as usize & 3] {
+                NtCache::Ciram(p) => ciram[p as usize][off] = val,
+                NtCache::Chr(base) => self.data.chr_set(base + off, val),
+                NtCache::Value(_) => {}
+            }
+            return;
+        }
         if self.mapper.nt_write(addr, val, &mut self.data) {
             return;
         }
@@ -324,13 +398,22 @@ impl Cartridge {
     /// Leitura de CHR (`$0000-$1FFF` da PPU) pelo mapper.
     #[inline]
     pub fn chr_read(&mut self, addr: u16) -> u8 {
-        self.mapper.ppu_read(addr, &self.data)
+        if self.chr_dynamic {
+            self.mapper.ppu_read(addr, &self.data)
+        } else {
+            self.data.chr_at(self.chr_cache[(addr >> 10) as usize & 7] + (addr & 0x3FF) as usize)
+        }
     }
 
     /// Escrita em CHR (só tem efeito em CHR RAM).
     #[inline]
     pub fn chr_write(&mut self, addr: u16, data: u8) {
-        self.mapper.ppu_write(addr, data, &mut self.data);
+        if self.chr_dynamic {
+            self.mapper.ppu_write(addr, data, &mut self.data);
+        } else {
+            let off = self.chr_cache[(addr >> 10) as usize & 7] + (addr & 0x3FF) as usize;
+            self.data.chr_set(off, data);
+        }
     }
 
     #[inline]
@@ -342,6 +425,7 @@ impl Cartridge {
     #[inline]
     pub fn a12_rise(&mut self) {
         self.mapper.a12_rise();
+        self.irq = self.mapper.irq_pending();
     }
 
     #[inline]
@@ -352,12 +436,14 @@ impl Cartridge {
     #[inline]
     pub fn cpu_clock(&mut self) {
         self.mapper.cpu_clock();
+        self.irq = self.mapper.irq_pending();
     }
 
-    /// Nível da linha IRQ do mapper.
+    /// Nível da linha IRQ do mapper (cache atualizado em `cpu_clock`, `a12_rise`,
+    /// `cpu_write`, `cpu_read_mut`, `reset` e `restore`).
     #[inline]
     pub fn irq_pending(&self) -> bool {
-        self.mapper.irq_pending()
+        self.irq
     }
 
     /// Áudio de expansão do cartucho, em [-1, 1].
@@ -368,6 +454,8 @@ impl Cartridge {
 
     pub fn reset(&mut self) {
         self.mapper.reset(&mut self.data);
+        self.refresh_caches();
+        self.irq = self.mapper.irq_pending();
     }
 
     /// Estado interno do mapper, em texto (diagnóstico).
@@ -419,6 +507,8 @@ impl Cartridge {
         self.data.mirror = st.mirror;
         self.data.prg_ram_dirty = true;
         self.mapper = st.mapper;
+        self.refresh_caches();
+        self.irq = self.mapper.irq_pending();
         Ok(())
     }
 

@@ -2,6 +2,13 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F7 Performance e tamanho
+
+- F7-04 Frontend: fila de áudio de 100 ms na web e no Android (50 ms no desktop); contador de frames pulados (o laço já desenha só uma vez por chamada quando atrasa) no overlay de debug.
+- F7-03 Web medido no CI/Pages: wasm de 3,8 MB, 1,43 MB gzip (meta < 2 MB) com `wasm-opt -Oz`; `panic = "abort"` e LTO thin já vinham do perfil release.
+- F7-02 Núcleo, cada passo medido por A/B intercalado no g56 (BladeBuster, mín. de 5): buffer de sprites por scanline em vez de 8 shifters por dot e `apply_pending` da APU só após escrita (-8,5 %); cache de bancos de CHR e de nametables no cartucho, recalculado só em escrita da CPU (-7 %); `Ppu::step` por faixa de dots e linha de IRQ do mapper em cache (-16 %). Total: 4,33 → 3,05 ms/frame no dia da medição (-30 %); snapshots, blargg e save states idênticos.
+- F7-01 `bench --profile`: PPU e APU isoladas para estimar a fatia de cada subsistema (feature `profile-no-ppu` para medir CPU+bus); linha de base registrada no PLAN.
+
 ## Não publicado — F6 Mappers estendidos e áudio de expansão
 
 - F6-04 MMC5 (mapper 5): PRG em 4 modos com ROM/RAM por banco e PRG RAM até 64 KB protegida por `$5102/$5103`, CHR em 4 modos com conjuntos A/B (sprites 8×16 usam A para sprites e B para o fundo — a PPU informa a fase da busca via `CartData`), ExRAM (nametable, atributos estendidos com banco de 4 KB por tile, RAM da CPU), fill mode, multiplicador, IRQ por scanline detectada com 3 leituras iguais de nametable (`$5204` com in-frame e ack na leitura via `on_cpu_read`), 2 pulsos + PCM. Sem a divisão vertical.

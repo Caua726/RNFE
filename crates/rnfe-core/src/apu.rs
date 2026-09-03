@@ -484,6 +484,8 @@ pub struct Apu {
 
     /// Ciclos de CPU vistos pela APU.
     cycle: u64,
+    /// Ciclos restantes em que `apply_pending` precisa rodar (após escrita em `$4000-$400F`).
+    length_pending: u8,
 
     // Buffer de áudio
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -522,6 +524,7 @@ impl Apu {
             frame_write: None,
             frame_block: 0,
             cycle: 0,
+            length_pending: 0,
             sample_buffer: Vec::with_capacity(1024),
             sample_rate: 44100.0,
             sample_step: 44100.0 / CPU_HZ,
@@ -597,6 +600,9 @@ impl Apu {
     // ------------------------------------------------------------ registradores
 
     pub fn cpu_write(&mut self, addr: u16, data: u8) {
+        if (0x4000..=0x400F).contains(&addr) {
+            self.length_pending = 2;
+        }
         match addr {
             0x4000 | 0x4004 => {
                 let p = if addr == 0x4000 { &mut self.pulse1 } else { &mut self.pulse2 };
@@ -791,11 +797,15 @@ impl Apu {
             self.frame_block -= 1;
         }
 
-        // --- halt/reload dos length counters (depois do clock do frame counter)
-        self.pulse1.length.apply_pending();
-        self.pulse2.length.apply_pending();
-        self.triangle.length.apply_pending();
-        self.noise.length.apply_pending();
+        // --- halt/reload dos length counters (depois do clock do frame counter); só nos
+        // ciclos seguintes a uma escrita em $4000-$400F
+        if self.length_pending > 0 {
+            self.length_pending -= 1;
+            self.pulse1.length.apply_pending();
+            self.pulse2.length.apply_pending();
+            self.triangle.length.apply_pending();
+            self.noise.length.apply_pending();
+        }
 
         // --- timers
         if self.cycle & 1 == 0 {

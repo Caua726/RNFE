@@ -11,6 +11,8 @@ repository.workspace = true
 [features]
 # Save states (`Nes::save_state`/`load_state`) e rewind: serde + postcard, sem std neles.
 serde = ["dep:serde", "dep:postcard"]
+# Só para medir: a PPU vira um contador de dots (sem render, sem VBL). Nunca em builds normais.
+profile-no-ppu = []
 
 [dependencies]
 log.workspace = true

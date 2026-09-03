@@ -12,8 +12,10 @@ pub struct AudioOut {
 }
 
 impl AudioOut {
-    /// Latência-alvo em amostras mantidas no anel (~50 ms a 48 kHz).
-    pub const TARGET_QUEUE: usize = 2400;
+    /// Latência-alvo em amostras mantidas no anel: ~50 ms a 48 kHz no desktop; o dobro na
+    /// web e no Android, onde o callback de áudio e o laço de eventos oscilam mais.
+    pub const TARGET_QUEUE: usize =
+        if cfg!(any(target_arch = "wasm32", target_os = "android")) { 4800 } else { 2400 };
 
     /// Abre o dispositivo padrão. `None` se não há áudio (a emulação segue muda).
     pub fn start() -> Option<AudioOut> {

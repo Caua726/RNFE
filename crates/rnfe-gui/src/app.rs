@@ -61,6 +61,8 @@ pub struct App {
     rewinding: bool,
     turbo: bool,
     fps_counter: u32,
+    /// Frames emulados sem desenhar (laço atrasado) desde o início — no overlay de debug.
+    skipped_frames: u32,
     fps_timer: Instant,
     fps_display: u32,
     toast_msg: String,
@@ -110,6 +112,7 @@ impl App {
             rewinding: false,
             turbo: false,
             fps_counter: 0,
+            skipped_frames: 0,
             fps_timer: now,
             fps_display: 0,
             toast_msg: String::new(),
@@ -303,6 +306,9 @@ impl App {
         if due == 0 {
             return;
         }
+        // Frame skip adaptativo: quando o laço atrasa (due > 1), só o último frame emulado
+        // vai para a tela — o redraw abaixo é um por chamada, não um por frame.
+        self.skipped_frames += due.saturating_sub(1);
         let Some(nes) = self.nes.as_mut() else { return };
         let buttons = self.input.current(now) | self.touch.buttons() | self.pad | self.pad_stick;
         nes.set_controller(0, buttons);
@@ -402,8 +408,9 @@ impl App {
                     let mut y = 8;
                     ui::fill_rect(&mut self.overlay, w, h, 4, 4, 460, 80, [0, 0, 0, 160]);
                     let l1 = format!(
-                        "FPS {}  áudio {}  rewind {} states / {} KB",
+                        "FPS {}  pulados {}  underruns {}  rewind {} states / {} KB",
                         self.fps_display,
+                        self.skipped_frames,
                         self.audio.as_ref().map(|a| a.ring.underruns()).unwrap_or(0),
                         self.rewind.len(),
                         self.rewind.bytes() / 1024

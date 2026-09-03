@@ -136,10 +136,12 @@ pub struct Ppu {
     oam_addr: u8,
     sprites_scanline: [ObjectAttributeEntry; 8],
     sprite_count: usize,
-    sprite_shifter_pattern_lo: [u8; 8],
-    sprite_shifter_pattern_hi: [u8; 8],
+    /// Pixels de sprite da linha atual, um byte por x: bits 0-1 cor, bits 2-3 paleta,
+    /// bit 4 atrás do fundo, bit 5 é o sprite 0; 0 = transparente. Preenchido nos dots
+    /// 257–320 (o primeiro sprite opaco de cada x vence) e lido no mux de pixel.
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::bytes"))]
+    sprite_line: [u8; 256],
     sprite_zero_hit_possible: bool,
-    sprite_zero_being_rendered: bool,
     /// Dot em que a avaliação (com o bug do hardware) setaria a flag de overflow nesta linha.
     overflow_dot: Option<i16>,
     /// "OAM secundário": sprites avaliados para a linha seguinte, copiados no dot 257.
@@ -163,8 +165,9 @@ pub struct Ppu {
     dots: u64,
     /// Dot em que A12 ficou baixo pela última vez (`None` = está alto).
     a12_low_since: Option<u64>,
-    /// Endereço do padrão do sprite sendo buscado (dots 257–320).
+    /// Endereço e plano baixo do padrão do sprite sendo buscado (dots 257–320).
     sprite_fetch_addr: u16,
+    sprite_fetch_lo: u8,
 
     // Frame par/ímpar
     odd_frame: bool,
@@ -224,10 +227,8 @@ impl Ppu {
             oam_addr: 0,
             sprites_scanline: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             sprite_count: 0,
-            sprite_shifter_pattern_lo: [0; 8],
-            sprite_shifter_pattern_hi: [0; 8],
+            sprite_line: [0; 256],
             sprite_zero_hit_possible: false,
-            sprite_zero_being_rendered: false,
             overflow_dot: None,
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             next_sprite_count: 0,
@@ -240,6 +241,7 @@ impl Ppu {
             dots: 0,
             a12_low_since: None,
             sprite_fetch_addr: 0,
+            sprite_fetch_lo: 0,
             odd_frame: false,
             prevent_vbl: false,
             io_bus: 0,
@@ -474,6 +476,71 @@ impl Ppu {
         }
     }
 
+    /// Um dot do pipeline de tiles do fundo (dots 2–257 e 321–337): avança os shifters e faz
+    /// a busca deste passo (NT, atributo, plano baixo, plano alto, incremento de X).
+    #[inline]
+    fn fetch_tile(&mut self, cart: &mut Cartridge) {
+        self.update_shifters();
+        match (self.cycle - 1) & 7 {
+            0 => {
+                self.load_background_shifters();
+                self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
+            }
+            2 => {
+                self.bg_next_tile_attr = self.vram_read(
+                    0x23C0
+                        | (self.vram_addr & 0x0C00)
+                        | ((self.vram_addr >> 4) & 0x38)
+                        | ((self.vram_addr >> 2) & 0x07),
+                    cart,
+                );
+                if (self.vram_addr & 0x0040) != 0 {
+                    self.bg_next_tile_attr >>= 4;
+                }
+                if (self.vram_addr & 0x0002) != 0 {
+                    self.bg_next_tile_attr >>= 2;
+                }
+                self.bg_next_tile_attr &= 0x03;
+            }
+            4 => {
+                let addr = ((self.control as u16 & 0x10) << 8)
+                    + (self.bg_next_tile_id as u16 * 16)
+                    + ((self.vram_addr >> 12) & 0x07);
+                self.bg_next_tile_lsb = self.vram_read(addr, cart);
+            }
+            6 => {
+                let addr = ((self.control as u16 & 0x10) << 8)
+                    + (self.bg_next_tile_id as u16 * 16)
+                    + ((self.vram_addr >> 12) & 0x07)
+                    + 8;
+                self.bg_next_tile_msb = self.vram_read(addr, cart);
+            }
+            7 => self.increment_scroll_x(),
+            _ => {}
+        }
+    }
+
+    /// Escreve os 8 pixels do sprite do `slot` no buffer da linha (o primeiro opaco vence).
+    fn draw_sprite_slot(&mut self, slot: usize, lo: u8, hi: u8) {
+        let sp = self.sprites_scanline[slot];
+        let (lo, hi) =
+            if sp.attribute & 0x40 != 0 { (lo.reverse_bits(), hi.reverse_bits()) } else { (lo, hi) };
+        let tag = ((sp.attribute & 0x03) << 2)
+            | if sp.attribute & 0x20 != 0 { 0x10 } else { 0 }
+            | if slot == 0 { 0x20 } else { 0 };
+        for px in 0..8usize {
+            let x = sp.x as usize + px;
+            if x >= 256 {
+                break;
+            }
+            let bit = 7 - px;
+            let pixel = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+            if pixel != 0 && self.sprite_line[x] == 0 {
+                self.sprite_line[x] = tag | pixel;
+            }
+        }
+    }
+
     /// Endereço do padrão (plano baixo) do sprite no `slot` para a linha atual; slots vazios
     /// e a linha de pré-render usam o tile $FF, como o hardware.
     fn sprite_pattern_addr(&self, slot: usize) -> u16 {
@@ -497,6 +564,20 @@ impl Ppu {
     /// Um dot de PPU.
     pub fn step(&mut self, cart: &mut Cartridge) {
         self.dots += 1;
+        #[cfg(feature = "profile-no-ppu")]
+        {
+            let _ = &cart;
+            self.cycle += 1;
+            if self.cycle >= 341 {
+                self.cycle = 0;
+                self.scanline += 1;
+                if self.scanline >= 261 {
+                    self.scanline = -1;
+                    self.frame_complete = true;
+                }
+            }
+            return;
+        }
         if self.render_delay > 0 {
             self.render_delay -= 1;
             if self.render_delay == 0 {
@@ -508,134 +589,84 @@ impl Ppu {
 
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
-            if self.scanline == -1 && self.cycle == 1 {
-                // Limpar vblank, sprite overflow, sprite zero hit
-                self.status &= !(0x80 | 0x40 | 0x20);
-                // Limpar sprite shifters
-                for i in 0..8 {
-                    self.sprite_shifter_pattern_lo[i] = 0;
-                    self.sprite_shifter_pattern_hi[i] = 0;
+            let c = self.cycle;
+            match c {
+                1 => {
+                    if self.scanline == -1 {
+                        // Limpar vblank, sprite overflow, sprite zero hit
+                        self.status &= !(0x80 | 0x40 | 0x20);
+                        self.sprite_line = [0; 256];
+                    }
+                    // Busca de nametable do 1º tile (o mesmo endereço dos dots 337/339 — é
+                    // assim que o MMC5 detecta o começo de uma scanline).
+                    if self.rendering {
+                        self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
+                    }
+                    cart.data.ppu_sprite_fetch = false;
                 }
-            }
-
-            // Dot 1: a busca de nametable do 1º tile (o mesmo endereço dos dots 337/339 —
-            // é assim que o MMC5 detecta o começo de uma scanline).
-            if self.cycle == 1 && self.rendering {
-                self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
-            }
-            if (self.cycle >= 2 && self.cycle < 258) || (self.cycle >= 321 && self.cycle < 338) {
-                self.update_shifters();
-
-                match (self.cycle - 1) % 8 {
-                    0 => {
-                        self.load_background_shifters();
-                        self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
-                    }
-                    2 => {
-                        self.bg_next_tile_attr = self.vram_read(
-                            0x23C0
-                                | (self.vram_addr & 0x0C00)
-                                | ((self.vram_addr >> 4) & 0x38)
-                                | ((self.vram_addr >> 2) & 0x07),
-                            cart,
-                        );
-                        if (self.vram_addr & 0x0040) != 0 {
-                            self.bg_next_tile_attr >>= 4;
+                2..=257 => {
+                    self.fetch_tile(cart);
+                    if c == 65 {
+                        if self.scanline >= 0 && self.rendering {
+                            // Avaliação de sprites da próxima linha (o hardware faz entre os
+                            // dots 65 e ~256; aqui de uma vez, com o mesmo algoritmo).
+                            self.evaluate_sprites();
                         }
-                        if (self.vram_addr & 0x0002) != 0 {
-                            self.bg_next_tile_attr >>= 2;
+                    } else if c == 256 {
+                        self.increment_scroll_y();
+                    } else if c == 257 {
+                        self.transfer_address_x();
+                        cart.data.ppu_sprite_fetch = true;
+                        self.sprite_line = [0; 256];
+                        self.sprites_scanline = self.next_sprites;
+                        self.sprite_count = self.next_sprite_count;
+                        self.sprite_zero_hit_possible = self.next_sprite_zero;
+                        if self.rendering {
+                            self.oam_addr = 0;
+                            self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF));
                         }
-                        self.bg_next_tile_attr &= 0x03;
                     }
-                    4 => {
-                        self.bg_next_tile_lsb = self.vram_read(
-                            ((self.control as u16 & 0x10) << 8)
-                                + (self.bg_next_tile_id as u16 * 16)
-                                + ((self.vram_addr >> 12) & 0x07),
-                            cart,
-                        );
-                    }
-                    6 => {
-                        self.bg_next_tile_msb = self.vram_read(
-                            ((self.control as u16 & 0x10) << 8)
-                                + (self.bg_next_tile_id as u16 * 16)
-                                + ((self.vram_addr >> 12) & 0x07)
-                                + 8,
-                            cart,
-                        );
-                    }
-                    7 => {
-                        self.increment_scroll_x();
-                    }
-                    _ => {}
                 }
+                258..=320 => {
+                    if self.scanline == -1 && (280..305).contains(&c) {
+                        self.transfer_address_y();
+                    }
+                    // Busca dos padrões dos sprites da próxima linha, nos dots 257–320 como no
+                    // hardware (8 slots × 8 dots: 2 leituras de nametable descartadas, depois lo
+                    // e hi do padrão). Slots sem sprite buscam o tile $FF — é o que clocka o
+                    // MMC3 em toda linha. OAMADDR fica em zero durante as buscas.
+                    if self.rendering {
+                        self.oam_addr = 0;
+                        let slot = ((c - 257) >> 3) as usize;
+                        match (c - 257) & 7 {
+                            0 | 2 => self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF)),
+                            4 => {
+                                self.sprite_fetch_addr = self.sprite_pattern_addr(slot);
+                                self.sprite_fetch_lo = self.vram_read(self.sprite_fetch_addr, cart);
+                            }
+                            6 => {
+                                let hi = self.vram_read(self.sprite_fetch_addr + 8, cart);
+                                if slot < self.sprite_count && self.scanline >= 0 {
+                                    self.draw_sprite_slot(slot, self.sprite_fetch_lo, hi);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                321..=337 => {
+                    if c == 321 {
+                        cart.data.ppu_sprite_fetch = false;
+                    }
+                    self.fetch_tile(cart);
+                }
+                338 | 340 => {
+                    self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
+                }
+                _ => {}
             }
-
-            if self.cycle == 256 {
-                self.increment_scroll_y();
-            }
-
-            if self.cycle == 257 {
-                self.transfer_address_x();
-            }
-
-            if self.cycle == 338 || self.cycle == 340 {
-                self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
-            }
-
-            if self.scanline == -1 && self.cycle >= 280 && self.cycle < 305 {
-                self.transfer_address_y();
-            }
-
-            // Avaliação de sprites da próxima linha: o hardware faz entre os dots 65 e ~256;
-            // aqui é feita de uma vez no dot 65, com o mesmo algoritmo (inclusive o bug do
-            // overflow) e o dot em que a flag de overflow seria setada.
-            if self.cycle == 65 && self.scanline >= 0 && self.rendering {
-                self.evaluate_sprites();
-            }
-            if self.cycle == 257 {
-                cart.data.ppu_sprite_fetch = true;
-            }
-            if self.cycle == 321 || self.cycle == 1 {
-                cart.data.ppu_sprite_fetch = false;
-            }
-            if self.cycle == 257 {
-                self.sprites_scanline = self.next_sprites;
-                self.sprite_count = self.next_sprite_count;
-                self.sprite_zero_hit_possible = self.next_sprite_zero;
-            }
-            if self.scanline >= 0 && self.overflow_dot == Some(self.cycle) {
+            if self.scanline >= 0 && self.overflow_dot == Some(c) {
                 self.status |= 0x20;
-            }
-            // OAMADDR é zerado durante as buscas de sprite
-            if self.rendering && (257..=320).contains(&self.cycle) {
-                self.oam_addr = 0;
-            }
-
-            // Busca dos padrões dos sprites da próxima linha, nos dots 257–320 como no hardware
-            // (8 slots × 8 dots: 2 leituras de nametable descartadas, depois lo e hi do padrão).
-            // Slots sem sprite buscam o tile $FF — isso é o que clocka o MMC3 em toda linha.
-            if self.rendering && (257..=320).contains(&self.cycle) {
-                let slot = ((self.cycle - 257) / 8) as usize;
-                match (self.cycle - 257) % 8 {
-                    0 | 2 => self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF)),
-                    4 => {
-                        self.sprite_fetch_addr = self.sprite_pattern_addr(slot);
-                        let lo = self.vram_read(self.sprite_fetch_addr, cart);
-                        if slot < self.sprite_count && self.scanline >= 0 {
-                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
-                            self.sprite_shifter_pattern_lo[slot] = if flip { lo.reverse_bits() } else { lo };
-                        }
-                    }
-                    6 => {
-                        let hi = self.vram_read(self.sprite_fetch_addr + 8, cart);
-                        if slot < self.sprite_count && self.scanline >= 0 {
-                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
-                            self.sprite_shifter_pattern_hi[slot] = if flip { hi.reverse_bits() } else { hi };
-                        }
-                    }
-                    _ => {}
-                }
             }
         }
 
@@ -650,18 +681,6 @@ impl Ppu {
         let visible = self.scanline >= 0 && self.scanline < 240;
         if visible && self.cycle >= 1 && self.cycle <= 256 {
             self.render_pixel();
-        }
-
-        // Shifters de sprite avançam durante a linha (o x de cada sprite conta até zero)
-        if visible && self.cycle >= 1 && self.cycle <= 256 {
-            for i in 0..self.sprite_count {
-                if self.sprites_scanline[i].x > 0 {
-                    self.sprites_scanline[i].x -= 1;
-                } else {
-                    self.sprite_shifter_pattern_lo[i] <<= 1;
-                    self.sprite_shifter_pattern_hi[i] <<= 1;
-                }
-            }
         }
 
         self.cycle += 1;
@@ -756,27 +775,14 @@ impl Ppu {
         let mut fg_pixel = 0u8;
         let mut fg_palette = 0u8;
         let mut fg_priority = false;
+        let mut sprite_zero = false;
 
         if (self.mask & 0x10) != 0 && ((self.mask & 0x04) != 0 || self.cycle >= 9) {
-            self.sprite_zero_being_rendered = false;
-
-            for i in 0..self.sprite_count {
-                if self.sprites_scanline[i].x == 0 {
-                    let fg_pixel_lo = if (self.sprite_shifter_pattern_lo[i] & 0x80) > 0 { 1 } else { 0 };
-                    let fg_pixel_hi = if (self.sprite_shifter_pattern_hi[i] & 0x80) > 0 { 1 } else { 0 };
-                    fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo;
-
-                    fg_palette = (self.sprites_scanline[i].attribute & 0x03) + 0x04;
-                    fg_priority = (self.sprites_scanline[i].attribute & 0x20) == 0;
-
-                    if fg_pixel != 0 {
-                        if i == 0 {
-                            self.sprite_zero_being_rendered = true;
-                        }
-                        break;
-                    }
-                }
-            }
+            let e = self.sprite_line[(self.cycle - 1) as usize];
+            fg_pixel = e & 0x03;
+            fg_palette = ((e >> 2) & 0x03) + 0x04;
+            fg_priority = e & 0x10 == 0;
+            sprite_zero = e & 0x20 != 0;
         }
 
         let mut pixel = 0u8;
@@ -801,7 +807,7 @@ impl Ppu {
             }
 
             if self.sprite_zero_hit_possible
-                && self.sprite_zero_being_rendered
+                && sprite_zero
                 && (self.mask & 0x08) != 0
                 && (self.mask & 0x10) != 0
             {
