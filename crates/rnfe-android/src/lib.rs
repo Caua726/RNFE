@@ -67,8 +67,42 @@ pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomPicked<'l>(
     }
 }
 
+/// Eixos do gamepad vindos do Java (d-pad como hat ou analógico esquerdo).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onPadAxes<'l>(
+    _env: JNIEnv<'l>,
+    _this: JObject<'l>,
+    x: f32,
+    y: f32,
+) {
+    if let Some(p) = PROXY.lock().ok().and_then(|g| g.clone()) {
+        let _ = p.send_event(UserEvent::PadAxes { x, y });
+    }
+}
+
+/// Chama `MainActivity.setGestureExclusion(l1,t1,r1,b1,l2,t2,r2,b2)`.
+fn call_gesture_exclusion(app: &AndroidApp, rects: [[i32; 4]; 2]) -> Result<(), String> {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
+        .map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let args: Vec<jni::objects::JValue> =
+        rects.iter().flatten().map(|&v| jni::objects::JValue::Int(v)).collect();
+    if let Err(e) = env.call_method(&activity, "setGestureExclusion", "(IIIIIIII)V", &args) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
+    // `panic = "abort"` (perfil release): sem hook, a mensagem do panic vai para o stderr, que
+    // o Android descarta, e o logcat só mostra "Fatal signal 6 (SIGABRT)".
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("panic: {info}");
+    }));
     android_logger::init_once(
         android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("rnfe"),
     );
@@ -81,6 +115,12 @@ fn android_main(app: AndroidApp) {
         if let Err(e) = call_pick_rom(&picker_app) {
             log::error!("pickRom: {e}");
             let _ = proxy.send_event(UserEvent::RomLoadFailed(e));
+        }
+    }));
+    let gesture_app = app.clone();
+    launch.gesture_exclusion = Some(Box::new(move |rects| {
+        if let Err(e) = call_gesture_exclusion(&gesture_app, rects) {
+            log::debug!("gesture exclusion: {e}");
         }
     }));
     let haptic_app = app.clone();

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup na nuvem: saves e ajustes sim; as ROMs guardadas nao (cota de 25 MB do backup). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="rnfe/roms/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="rnfe/roms/" />
+    </device-transfer>
+</data-extraction-rules>

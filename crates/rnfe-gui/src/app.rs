@@ -30,8 +30,27 @@ use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 pub enum UserEvent {
     GpuReady(Box<Result<GpuState, String>>),
-    RomLoaded { name: String, bytes: Vec<u8> },
+    RomLoaded {
+        name: String,
+        bytes: Vec<u8>,
+    },
     RomLoadFailed(String),
+    /// Eixos do gamepad (Android: d-pad como hat ou analógico), −1..1.
+    PadAxes {
+        x: f32,
+        y: f32,
+    },
+}
+
+/// Mensagens de erro do núcleo em linguagem de gente.
+fn friendly_rom_error(name: &str, e: &rnfe_core::RomError) -> String {
+    use rnfe_core::RomError;
+    match e {
+        RomError::BadMagic => format!("{name} não é uma ROM de NES (.nes)"),
+        RomError::Truncated { .. } => format!("{name} está incompleta (arquivo truncado)"),
+        RomError::UnsupportedMapper(m) => format!("{name} usa o mapper {m}, que o RNFE ainda não emula"),
+        RomError::BadHeader(why) => format!("{name}: cabeçalho inválido ({why})"),
+    }
 }
 
 /// Velocidade do turbo.
@@ -49,10 +68,11 @@ struct OverlayKey {
     touch_visible: bool,
     debug: Option<(u32, u32, usize)>,
     toast: Option<String>,
-    cursor: (i32, i32),
+    hover: Option<usize>,
     layout_gen: u64,
     pressed: Option<usize>,
-    slider: Option<u32>,
+    scroll: i32,
+    selected: Option<usize>,
 }
 
 pub struct App {
@@ -74,6 +94,17 @@ pub struct App {
     /// Chave do último overlay desenhado: só se redesenha (e reenvia à GPU) quando muda.
     overlay_key: Option<OverlayKey>,
     overlay_size: (u32, u32),
+    /// Geração do layout de menu: sobe a cada invalidação (entra na chave do overlay).
+    layout_gen: u64,
+    /// Rolagem da tela de menu atual (px) e item selecionado por teclado/gamepad.
+    scroll: f32,
+    selected: Option<usize>,
+    /// Última tentativa de abrir o áudio que falhou (não insistir a cada toque).
+    audio_failed_at: Option<Instant>,
+    /// Quando o seletor de ROM foi aberto (para destravar se nunca responder).
+    loading_since: Option<Instant>,
+    confirm_remove: Option<u64>,
+    gesture_exclusion: Option<crate::GestureExclusion>,
     /// Item de menu pressionado: índice, dedo (ou `MOUSE_ID`) e onde começou; a ação vale ao soltar.
     pressed: Option<(usize, u64, f32, f32)>,
     /// Ajustes mudaram e ainda não foram gravados (grava ao soltar o slider / trocar de tela).
@@ -96,6 +127,8 @@ pub struct App {
     gilrs: Option<gilrs::Gilrs>,
     pad: Buttons,
     pad_stick: Buttons,
+    /// Navegação de menu pedida pelo gamepad, consumida em `about_to_wait`.
+    nav_queue: Vec<i32>,
     last_touch_buttons: Buttons,
     cursor: (f64, f64),
     ui: Ui,
@@ -114,7 +147,7 @@ pub struct App {
 
 impl App {
     pub fn new(launch: Launch, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let Launch { mut nes, rom_name, mut storage, picker, haptic } = launch;
+        let Launch { mut nes, rom_name, mut storage, picker, haptic, gesture_exclusion } = launch;
         let config = Config::load(storage.as_ref());
         let recent = config::load_recent(storage.as_ref());
         let mut save = match &nes {
@@ -146,6 +179,13 @@ impl App {
             dpi: 1.0,
             overlay_key: None,
             overlay_size: (0, 0),
+            layout_gen: 0,
+            scroll: 0.0,
+            selected: None,
+            audio_failed_at: None,
+            loading_since: None,
+            confirm_remove: None,
+            gesture_exclusion,
             pressed: None,
             config_dirty: false,
             states_load: false,
@@ -163,6 +203,7 @@ impl App {
             gilrs: None,
             pad: Buttons::NONE,
             pad_stick: Buttons::NONE,
+            nav_queue: Vec::new(),
             last_touch_buttons: Buttons::NONE,
             cursor: (0.0, 0.0),
             ui: Ui::new(),
@@ -191,6 +232,24 @@ impl App {
     fn toast(&mut self, msg: impl Into<String>) {
         self.toast_msg = msg.into();
         self.toast_until = Instant::now() + Duration::from_secs(2);
+    }
+
+    /// Erro: fica mais tempo na tela para dar para ler.
+    fn toast_error(&mut self, msg: impl Into<String>) {
+        self.toast_msg = msg.into();
+        self.toast_until = Instant::now() + Duration::from_secs(6);
+    }
+
+    fn invalidate_layout(&mut self) {
+        self.layout_cache = None;
+        self.layout_gen = self.layout_gen.wrapping_add(1);
+    }
+
+    /// Limita a rolagem ao conteúdo da tela atual.
+    fn clamp_scroll(&mut self) {
+        let (_, h) = self.size();
+        let max = self.layout().content_h - h as f32;
+        self.scroll = self.scroll.clamp(0.0, max.max(0.0));
     }
 
     fn state_key(&self, slot: u8) -> Option<String> {
@@ -228,6 +287,20 @@ impl App {
             self.gpu.as_ref().map(|g| g.viewport.1 + g.viewport.3).unwrap_or(w as f32 * 240.0 / 256.0);
         self.touch_layout =
             TouchLayout::for_viewport(w as f32, h as f32, img_bottom, self.config.touch_scale);
+        self.update_gesture_exclusion();
+    }
+
+    /// Android: o gesto Voltar da borda não deve roubar o d-pad/A/B enquanto se joga.
+    fn update_gesture_exclusion(&mut self) {
+        let Some(f) = &self.gesture_exclusion else { return };
+        let rects = if self.playing() && (self.touch.seen || self.config.touch_always) {
+            self.touch_layout
+                .gesture_exclusion()
+                .map(|r| [r.x as i32, r.y as i32, (r.x + r.w) as i32, (r.y + r.h) as i32])
+        } else {
+            [[0; 4]; 2]
+        };
+        f(rects);
     }
 
     fn set_screen(&mut self, s: Screen) {
@@ -240,8 +313,11 @@ impl App {
             self.refresh_slots();
         }
         self.confirm_reset = false;
+        self.confirm_remove = None;
         self.pressed = None;
-        self.layout_cache = None;
+        self.scroll = 0.0;
+        self.selected = None;
+        self.invalidate_layout();
         self.input.clear();
         self.touch.clear();
         self.rewinding = false;
@@ -252,8 +328,18 @@ impl App {
             // exige um gesto para o áudio
             #[cfg(not(target_arch = "wasm32"))]
             self.ensure_audio();
+            self.prime_audio();
         }
+        self.update_gesture_exclusion();
         self.redraw();
+    }
+
+    /// Enche o anel com ~55 ms de silêncio: a partida/retomada absorve o jitter do laço.
+    fn prime_audio(&self) {
+        if let Some(a) = &self.audio {
+            a.ring.clear();
+            a.ring.prime(AudioOut::TARGET_QUEUE / 2);
+        }
     }
 
     /// Grava os ajustes se mudaram (não a cada evento de arrasto do slider).
@@ -266,10 +352,10 @@ impl App {
 
     fn apply_config(&mut self) {
         if let Some(g) = self.gpu.as_mut() {
-            g.set_integer_scale(self.config.integer_scale);
+            g.set_video(self.config.integer_scale, self.config.overscan);
         }
         self.refresh_touch_layout();
-        self.layout_cache = None;
+        self.invalidate_layout();
         self.config_dirty = true;
     }
 
@@ -290,11 +376,19 @@ impl App {
         if self.audio.is_some() {
             return;
         }
-        if let Some(a) = AudioOut::start() {
-            if let Some(n) = self.nes.as_mut() {
-                n.set_sample_rate(a.sample_rate);
+        if self.audio_failed_at.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+            return;
+        }
+        match AudioOut::start() {
+            Some(a) => {
+                if let Some(n) = self.nes.as_mut() {
+                    n.set_sample_rate(a.sample_rate);
+                }
+                a.ring.prime(AudioOut::TARGET_QUEUE / 2);
+                self.audio = Some(a);
+                self.audio_failed_at = None;
             }
-            self.audio = Some(a);
+            None => self.audio_failed_at = Some(Instant::now()),
         }
     }
 
@@ -310,7 +404,6 @@ impl App {
         self.flush_save();
         if let Some(a) = &self.audio {
             nes.set_sample_rate(a.sample_rate);
-            a.ring.clear();
         }
         if let Some(old) = &self.nes {
             nes.debugger.trace_enabled = old.debugger.trace_enabled;
@@ -343,7 +436,7 @@ impl App {
                 self.install_nes(nes, name.clone());
                 self.toast(name);
             }
-            Err(e) => self.toast(format!("{name}: {e}")),
+            Err(e) => self.toast_error(friendly_rom_error(&name, &e)),
         }
     }
 
@@ -352,6 +445,8 @@ impl App {
             return;
         }
         self.loading = true;
+        self.loading_since = Some(Instant::now());
+        self.invalidate_layout();
         match &self.picker {
             Some(p) => p(self.proxy.clone()),
             None => platform::pick_rom(self.proxy.clone()),
@@ -365,7 +460,7 @@ impl App {
             None => {
                 self.recent = config::remove_recent(self.storage.as_mut(), hash);
                 self.toast("ROM não está mais guardada");
-                self.layout_cache = None;
+                self.invalidate_layout();
             }
         }
     }
@@ -421,6 +516,9 @@ impl App {
     }
 
     fn set_turbo(&mut self, on: bool) {
+        if self.turbo && !on {
+            self.prime_audio();
+        }
         self.turbo = on;
         self.pacer.set_speed(if on { TURBO } else { 1.0 });
     }
@@ -436,7 +534,10 @@ impl App {
             confirm_reset: self.confirm_reset,
             states_load: self.states_load,
             slots: self.slots,
-            play_seconds: self.play_frames / 60,
+            play_seconds: (self.play_frames as f64 / NTSC_FPS) as u64,
+            loading: self.loading,
+            confirm_remove: self.confirm_remove,
+            touch_platform: cfg!(any(target_os = "android", target_arch = "wasm32")) || self.touch.seen,
         }
     }
 
@@ -459,7 +560,11 @@ impl App {
         }
         if !matches!(action, Action::Reset) && self.confirm_reset {
             self.confirm_reset = false;
-            self.layout_cache = None;
+            self.invalidate_layout();
+        }
+        if !matches!(action, Action::RemoveRecent(_)) && self.confirm_remove.is_some() {
+            self.confirm_remove = None;
+            self.invalidate_layout();
         }
         match action {
             Action::Resume => self.set_screen(Screen::Playing),
@@ -467,10 +572,16 @@ impl App {
             Action::Recents => self.set_screen(Screen::Recents),
             Action::OpenRecent(h) => self.open_recent(h),
             Action::RemoveRecent(h) => {
-                self.recent = config::remove_recent(self.storage.as_mut(), h);
-                self.layout_cache = None;
-                if self.recent.is_empty() {
-                    self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start });
+                if self.confirm_remove == Some(h) {
+                    self.confirm_remove = None;
+                    self.recent = config::remove_recent(self.storage.as_mut(), h);
+                    self.invalidate_layout();
+                    if self.recent.is_empty() {
+                        self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start });
+                    }
+                } else {
+                    self.confirm_remove = Some(h);
+                    self.invalidate_layout();
                 }
             }
             Action::Reset => {
@@ -479,7 +590,7 @@ impl App {
                     self.set_screen(Screen::Playing);
                 } else {
                     self.confirm_reset = true;
-                    self.layout_cache = None;
+                    self.invalidate_layout();
                 }
             }
             Action::States { load } => {
@@ -509,7 +620,7 @@ impl App {
             Action::ToggleTurbo => {
                 let on = !self.turbo;
                 self.set_turbo(on);
-                self.layout_cache = None;
+                self.invalidate_layout();
             }
             Action::Settings => self.set_screen(Screen::Settings),
             Action::Back => self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start }),
@@ -539,7 +650,10 @@ impl App {
     #[cfg(feature = "gamepad")]
     fn poll_gamepad(&mut self) {
         use gilrs::{Axis, Button, EventType};
+        let playing = self.playing();
         let Some(g) = self.gilrs.as_mut() else { return };
+        let mut nav = Vec::new();
+        let (mut pad, mut stick) = (self.pad, self.pad_stick);
         while let Some(ev) = g.next_event() {
             let map = |b: Button| match b {
                 Button::South | Button::East => Buttons::A,
@@ -552,18 +666,61 @@ impl App {
                 Button::DPadRight => Buttons::RIGHT,
                 _ => Buttons::NONE,
             };
+            if !playing {
+                match ev.event {
+                    EventType::ButtonPressed(Button::DPadUp, _) => nav.push(-1),
+                    EventType::ButtonPressed(Button::DPadDown, _) => nav.push(1),
+                    EventType::ButtonPressed(Button::DPadLeft, _) => nav.push(-2),
+                    EventType::ButtonPressed(Button::DPadRight, _) => nav.push(2),
+                    EventType::ButtonPressed(Button::South | Button::Start, _) => nav.push(0),
+                    EventType::ButtonPressed(Button::East | Button::Select, _) => nav.push(3),
+                    EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
+                    _ => {}
+                }
+                continue;
+            }
             match ev.event {
-                EventType::ButtonPressed(b, _) => self.pad |= map(b),
-                EventType::ButtonReleased(b, _) => self.pad = self.pad.with(map(b), false),
+                EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
+                EventType::ButtonPressed(b, _) => pad |= map(b),
+                EventType::ButtonReleased(b, _) => pad = pad.with(map(b), false),
                 EventType::AxisChanged(axis, v, _) => {
                     let (neg, pos) = match axis {
                         Axis::LeftStickX => (Buttons::LEFT, Buttons::RIGHT),
                         Axis::LeftStickY => (Buttons::DOWN, Buttons::UP),
                         _ => continue,
                     };
-                    self.pad_stick = self.pad_stick.with(neg, v < -0.5).with(pos, v > 0.5);
+                    stick = stick.with(neg, v < -0.5).with(pos, v > 0.5);
                 }
                 _ => {}
+            }
+        }
+        self.pad = pad;
+        self.pad_stick = stick;
+        self.nav_queue.extend(nav);
+    }
+
+    /// Comandos de navegação vindos do gamepad (−1/1 cima/baixo, ±2 esquerda/direita,
+    /// 0 ativar, 3 voltar, 4 menu), executados fora do `poll` para poder emprestar `self`.
+    fn drain_nav(&mut self, el: &ActiveEventLoop) {
+        let q = std::mem::take(&mut self.nav_queue);
+        for cmd in q {
+            match cmd {
+                -1 | 1 => self.nav(cmd, el),
+                -2 => self.nav_activate(-1, el),
+                2 => self.nav_activate(1, el),
+                0 => self.nav_activate(0, el),
+                3 => {
+                    if self.screen != Screen::Start {
+                        self.act(Action::Back, el);
+                    }
+                }
+                _ => {
+                    if self.playing() {
+                        self.set_screen(Screen::Paused);
+                    } else if self.nes.is_some() {
+                        self.set_screen(Screen::Playing);
+                    }
+                }
             }
         }
     }
@@ -591,6 +748,7 @@ impl App {
                 if !self.rewind.step_back(nes) {
                     break;
                 }
+                nes.run_frame(); // mostra o frame do passado (o state não guarda a tela)
                 continue;
             }
             nes.run_frame();
@@ -611,9 +769,13 @@ impl App {
                         *s *= v;
                     }
                 }
-                a.ring.push(&nes.bus.apu.sample_buffer);
+                a.ring.push_capped(&nes.bus.apu.sample_buffer, AudioOut::TARGET_QUEUE * 2);
                 nes.bus.apu.sample_buffer.clear();
-                a.ring.trim_to(AudioOut::TARGET_QUEUE); // o anel é mono
+                // Controle fino da taxa: o relógio do DAC e o do pacer divergem um pouco; puxa a
+                // taxa da APU em ±0,5 % conforme a fila está acima/abaixo do alvo.
+                let fill = a.ring.len() as f32 / AudioOut::TARGET_QUEUE as f32;
+                let adj = 1.0 + 0.005 * (fill - 1.0).clamp(-1.0, 1.0);
+                nes.set_sample_rate((a.sample_rate as f32 * adj) as u32);
             }
         } else {
             nes.bus.apu.sample_buffer.clear();
@@ -629,20 +791,22 @@ impl App {
     fn draw_menu(&mut self, w: u32, h: u32) {
         let theme = self.theme();
         let layout = self.layout();
-        let fb = std::mem::take(&mut self.overlay);
-        let mut fb = fb;
+        let mut fb = std::mem::take(&mut self.overlay);
         ui::clear(&mut fb, if self.screen == Screen::Paused { theme.bg } else { theme.panel });
         let s = layout.ui_scale;
-        let (mx, my) = (self.cursor.0 as f32, self.cursor.1 as f32);
+        let scroll = self.scroll;
+        let (mx, my) = (self.cursor.0 as f32, self.cursor.1 as f32 + scroll);
         let title_size = if self.screen == Screen::Start { 64.0 * s } else { 30.0 * s };
         let title_y =
             if self.screen == Screen::Start { (h as f32 * 0.17) as i32 } else { (h as f32 * 0.05) as i32 };
+        let mut subtitle_y = title_y + title_size as i32 + (8.0 * s) as i32;
         if self.screen == Screen::Start {
-            // marca: um cartucho estilizado atrás do título
-            let cw = 150.0 * s;
-            let ch = 90.0 * s;
+            // marca: um cartucho estilizado atrás do título, do tamanho do texto
+            let tw = self.ui.text_width(&layout.title, title_size) as f32;
+            let cw = tw + 40.0 * s;
+            let ch = title_size * 1.35;
             let cx = (w as f32 - cw) / 2.0;
-            let cy = title_y as f32 - 12.0 * s;
+            let cy = title_y as f32 - title_size * 0.12;
             ui::fill_round_rect(
                 &mut fb,
                 w,
@@ -652,18 +816,11 @@ impl App {
                 [0, 0, 0, 110],
             );
             ui::fill_round_rect(&mut fb, w, h, &Rect { x: cx, y: cy, w: cw, h: ch }, 10.0 * s, theme.accent);
+            subtitle_y = (cy + ch + 10.0 * s) as i32;
         }
         let title_color = if self.screen == Screen::Start { theme.on_accent } else { theme.text };
         self.ui.draw_text_centered(&mut fb, w, h, &layout.title, title_size, title_y, title_color);
-        self.ui.draw_text_centered(
-            &mut fb,
-            w,
-            h,
-            &layout.subtitle,
-            14.0 * s,
-            title_y + title_size as i32 + (8.0 * s) as i32,
-            theme.dim,
-        );
+        self.ui.draw_text_centered(&mut fb, w, h, &layout.subtitle, 14.0 * s, subtitle_y, theme.dim);
         if let Some(e) = &self.gpu_error {
             let msg = e.clone();
             self.ui.draw_text_centered(
@@ -672,24 +829,31 @@ impl App {
                 h,
                 &msg,
                 12.0 * s,
-                title_y + title_size as i32 + (30.0 * s) as i32,
+                subtitle_y + (22.0 * s) as i32,
                 theme.accent,
             );
         }
         let pressed_idx = self.pressed.map(|p| p.0);
         for (i, item) in layout.items.iter().enumerate() {
-            let hot = pressed_idx == Some(i) || (pressed_idx.is_none() && item.rect.contains(mx, my));
-            self.ui.draw_item(&mut fb, w, h, item, &layout, hot, &theme);
+            let hot = pressed_idx == Some(i)
+                || self.selected == Some(i)
+                || (pressed_idx.is_none() && self.selected.is_none() && item.rect.contains(mx, my));
+            let mut it = item.clone();
+            it.rect.y -= scroll;
+            if it.rect.y + it.rect.h < 0.0 || it.rect.y > h as f32 {
+                continue;
+            }
+            self.ui.draw_item(&mut fb, w, h, &it, &layout, hot, &theme);
         }
         if self.screen == Screen::Recents && layout.items.len() == 1 {
             let msg = "Abra uma ROM: ela aparece aqui";
             self.ui.draw_text_centered(&mut fb, w, h, msg, 14.0 * s, (h as f32 * 0.5) as i32, theme.dim);
         }
         if self.screen == Screen::Start {
-            let hint = if self.picker.is_some() {
+            let hint = if cfg!(any(target_os = "android", target_arch = "wasm32")) || self.picker.is_some() {
                 "toque em Abrir ROM"
             } else {
-                "tecle O ou clique em Abrir ROM · Esc sai"
+                "O abre uma ROM · arraste um .nes na janela · setas e Enter navegam"
             };
             self.ui.draw_text_centered(
                 &mut fb,
@@ -711,31 +875,25 @@ impl App {
         self.overlay.resize(size, 0);
         let show_toast = Instant::now() < self.toast_until;
         let touch_visible = self.touch.seen || self.config.touch_always;
+        let hover = if self.playing() {
+            None
+        } else {
+            let l = self.layout();
+            menu::index_at(&l, self.cursor.0 as f32, self.cursor.1 as f32 + self.scroll)
+        };
         let key = OverlayKey {
             screen: self.screen,
             touch: self.touch.buttons(),
             touch_visible,
             debug: self.debug_overlay.then(|| (self.fps_display, self.skipped_frames, self.rewind.len())),
             toast: show_toast.then(|| self.toast_msg.clone()),
-            cursor: if self.playing() { (0, 0) } else { (self.cursor.0 as i32, self.cursor.1 as i32) },
-            layout_gen: self.layout_cache.as_ref().map(|l| l.items.len() as u64).unwrap_or(0),
+            hover,
+            layout_gen: self.layout_gen,
             pressed: self.pressed.map(|p| p.0),
-            slider: self.layout_cache.as_ref().map(|l| {
-                l.items
-                    .iter()
-                    .filter_map(|i| {
-                        if let ItemKind::Slider { fraction } = i.kind {
-                            Some((fraction * 1000.0) as u32)
-                        } else {
-                            None
-                        }
-                    })
-                    .sum()
-            }),
+            scroll: self.scroll as i32,
+            selected: self.selected,
         };
-        let dirty = self.overlay_key.as_ref() != Some(&key)
-            || self.overlay_size != (w, h)
-            || self.layout_cache.is_none();
+        let dirty = self.overlay_key.as_ref() != Some(&key) || self.overlay_size != (w, h);
         let has_overlay = self.screen != Screen::Playing
             || self.nes.is_none()
             || touch_visible
@@ -827,7 +985,12 @@ impl App {
         }
         if show_toast {
             let msg = self.toast_msg.clone();
-            self.ui.draw_toast(&mut self.overlay, w, h, &msg, 16.0 * s);
+            let y = if self.playing() && self.touch_layout.portrait {
+                Some(self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s)
+            } else {
+                None
+            };
+            self.ui.draw_toast(&mut self.overlay, w, h, &msg, 16.0 * s, y);
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let fb = self.nes.as_mut().map(|n| n.framebuffer());
@@ -837,7 +1000,49 @@ impl App {
         }
     }
 
+    /// Move a seleção de menu (teclado/gamepad) e rola para deixá-la visível.
+    fn nav(&mut self, dir: i32, el: &ActiveEventLoop) {
+        let layout = self.layout();
+        self.selected = menu::next_selectable(&layout, self.selected, dir);
+        if let Some(i) = self.selected {
+            let r = layout.items[i].rect;
+            let (_, h) = self.size();
+            if r.y - self.scroll < 0.0 {
+                self.scroll = r.y - 10.0;
+            } else if r.y + r.h - self.scroll > h as f32 {
+                self.scroll = r.y + r.h - h as f32 + 10.0;
+            }
+            self.clamp_scroll();
+        }
+        let _ = el;
+        self.redraw();
+    }
+
+    fn nav_activate(&mut self, dir: i32, el: &ActiveEventLoop) {
+        let layout = self.layout();
+        let Some(i) = self.selected else {
+            self.nav(1, el);
+            return;
+        };
+        if let Some(a) = menu::activate(&layout, i, dir) {
+            self.act(a, el);
+        }
+    }
+
     fn handle_key(&mut self, key: KeyCode, pressed: bool, el: &ActiveEventLoop) {
+        if !self.playing() && pressed {
+            match key {
+                KeyCode::ArrowUp => return self.nav(-1, el),
+                KeyCode::ArrowDown | KeyCode::Tab => return self.nav(1, el),
+                KeyCode::ArrowLeft => return self.nav_activate(-1, el),
+                KeyCode::ArrowRight => return self.nav_activate(1, el),
+                KeyCode::Enter | KeyCode::Space | KeyCode::KeyZ => return self.nav_activate(0, el),
+                KeyCode::KeyX | KeyCode::Backspace if self.screen != Screen::Start => {
+                    return self.act(Action::Back, el);
+                }
+                _ => {}
+            }
+        }
         if self.playing() {
             let bit = match key {
                 KeyCode::KeyZ => Some(Buttons::A),
@@ -871,12 +1076,26 @@ impl App {
                 Screen::Paused => self.set_screen(Screen::Playing),
                 Screen::Settings | Screen::Recents | Screen::States => self.act(Action::Back, el),
                 Screen::Start => {
-                    self.flush_save();
-                    el.exit();
+                    if cfg!(not(any(target_arch = "wasm32", target_os = "android"))) || self.picker.is_some()
+                    {
+                        self.flush_save();
+                        self.save_config();
+                        el.exit();
+                    }
                 }
             },
             KeyCode::KeyO => self.open_rom(),
-            KeyCode::KeyR => self.reset(),
+            KeyCode::KeyR => {
+                if self.playing() {
+                    if self.confirm_reset {
+                        self.confirm_reset = false;
+                        self.reset();
+                    } else {
+                        self.confirm_reset = true;
+                        self.toast("R de novo para confirmar o reset");
+                    }
+                }
+            }
             KeyCode::F3 => {
                 self.debug_overlay = !self.debug_overlay;
                 self.toast(if self.debug_overlay { "Debug ON" } else { "Debug OFF" });
@@ -919,8 +1138,14 @@ impl App {
         if self.pressed.is_some() {
             return; // já há um dedo num item: o segundo é ignorado
         }
+        self.selected = None;
         let layout = self.layout();
+        let y = y + self.scroll;
         self.pressed = menu::index_at(&layout, x, y).map(|i| (i, id, x, y));
+        if self.pressed.is_none() {
+            // dedo fora de item: pode virar rolagem
+            self.pressed = Some((usize::MAX, id, x, y));
+        }
         if let Some((i, ..)) = self.pressed {
             if matches!(layout.items[i].kind, ItemKind::Slider { .. }) {
                 if let Some(a) = menu::hit(&layout, x, y) {
@@ -931,14 +1156,26 @@ impl App {
     }
 
     /// Arrasto com o dedo/mouse pressionado: sliders acompanham.
-    fn menu_drag(&mut self, id: u64, x: f32, el: &ActiveEventLoop) {
-        let Some((i, pid, _, _)) = self.pressed else { return };
+    fn menu_drag(&mut self, id: u64, x: f32, y: f32, el: &ActiveEventLoop) {
+        let Some((i, pid, x0, y0)) = self.pressed else { return };
         if pid != id {
             return;
         }
         let layout = self.layout();
-        if let Some(a) = menu::slide(&layout, i, x) {
-            self.act(a, el);
+        if i != usize::MAX {
+            if let Some(a) = menu::slide(&layout, i, x) {
+                self.act(a, el);
+                return;
+            }
+        }
+        // Arrasto vertical sobre a lista: rola (e cancela o toque no item)
+        let dy = (y + self.scroll) - y0;
+        let (_, h) = self.size();
+        if layout.content_h > h as f32 && (dy.abs() > 12.0 * layout.ui_scale || i == usize::MAX) {
+            self.scroll -= y + self.scroll - y0;
+            self.clamp_scroll();
+            self.pressed = Some((usize::MAX, id, x0, y0 - dy + (y + self.scroll - y0)));
+            self.redraw();
         }
     }
 
@@ -948,9 +1185,14 @@ impl App {
             return; // soltou outro dedo
         }
         let Some((i, ..)) = self.pressed.take() else { return };
+        if i == usize::MAX {
+            self.redraw();
+            return;
+        }
+        let y = y + self.scroll;
         let layout = self.layout();
         if matches!(layout.items.get(i).map(|it| &it.kind), Some(ItemKind::Slider { .. })) {
-            self.layout_cache = None;
+            self.invalidate_layout();
             self.save_config();
             self.redraw();
             return;
@@ -988,7 +1230,7 @@ impl ApplicationHandler<UserEvent> for App {
         self.window = Some(window.clone());
         self.dpi = window.scale_factor() as f32;
         log::info!("janela {}x{} @{:.2}", window.inner_size().width, window.inner_size().height, self.dpi);
-        self.layout_cache = None;
+        self.invalidate_layout();
         self.overlay_key = None;
         #[cfg(feature = "gamepad")]
         {
@@ -998,7 +1240,7 @@ impl ApplicationHandler<UserEvent> for App {
         {
             match pollster::block_on(GpuState::new(window.clone())) {
                 Ok(mut g) => {
-                    g.set_integer_scale(self.config.integer_scale);
+                    g.set_video(self.config.integer_scale, self.config.overscan);
                     self.gpu = Some(g);
                 }
                 Err(e) => {
@@ -1021,10 +1263,11 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, ev: UserEvent) {
+        let _el: &ActiveEventLoop = _el;
         match ev {
             UserEvent::GpuReady(r) => match *r {
                 Ok(mut g) => {
-                    g.set_integer_scale(self.config.integer_scale);
+                    g.set_video(self.config.integer_scale, self.config.overscan);
                     self.gpu = Some(g);
                     if let Some(w) = &self.window {
                         let s = w.inner_size();
@@ -1033,7 +1276,7 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     self.refresh_touch_layout();
-                    self.layout_cache = None;
+                    self.invalidate_layout();
                     self.pacer.resync(self.now());
                     self.redraw();
                 }
@@ -1044,13 +1287,37 @@ impl ApplicationHandler<UserEvent> for App {
             },
             UserEvent::RomLoaded { name, bytes } => {
                 self.loading = false;
+                self.loading_since = None;
+                self.invalidate_layout();
                 self.load_rom_bytes(name, bytes, true);
                 self.redraw();
             }
+            UserEvent::PadAxes { x, y } => {
+                let stick = Buttons::NONE
+                    .with(Buttons::LEFT, x < -0.5)
+                    .with(Buttons::RIGHT, x > 0.5)
+                    .with(Buttons::UP, y < -0.5)
+                    .with(Buttons::DOWN, y > 0.5);
+                if !self.playing() {
+                    // d-pad do controle navega os menus (só nas bordas de subida)
+                    if stick.0 & !self.pad_stick.0 & Buttons::UP.0 != 0 {
+                        self.nav(-1, _el);
+                    } else if stick.0 & !self.pad_stick.0 & Buttons::DOWN.0 != 0 {
+                        self.nav(1, _el);
+                    } else if stick.0 & !self.pad_stick.0 & Buttons::LEFT.0 != 0 {
+                        self.nav_activate(-1, _el);
+                    } else if stick.0 & !self.pad_stick.0 & Buttons::RIGHT.0 != 0 {
+                        self.nav_activate(1, _el);
+                    }
+                }
+                self.pad_stick = stick;
+            }
             UserEvent::RomLoadFailed(why) => {
                 self.loading = false;
+                self.loading_since = None;
+                self.invalidate_layout();
                 if why != "cancelado" {
-                    self.toast(why);
+                    self.toast_error(why);
                 }
                 self.redraw();
             }
@@ -1073,15 +1340,34 @@ impl ApplicationHandler<UserEvent> for App {
                     g.resize(s.width, s.height);
                 }
                 self.refresh_touch_layout();
-                self.layout_cache = None;
+                self.invalidate_layout();
                 self.redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.dpi = scale_factor as f32;
-                self.layout_cache = None;
+                self.invalidate_layout();
+                self.redraw();
+            }
+            WindowEvent::DroppedFile(path) => {
+                let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                match std::fs::read(&path) {
+                    Ok(bytes) => self.load_rom_bytes(name, bytes, true),
+                    Err(e) => self.toast_error(format!("{name}: {e}")),
+                }
                 self.redraw();
             }
             WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::MouseWheel { delta, .. } => {
+                if !self.playing() {
+                    let dy = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y * 60.0,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                    };
+                    self.scroll -= dy;
+                    self.clamp_scroll();
+                    self.redraw();
+                }
+            }
             WindowEvent::Focused(false) => {
                 self.input.clear();
                 self.touch.clear();
@@ -1095,7 +1381,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.cursor = (position.x, position.y);
                 if !self.playing() {
                     if self.pressed.is_some() {
-                        self.menu_drag(MOUSE_ID, position.x as f32, el);
+                        self.menu_drag(MOUSE_ID, position.x as f32, position.y as f32, el);
                     }
                     self.redraw();
                 }
@@ -1122,7 +1408,11 @@ impl ApplicationHandler<UserEvent> for App {
                                 self.buzz();
                                 self.set_screen(Screen::Paused);
                             } else {
+                                let first = !self.touch.seen;
                                 let b = self.touch.down(&self.touch_layout, t.id, x, y);
+                                if first {
+                                    self.update_gesture_exclusion();
+                                }
                                 if b != Buttons::NONE {
                                     self.buzz();
                                 }
@@ -1142,7 +1432,7 @@ impl ApplicationHandler<UserEvent> for App {
                             }
                             self.last_touch_buttons = b;
                         } else {
-                            self.menu_drag(t.id, x, el);
+                            self.menu_drag(t.id, x, y, el);
                         }
                     }
                     TouchPhase::Ended => {
@@ -1215,12 +1505,19 @@ impl ApplicationHandler<UserEvent> for App {
         if self.playing() {
             self.set_screen(Screen::Paused);
         } else {
-            self.layout_cache = None;
+            self.invalidate_layout();
         }
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.advance();
+        self.drain_nav(el);
+        if self.loading && self.loading_since.is_some_and(|t| t.elapsed() > Duration::from_secs(90)) {
+            self.loading = false;
+            self.loading_since = None;
+            self.invalidate_layout();
+            self.redraw();
+        }
         if self.playing() && self.gpu.is_some() {
             el.set_control_flow(ControlFlow::WaitUntil(self.start + self.pacer.next_deadline()));
         } else if Instant::now() < self.toast_until {

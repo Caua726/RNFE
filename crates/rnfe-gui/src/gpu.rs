@@ -9,6 +9,8 @@ pub const NES_WIDTH: u32 = 256;
 pub const NES_HEIGHT: u32 = 240;
 /// Pixel do NES é 8:7 → imagem de 256 px "vale" 292,6 px de largura.
 pub const NES_ASPECT: f32 = (256.0 * 8.0 / 7.0) / 240.0;
+/// Uniform do overlay: quad inteiro, textura inteira.
+const OVERLAY_XFORM: [f32; 8] = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
 
 const SHADER: &str = r#"
 struct VertexOutput {
@@ -16,7 +18,11 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 };
 
-@group(0) @binding(2) var<uniform> xform: vec4<f32>; // escala xy, deslocamento zw
+struct Xform {
+    scale: vec4<f32>,  // escala xy, deslocamento zw (clip space)
+    uv: vec4<f32>,     // origem xy e tamanho zw da janela de textura (overscan)
+};
+@group(0) @binding(2) var<uniform> xform: Xform;
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
@@ -29,8 +35,8 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
         vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0),
     );
     var out: VertexOutput;
-    out.pos = vec4(positions[idx] * xform.xy + xform.zw, 0.0, 1.0);
-    out.uv = uvs[idx];
+    out.pos = vec4(positions[idx] * xform.scale.xy + xform.scale.zw, 0.0, 1.0);
+    out.uv = xform.uv.xy + uvs[idx] * xform.uv.zw;
     return out;
 }
 
@@ -66,6 +72,9 @@ pub struct GpuState {
     pub viewport: (f32, f32, f32, f32),
     /// Múltiplos inteiros de 256×240 (pixels quadrados) em vez de preencher com aspecto 8:7.
     integer_scale: bool,
+    /// Corta 8 linhas em cima e embaixo (área que as TVs não mostravam).
+    overscan: bool,
+    tex_format: wgpu::TextureFormat,
 }
 
 impl GpuState {
@@ -104,7 +113,15 @@ impl GpuState {
         log::info!("GPU: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
+        // A paleta do NES e o overlay já são bytes sRGB compostos em gamma (ui::blend): sem sRGB
+        // na superfície nem nas texturas eles passam intactos e o blend premultiplicado do
+        // overlay acontece no mesmo espaço em que foi calculado.
+        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+        let tex_format = if format.is_srgb() {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -192,21 +209,32 @@ impl GpuState {
         let pipeline = make_pipeline(None);
         let overlay_pipeline = make_pipeline(Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
 
-        let scale = Self::calc_scale(config.width, config.height, false);
-        let nes =
-            Self::make_layer(&device, &bind_group_layout, &sampler, NES_WIDTH, NES_HEIGHT, scale, "nes");
+        let scale = Self::calc_xform(config.width, config.height, false, false);
+        let nes = Self::make_layer(
+            &device,
+            &bind_group_layout,
+            &sampler,
+            tex_format,
+            NES_WIDTH,
+            NES_HEIGHT,
+            scale,
+            "nes",
+        );
         let overlay = Self::make_layer(
             &device,
             &bind_group_layout,
             &sampler,
+            tex_format,
             config.width,
             config.height,
-            [1.0, 1.0, 0.0, 0.0],
+            OVERLAY_XFORM,
             "overlay",
         );
-        let viewport = Self::calc_viewport(config.width, config.height, false);
+        let viewport = Self::calc_viewport(config.width, config.height, false, false);
         Ok(GpuState {
             integer_scale: false,
+            overscan: false,
+            tex_format,
             surface,
             device,
             queue,
@@ -221,13 +249,15 @@ impl GpuState {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_layer(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        format: wgpu::TextureFormat,
         width: u32,
         height: u32,
-        scale: [f32; 4],
+        scale: [f32; 8],
         label: &str,
     ) -> Layer {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -236,7 +266,7 @@ impl GpuState {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -258,30 +288,39 @@ impl GpuState {
         Layer { texture, bind_group, scale_buffer, width, height }
     }
 
-    /// Escala xy e deslocamento zw (clip space) do quad do NES. Em retrato a imagem gruda no
-    /// topo (os controles de toque ocupam o resto); em paisagem, centralizada.
-    fn calc_scale(win_w: u32, win_h: u32, integer: bool) -> [f32; 4] {
+    /// Linhas visíveis com o overscan cortado.
+    fn visible_lines(overscan: bool) -> f32 {
+        if overscan { 224.0 } else { 240.0 }
+    }
+
+    /// Uniform do quad do NES: escala xy + deslocamento zw (clip space) e a janela de textura
+    /// (overscan). Em retrato a imagem fica no alto com uma margem (recorte da câmera/barra de
+    /// status) e os controles de toque ocupam o resto; em paisagem, centralizada.
+    fn calc_xform(win_w: u32, win_h: u32, integer: bool, overscan: bool) -> [f32; 8] {
         let (w, h) = (win_w.max(1) as f32, win_h.max(1) as f32);
         let portrait = h > w;
+        let lines = Self::visible_lines(overscan);
+        let aspect = (256.0 * 8.0 / 7.0) / lines;
         let (sx, sy) = if integer {
-            let k = (w / NES_WIDTH as f32).min(h / NES_HEIGHT as f32).floor().max(1.0);
-            ((NES_WIDTH as f32 * k / w).min(1.0), (NES_HEIGHT as f32 * k / h).min(1.0))
+            let k = (w / NES_WIDTH as f32).min(h / lines).floor().max(1.0);
+            ((NES_WIDTH as f32 * k / w).min(1.0), (lines * k / h).min(1.0))
         } else {
             let win_aspect = w / h;
-            if win_aspect > NES_ASPECT {
-                (NES_ASPECT / win_aspect, 1.0)
-            } else {
-                (1.0, win_aspect / NES_ASPECT)
-            }
+            if win_aspect > aspect { (aspect / win_aspect, 1.0) } else { (1.0, win_aspect / aspect) }
         };
-        // retrato: imagem no topo (os controles de toque ficam embaixo); senão centralizada
-        let oy = if portrait { 1.0 - sy } else { 0.0 };
-        [sx, sy, 0.0, oy]
+        let oy = if portrait {
+            let top = (h * 0.035).min((1.0 - sy) * h * 0.5); // margem no topo, se sobrar espaço
+            1.0 - sy - 2.0 * top / h
+        } else {
+            0.0
+        };
+        let (v0, vh) = if overscan { (8.0 / 240.0, 224.0 / 240.0) } else { (0.0, 1.0) };
+        [sx, sy, 0.0, oy, 0.0, v0, 1.0, vh]
     }
 
     /// Retângulo da imagem do NES na janela (px).
-    fn calc_viewport(win_w: u32, win_h: u32, integer: bool) -> (f32, f32, f32, f32) {
-        let [sx, sy, _, oy] = Self::calc_scale(win_w, win_h, integer);
+    fn calc_viewport(win_w: u32, win_h: u32, integer: bool, overscan: bool) -> (f32, f32, f32, f32) {
+        let [sx, sy, _, oy, ..] = Self::calc_xform(win_w, win_h, integer, overscan);
         let w = win_w as f32 * sx;
         let h = win_h as f32 * sy;
         let y = (1.0 - oy - sy) * 0.5 * win_h as f32;
@@ -292,14 +331,20 @@ impl GpuState {
         (self.config.width, self.config.height)
     }
 
-    /// Liga/desliga a escala inteira (pixels quadrados).
-    pub fn set_integer_scale(&mut self, on: bool) {
-        if self.integer_scale != on {
-            self.integer_scale = on;
-            let scale = Self::calc_scale(self.config.width, self.config.height, on);
-            self.queue.write_buffer(&self.nes.scale_buffer, 0, bytemuck::cast_slice(&scale));
-            self.viewport = Self::calc_viewport(self.config.width, self.config.height, on);
+    /// Escala inteira (pixels quadrados) e corte de overscan.
+    pub fn set_video(&mut self, integer_scale: bool, overscan: bool) {
+        if self.integer_scale != integer_scale || self.overscan != overscan {
+            self.integer_scale = integer_scale;
+            self.overscan = overscan;
+            self.update_xform();
         }
+    }
+
+    fn update_xform(&mut self) {
+        let x = Self::calc_xform(self.config.width, self.config.height, self.integer_scale, self.overscan);
+        self.queue.write_buffer(&self.nes.scale_buffer, 0, bytemuck::cast_slice(&x));
+        self.viewport =
+            Self::calc_viewport(self.config.width, self.config.height, self.integer_scale, self.overscan);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -309,18 +354,17 @@ impl GpuState {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        let scale = Self::calc_scale(width, height, self.integer_scale);
-        self.queue.write_buffer(&self.nes.scale_buffer, 0, bytemuck::cast_slice(&scale));
         self.overlay = Self::make_layer(
             &self.device,
             &self.bind_group_layout,
             &self.sampler,
+            self.tex_format,
             width,
             height,
-            [1.0, 1.0, 0.0, 0.0],
+            OVERLAY_XFORM,
             "overlay",
         );
-        self.viewport = Self::calc_viewport(width, height, self.integer_scale);
+        self.update_xform();
     }
 
     fn upload(&self, layer: &Layer, rgba: &[u8]) {
@@ -361,10 +405,11 @@ impl GpuState {
         }
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(wgpu::SurfaceError::Lost) => {
                 self.surface.configure(&self.device, &self.config);
                 return false;
             }
+            Err(wgpu::SurfaceError::Outdated) => return false, // o Resized que vem reconfigura
             Err(e) => {
                 log::warn!("surface: {e:?}");
                 return false;

@@ -23,6 +23,8 @@ pub struct Config {
     pub integer_scale: bool,
     /// Volume (0,0–1,0).
     pub volume: f32,
+    /// Esconde 8 linhas em cima e embaixo (área que as TVs CRT não mostravam).
+    pub overscan: bool,
 }
 
 impl Default for Config {
@@ -30,12 +32,14 @@ impl Default for Config {
         Config {
             touch_scale: 1.0,
             touch_opacity: 0.45,
-            touch_always: false,
+            // plataformas de toque mostram os controles desde o início
+            touch_always: cfg!(any(target_os = "android", target_arch = "wasm32")),
             text_scale: 1.0,
             high_contrast: false,
             haptics: true,
             integer_scale: false,
             volume: 1.0,
+            overscan: false,
         }
     }
 }
@@ -57,7 +61,16 @@ impl Config {
 
     pub fn to_text(&self) -> String {
         format!(
-            "touch_scale={}\ntouch_opacity={}\ntouch_always={}\ntext_scale={}\nhigh_contrast={}\nhaptics={}\ninteger_scale={}\nvolume={}\n",
+            "touch_scale={}
+touch_opacity={}
+touch_always={}
+text_scale={}
+high_contrast={}
+haptics={}
+integer_scale={}
+volume={}
+overscan={}
+",
             self.touch_scale,
             self.touch_opacity,
             self.touch_always,
@@ -65,7 +78,8 @@ impl Config {
             self.high_contrast,
             self.haptics,
             self.integer_scale,
-            self.volume
+            self.volume,
+            self.overscan
         )
     }
 
@@ -89,6 +103,7 @@ impl Config {
                 "haptics" => c.haptics = b(c.haptics),
                 "integer_scale" => c.integer_scale = b(c.integer_scale),
                 "volume" => c.volume = f(c.volume, 0.0, 1.0),
+                "overscan" => c.overscan = b(c.overscan),
                 _ => {}
             }
         }
@@ -130,13 +145,19 @@ pub fn load_recent(storage: &dyn Storage) -> Vec<RecentRom> {
 pub fn push_recent(storage: &mut dyn Storage, hash: u64, name: &str, bytes: Option<&[u8]>) -> Vec<RecentRom> {
     let mut list = load_recent(storage);
     list.retain(|r| r.hash != hash);
-    list.insert(0, RecentRom { hash, name: name.to_string() });
-    list.truncate(RECENT_MAX);
     if let Some(bytes) = bytes {
+        // Se a ROM não couber (localStorage cheio), não entra na lista: reabrir não funcionaria
         if let Err(e) = storage.write(&RecentRom::rom_key(hash), bytes) {
             log::warn!("recentes: não guardei a ROM: {e}");
+            let text: String = list.iter().map(|r| format!("{:016x}\t{}\n", r.hash, r.name)).collect();
+            let _ = storage.write(RECENT_KEY, text.as_bytes());
+            return list;
         }
+    } else if storage.read(&RecentRom::rom_key(hash)).is_none() {
+        return list;
     }
+    list.insert(0, RecentRom { hash, name: name.to_string() });
+    list.truncate(RECENT_MAX);
     let text: String = list.iter().map(|r| format!("{:016x}\t{}\n", r.hash, r.name)).collect();
     if let Err(e) = storage.write(RECENT_KEY, text.as_bytes()) {
         log::warn!("recentes: {e}");

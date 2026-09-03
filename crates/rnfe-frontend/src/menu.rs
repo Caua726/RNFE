@@ -27,18 +27,29 @@ pub enum Setting {
     Haptics,
     IntegerScale,
     Volume,
+    /// Esconde as 8 linhas de cima e de baixo (as TVs não mostravam).
+    Overscan,
 }
 
+/// Seções da tela de ajustes (título + itens).
+pub const SECTIONS: &[(&str, &[Setting])] = &[
+    ("Som", &[Setting::Volume]),
+    ("Vídeo", &[Setting::IntegerScale, Setting::Overscan]),
+    ("Toque", &[Setting::TouchScale, Setting::TouchOpacity, Setting::TouchAlways, Setting::Haptics]),
+    ("Acessibilidade", &[Setting::TextScale, Setting::HighContrast]),
+];
+
 impl Setting {
-    pub const ALL: [Setting; 8] = [
+    pub const ALL: [Setting; 9] = [
         Setting::Volume,
+        Setting::IntegerScale,
+        Setting::Overscan,
         Setting::TouchScale,
         Setting::TouchOpacity,
         Setting::TouchAlways,
+        Setting::Haptics,
         Setting::TextScale,
         Setting::HighContrast,
-        Setting::IntegerScale,
-        Setting::Haptics,
     ];
 
     pub fn label(self) -> &'static str {
@@ -51,13 +62,18 @@ impl Setting {
             Setting::Haptics => "Vibrar ao tocar",
             Setting::IntegerScale => "Escala inteira (pixels quadrados)",
             Setting::Volume => "Volume",
+            Setting::Overscan => "Cortar bordas (overscan)",
         }
     }
 
     pub fn is_bool(self) -> bool {
         matches!(
             self,
-            Setting::TouchAlways | Setting::HighContrast | Setting::Haptics | Setting::IntegerScale
+            Setting::TouchAlways
+                | Setting::HighContrast
+                | Setting::Haptics
+                | Setting::IntegerScale
+                | Setting::Overscan
         )
     }
 
@@ -82,6 +98,7 @@ impl Setting {
             Setting::HighContrast => c.high_contrast as u8 as f32,
             Setting::Haptics => c.haptics as u8 as f32,
             Setting::IntegerScale => c.integer_scale as u8 as f32,
+            Setting::Overscan => c.overscan as u8 as f32,
         }
     }
 
@@ -104,6 +121,7 @@ impl Setting {
             Setting::Haptics => on(c.haptics),
             Setting::IntegerScale => on(c.integer_scale),
             Setting::Volume => pct(c.volume),
+            Setting::Overscan => on(c.overscan),
         }
     }
 }
@@ -121,6 +139,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::HighContrast => c.high_contrast = v >= 0.5,
         Setting::Haptics => c.haptics = v >= 0.5,
         Setting::IntegerScale => c.integer_scale = v >= 0.5,
+        Setting::Overscan => c.overscan = v >= 0.5,
     }
 }
 
@@ -212,6 +231,8 @@ pub struct Layout {
     pub font: f32,
     /// Raio dos cantos e margem interna, em px.
     pub radius: f32,
+    /// Altura total do conteúdo (px): se maior que a janela, a tela rola.
+    pub content_h: f32,
 }
 
 /// O que o menu precisa saber do aplicativo.
@@ -231,6 +252,12 @@ pub struct MenuState {
     pub slots: [bool; 3],
     /// Tempo de jogo nesta ROM, em segundos (mostrado na pausa).
     pub play_seconds: u64,
+    /// O seletor de ROM está aberto (o item "Abrir ROM" vira "Abrindo…").
+    pub loading: bool,
+    /// Remoção de recente aguardando confirmação (hash).
+    pub confirm_remove: Option<u64>,
+    /// A plataforma tem tela de toque (mostra a seção Toque dos ajustes).
+    pub touch_platform: bool,
 }
 
 /// Escala da interface: pelo fator de DPI da janela (`Window::scale_factor`, ~2,6 num celular
@@ -255,6 +282,8 @@ struct Column {
 }
 
 impl Column {
+    /// Encolhe as linhas para caber em `h`, mas nunca abaixo de `min_row` (≈ 2,4× a fonte):
+    /// abaixo disso o texto não cabe — a tela rola em vez de espremer.
     fn fit(&mut self, rows: f32, h: f32, min_row: f32) {
         let avail = h - self.y - self.gap;
         self.row_h = self.row_h.min((avail - self.gap * (rows - 1.0).max(0.0)) / rows.max(1.0)).max(min_row);
@@ -291,7 +320,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
     let gap = 10.0 * s;
     let bw = (w * 0.88).min(480.0 * s);
     let x = (w - bw) / 2.0;
-    let min_row = 16.0 * s;
+    let min_row = 2.4 * font;
     let mut items = Vec::new();
     let title: String;
     let subtitle: String;
@@ -304,10 +333,14 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             } else {
                 format!("Famicom / NES · v{}", st.version)
             };
-            col.y = h * 0.36;
+            col.y = h * 0.40;
             let rows = 2.0 + (!st.recent.is_empty()) as u8 as f32 + st.can_quit as u8 as f32;
             col.fit(rows, h, min_row);
-            col.push(&mut items, "Abrir ROM", Action::OpenRom, ItemKind::Primary);
+            if st.loading {
+                col.push(&mut items, "Abrindo…", Action::None, ItemKind::Button);
+            } else {
+                col.push(&mut items, "Abrir ROM", Action::OpenRom, ItemKind::Primary);
+            }
             if !st.recent.is_empty() {
                 col.push(
                     &mut items,
@@ -345,7 +378,11 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 ItemKind::Toggle { on: st.turbo },
             );
             items[i].active = st.turbo;
-            col.push(&mut items, "Abrir outra ROM", Action::OpenRom, ItemKind::Button);
+            if st.loading {
+                col.push(&mut items, "Abrindo…", Action::None, ItemKind::Button);
+            } else {
+                col.push(&mut items, "Abrir outra ROM", Action::OpenRom, ItemKind::Button);
+            }
             col.push(&mut items, "Ajustes", Action::Settings, ItemKind::Button);
             let i = col.push(
                 &mut items,
@@ -362,28 +399,39 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             title = "Ajustes".into();
             subtitle = "arraste os controles deslizantes".into();
             col.y = (h * 0.13).max(row_h);
-            // sliders são mais altos (trilha + rótulo)
-            let rows = Setting::ALL.len() as f32 + 1.0;
             col.row_h = 62.0 * s;
-            col.fit(rows, h, min_row);
-            for set in Setting::ALL {
-                let value = set.value(config);
-                let i = if set.is_bool() {
-                    col.push(
-                        &mut items,
-                        set.label(),
-                        Action::Adjust(set, 0),
-                        ItemKind::Toggle { on: set.get(config) >= 0.5 },
-                    )
-                } else {
-                    col.push(
-                        &mut items,
-                        set.label(),
-                        Action::Slide(set, set.fraction(config)),
-                        ItemKind::Slider { fraction: set.fraction(config) },
-                    )
-                };
-                items[i].value = value;
+            let header_h = 30.0 * s;
+            for (name, settings) in SECTIONS {
+                if *name == "Toque" && !st.touch_platform {
+                    continue;
+                }
+                items.push(item(
+                    Rect { x, y: col.y, w: bw, h: header_h },
+                    *name,
+                    Action::None,
+                    ItemKind::Header,
+                ));
+                col.y += header_h + gap * 0.5;
+                for &set in *settings {
+                    let value = set.value(config);
+                    let i = if set.is_bool() {
+                        col.push(
+                            &mut items,
+                            set.label(),
+                            Action::Adjust(set, 0),
+                            ItemKind::Toggle { on: set.get(config) >= 0.5 },
+                        )
+                    } else {
+                        col.push(
+                            &mut items,
+                            set.label(),
+                            Action::Slide(set, set.fraction(config)),
+                            ItemKind::Slider { fraction: set.fraction(config) },
+                        )
+                    };
+                    items[i].value = value;
+                }
+                col.y += gap;
             }
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
         }
@@ -399,18 +447,22 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             let side = col.row_h;
             for r in &st.recent {
                 let y = col.y;
+                let confirming = st.confirm_remove == Some(r.hash);
+                let rm_w = if confirming { side * 2.2 } else { side };
                 items.push(item(
-                    Rect { x, y, w: bw - side - gap, h: col.row_h },
+                    Rect { x, y, w: bw - rm_w - gap, h: col.row_h },
                     r.name.clone(),
                     Action::OpenRecent(r.hash),
                     ItemKind::Button,
                 ));
-                items.push(item(
-                    Rect { x: x + bw - side, y, w: side, h: col.row_h },
-                    "×",
+                let mut rm = item(
+                    Rect { x: x + bw - rm_w, y, w: rm_w, h: col.row_h },
+                    if confirming { "Apagar?" } else { "×" },
                     Action::RemoveRecent(r.hash),
                     ItemKind::Danger,
-                ));
+                );
+                rm.active = confirming;
+                items.push(rm);
                 col.y += col.row_h + gap;
             }
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
@@ -432,7 +484,53 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
         }
     }
-    Layout { title, subtitle, items, ui_scale: s, font, radius: 12.0 * s }
+    let content_h = items.iter().map(|i| i.rect.y + i.rect.h).fold(0.0, f32::max) + gap;
+    Layout { title, subtitle, items, ui_scale: s, font, radius: 12.0 * s, content_h }
+}
+
+/// Itens que podem ser selecionados por teclado/gamepad (têm ação).
+pub fn selectable(layout: &Layout) -> Vec<usize> {
+    layout
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.action != Action::None && i.kind != ItemKind::Header)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Próximo item selecionável na direção `dir` (+1 baixo, −1 cima), com volta nas pontas.
+pub fn next_selectable(layout: &Layout, current: Option<usize>, dir: i32) -> Option<usize> {
+    let sel = selectable(layout);
+    if sel.is_empty() {
+        return None;
+    }
+    let Some(cur) = current else { return Some(if dir >= 0 { sel[0] } else { sel[sel.len() - 1] }) };
+    let pos = sel.iter().position(|&i| i == cur).unwrap_or(0) as i32;
+    let n = sel.len() as i32;
+    Some(sel[((pos + dir) % n + n) as usize % sel.len()])
+}
+
+/// Ação de "ativar" o item selecionado (Enter/A); para sliders, `dir` ajusta em passos.
+pub fn activate(layout: &Layout, index: usize, dir: i32) -> Option<Action> {
+    let it = layout.items.get(index)?;
+    match (&it.kind, &it.action) {
+        (ItemKind::Slider { .. }, Action::Slide(s, _)) => {
+            if dir == 0 {
+                None
+            } else {
+                Some(Action::Adjust(*s, dir.signum() as i8))
+            }
+        }
+        (_, Action::None) => None,
+        _ => {
+            if dir == 0 {
+                Some(it.action.clone())
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// Ação do item sob o ponto, se houver. Para sliders, a fração vem da posição horizontal.
@@ -487,6 +585,7 @@ mod tests {
             recent: vec![RecentRom { hash: 1, name: "a".into() }, RecentRom { hash: 2, name: "b".into() }],
             version: "0.2.0".into(),
             slots: [true, false, false],
+            touch_platform: true,
             ..Default::default()
         }
     }
@@ -494,12 +593,9 @@ mod tests {
     fn fits(l: &Layout, w: f32, h: f32) {
         for i in &l.items {
             assert!(i.rect.x >= 0.0 && i.rect.y >= 0.0, "{:?}", i);
-            assert!(
-                i.rect.x + i.rect.w <= w + 0.5 && i.rect.y + i.rect.h <= h + 0.5,
-                "{} sai da tela {w}x{h}: {:?}",
-                i.label,
-                i.rect
-            );
+            assert!(i.rect.x + i.rect.w <= w + 0.5, "{} sai da tela {w}x{h}: {:?}", i.label, i.rect);
+            // verticalmente pode passar: a tela rola (content_h diz quanto)
+            assert!(i.rect.y + i.rect.h <= l.content_h + 0.5);
         }
     }
 
@@ -621,6 +717,35 @@ mod tests {
         let l = layout(Screen::Paused, 1080.0, 2340.0, &c, 2.6, &st);
         let reset = l.items.iter().find(|i| i.action == Action::Reset).unwrap();
         assert!(reset.label.contains("Confirmar") && reset.active);
+    }
+
+    #[test]
+    fn keyboard_navigation_and_scroll_content() {
+        let c = Config::default();
+        let l = layout(Screen::Settings, 2340.0, 1080.0, &c, 2.6, &state());
+        assert!(l.content_h > 1080.0, "ajustes em paisagem rolam em vez de espremer: {}", l.content_h);
+        for i in l.items.iter().filter(|i| i.kind != ItemKind::Header) {
+            assert!(i.rect.h >= 2.0 * l.font, "linha alta o bastante para o texto: {}", i.label);
+        }
+        let first = next_selectable(&l, None, 1).unwrap();
+        let second = next_selectable(&l, Some(first), 1).unwrap();
+        assert!(second > first);
+        assert_eq!(
+            next_selectable(&l, Some(first), -1),
+            Some(*selectable(&l).last().unwrap()),
+            "volta nas pontas"
+        );
+        // slider: Enter não faz nada, ←/→ ajusta
+        assert_eq!(activate(&l, first, 0), None);
+        assert!(matches!(activate(&l, first, 1), Some(Action::Adjust(_, 1))));
+        let back = l.items.iter().position(|i| i.action == Action::Back).unwrap();
+        assert_eq!(activate(&l, back, 0), Some(Action::Back));
+        // carregando: "Abrir ROM" vira inerte
+        let mut st = state();
+        st.loading = true;
+        let l = layout(Screen::Start, 1080.0, 2340.0, &c, 2.6, &st);
+        assert!(l.items.iter().any(|i| i.label == "Abrindo…" && i.action == Action::None));
+        assert!(!selectable(&l).contains(&0));
     }
 
     #[test]

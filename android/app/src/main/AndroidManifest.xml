@@ -6,17 +6,29 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/backup_rules"
         android:hasCode="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density|locale|layoutDirection|fontScale|colorMode|mcc|mnc|touchscreen|fontWeightAdjustment|grammaticalGender"
             android:theme="@style/Theme.RNFE">
             <meta-data android:name="android.app.lib_name" android:value="rnfe_android" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- "Abrir com" para arquivos .nes (content:// e file://) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.nes" />
+                <data android:pathPattern=".*\\.NES" />
             </intent-filter>
         </activity>
     </application>

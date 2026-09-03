@@ -187,41 +187,21 @@ impl Ui {
         self.draw_text(fb, w, h, &s, size, x, y, color);
     }
 
-    /// Botão retangular grande com texto centralizado.
-    pub fn draw_button_rect(
-        &mut self,
-        fb: &mut [u8],
-        w: u32,
-        h: u32,
-        r: &Rect,
-        text: &str,
-        size: f32,
-        hot: bool,
-        theme: &Theme,
-    ) {
-        let (x, y, bw, bh) = (r.x as i32, r.y as i32, r.w as i32, r.h as i32);
-        fill_rect(fb, w, h, x, y, bw, bh, if hot { theme.button_hot } else { theme.button });
-        outline(fb, w, h, x, y, bw, bh, theme.border);
-        let tw = self.text_width(text, size);
-        self.draw_text(
-            fb,
-            w,
-            h,
-            text,
-            size,
-            x + (bw - tw) / 2,
-            y + (bh - size as i32) / 2 - size as i32 / 8,
-            theme.text,
-        );
-    }
-
-    /// Caixa de mensagem temporária, no rodapé.
-    pub fn draw_toast(&mut self, fb: &mut [u8], w: u32, h: u32, msg: &str, size: f32) {
-        let tw = self.text_width(msg, size);
+    /// Caixa de mensagem temporária: no rodapé, ou em `y` (px) se dado.
+    pub fn draw_toast(&mut self, fb: &mut [u8], w: u32, h: u32, msg: &str, size: f32, y: Option<f32>) {
+        let max_w = w as f32 * 0.9;
+        let pad = (size * 0.7) as i32;
+        let tw = self.text_width(msg, size).min(max_w as i32 - pad * 2);
         let tx = (w as i32 - tw) / 2;
-        let ty = h as i32 - (size * 3.0) as i32;
-        fill_rect(fb, w, h, tx - 12, ty - 6, tw + 24, size as i32 + 14, [0, 0, 0, 200]);
-        self.draw_text(fb, w, h, msg, size, tx, ty, [255, 255, 255, 255]);
+        let ty = y.map(|y| y as i32).unwrap_or(h as i32 - (size * 3.0) as i32);
+        let r = Rect {
+            x: (tx - pad) as f32,
+            y: (ty - pad / 2) as f32,
+            w: (tw + pad * 2) as f32,
+            h: size + pad as f32,
+        };
+        fill_round_rect(fb, w, h, &r, size * 0.4, [0, 0, 0, 210]);
+        self.draw_text_clipped(fb, w, h, msg, size, tx, ty, tw, [255, 255, 255, 255]);
     }
 
     /// Controles de toque translúcidos; botões pressionados ficam mais claros.
@@ -242,6 +222,14 @@ impl Ui {
         let col = |b: Buttons| if pressed.0 & b.0 != 0 { hot } else { base };
         let d = &layout.dpad;
         let arm = d.r * 0.36;
+        // disco tênue mostrando a área que responde ao d-pad
+        fill_circle(
+            fb,
+            w,
+            h,
+            &Circle { cx: d.cx, cy: d.cy, r: d.r * 1.15 },
+            [base[0], base[1], base[2], a / 4],
+        );
         if high_contrast {
             // contorno escuro para separar do jogo
             let dark = [0, 0, 0, 200];
@@ -279,10 +267,11 @@ impl Ui {
         }
         fill_circle(fb, w, h, &layout.a, col(Buttons::A));
         fill_circle(fb, w, h, &layout.b, col(Buttons::B));
-        fill_rect_r(fb, w, h, &layout.start, col(Buttons::START));
-        fill_rect_r(fb, w, h, &layout.select, col(Buttons::SELECT));
-        fill_rect_r(fb, w, h, &layout.menu, [base[0], base[1], base[2], a / 2 + 20]);
-        let label_color = if high_contrast { [0, 0, 0, 255] } else { [255, 255, 255, 220] };
+        fill_round_rect(fb, w, h, &layout.start, layout.start.h / 2.0, col(Buttons::START));
+        fill_round_rect(fb, w, h, &layout.select, layout.select.h / 2.0, col(Buttons::SELECT));
+        fill_round_rect(fb, w, h, &layout.menu, layout.menu.h / 2.0, base);
+        // rótulos escuros (o disco é claro), legíveis sobre céu azul ou fundo preto
+        let label_color = [0, 0, 0, 230];
         let label = |ui: &mut Ui, fb: &mut [u8], text: &str, cx: f32, cy: f32, size: f32| {
             let tw = ui.text_width(text, size);
             ui.draw_text(fb, w, h, text, size, cx as i32 - tw / 2, cy as i32 - size as i32 / 2, label_color);
@@ -348,10 +337,6 @@ fn fill_rect_f(fb: &mut [u8], w: u32, h: u32, x: f32, y: f32, rw: f32, rh: f32, 
     fill_rect(fb, w, h, x as i32, y as i32, rw as i32, rh as i32, color);
 }
 
-fn fill_rect_r(fb: &mut [u8], w: u32, h: u32, r: &Rect, color: [u8; 4]) {
-    fill_rect_f(fb, w, h, r.x, r.y, r.w, r.h, color);
-}
-
 fn fill_circle(fb: &mut [u8], w: u32, h: u32, c: &Circle, color: [u8; 4]) {
     let r2 = c.r * c.r;
     let y0 = (c.cy - c.r).max(0.0) as i32;
@@ -415,30 +400,6 @@ pub fn fill_round_rect(fb: &mut [u8], w: u32, h: u32, r: &Rect, radius: f32, col
     }
 }
 
-/// Contorno arredondado (2 px) por diferença de dois retângulos.
-pub fn stroke_round_rect(fb: &mut [u8], w: u32, h: u32, r: &Rect, radius: f32, color: [u8; 4], t: f32) {
-    // desenha o anel em 4 fatias finas: simples e suficiente para bordas de 2 px
-    let outer = *r;
-    fill_round_rect(fb, w, h, &Rect { x: outer.x, y: outer.y, w: outer.w, h: t }, 0.0, color);
-    fill_round_rect(fb, w, h, &Rect { x: outer.x, y: outer.y + outer.h - t, w: outer.w, h: t }, 0.0, color);
-    fill_round_rect(
-        fb,
-        w,
-        h,
-        &Rect { x: outer.x, y: outer.y + radius, w: t, h: outer.h - radius * 2.0 },
-        0.0,
-        color,
-    );
-    fill_round_rect(
-        fb,
-        w,
-        h,
-        &Rect { x: outer.x + outer.w - t, y: outer.y + radius, w: t, h: outer.h - radius * 2.0 },
-        0.0,
-        color,
-    );
-}
-
 impl Ui {
     /// Um item de menu, conforme o tipo: botão, destaque, perigo, slider, toggle, slot, título.
     pub fn draw_item(
@@ -478,27 +439,35 @@ impl Ui {
                 if hot || it.active { theme.danger } else { theme.button },
                 if hot || it.active { [255, 255, 255, 255] } else { theme.danger_text },
             ),
-            _ => (if hot || it.active { theme.button_hot } else { theme.button }, theme.text),
+            // "ativo" (turbo ligado) não muda o fundo: a pílula do toggle já mostra o estado
+            _ => (if hot { theme.button_hot } else { theme.button }, theme.text),
         };
-        fill_round_rect(fb, w, h, &r, rad, fill);
         if theme.outline {
-            stroke_round_rect(fb, w, h, &r, rad, theme.border, 2.0 * layout.ui_scale.max(1.0));
+            // anel: retângulo externo na cor da borda, interno encolhido na cor do fundo
+            let t = 2.0 * layout.ui_scale.max(1.0);
+            fill_round_rect(fb, w, h, &r, rad, theme.border);
+            let inner = Rect { x: r.x + t, y: r.y + t, w: r.w - 2.0 * t, h: r.h - 2.0 * t };
+            fill_round_rect(fb, w, h, &inner, (rad - t).max(0.0), fill);
+        } else {
+            fill_round_rect(fb, w, h, &r, rad, fill);
         }
         let ty = |size: f32, cy: f32| (cy - size * 0.55) as i32;
         match &it.kind {
             ItemKind::Slider { fraction } => {
-                // rótulo em cima à esquerda, valor à direita, trilha embaixo
+                // rótulo em cima à esquerda, valor à direita, trilha embaixo (mesmo recuo)
                 let cy = r.y + r.h * 0.30;
-                let vw = self.text_width(&it.value, font * 0.9);
+                let t = rnfe_frontend::menu::slider_track(&r, layout);
+                let vw = self.text_width(&it.value, font);
+                let max_w = (t.w - vw as f32 - pad) as i32;
                 self.draw_text_clipped(
                     fb,
                     w,
                     h,
                     &it.label,
-                    font * 0.9,
-                    (r.x + pad) as i32,
-                    ty(font * 0.9, cy),
-                    (r.w - pad * 3.0 - vw as f32) as i32,
+                    font,
+                    t.x as i32,
+                    ty(font, cy),
+                    max_w,
                     text_color,
                 );
                 self.draw_text(
@@ -506,18 +475,23 @@ impl Ui {
                     w,
                     h,
                     &it.value,
-                    font * 0.9,
-                    (r.x + r.w - pad - vw as f32) as i32,
-                    ty(font * 0.9, cy),
+                    font,
+                    (t.x + t.w - vw as f32) as i32,
+                    ty(font, cy),
                     theme.accent,
                 );
-                let t = rnfe_frontend::menu::slider_track(&r, layout);
                 fill_round_rect(fb, w, h, &t, t.h / 2.0, theme.track);
                 let filled = Rect { x: t.x, y: t.y, w: t.w * fraction, h: t.h };
                 fill_round_rect(fb, w, h, &filled, t.h / 2.0, theme.accent);
                 let kr = t.h * 1.1;
                 let knob = Circle { cx: t.x + t.w * fraction, cy: t.y + t.h / 2.0, r: kr };
-                fill_circle(fb, w, h, &Circle { cx: knob.cx, cy: knob.cy + 2.0, r: kr }, [0, 0, 0, 80]);
+                fill_circle(
+                    fb,
+                    w,
+                    h,
+                    &Circle { cx: knob.cx, cy: knob.cy + 2.0 * layout.ui_scale, r: kr },
+                    [0, 0, 0, 80],
+                );
                 fill_circle(fb, w, h, &knob, theme.on_accent);
             }
             ItemKind::Toggle { on } => {

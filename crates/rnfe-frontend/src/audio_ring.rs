@@ -59,7 +59,27 @@ impl AudioRing {
         n
     }
 
-    /// Preenche `out`; em underrun repete a última amostra e conta.
+    /// Escreve só o que couber abaixo de `max_len` amostras na fila (o excesso — o mais novo —
+    /// é descartado). Só o produtor toca nos índices dele: mantém o SPSC.
+    pub fn push_capped(&self, samples: &[f32], max_len: usize) -> usize {
+        let room = max_len.saturating_sub(self.len());
+        let n = samples.len().min(room);
+        self.push(&samples[..n])
+    }
+
+    /// Enche com silêncio até `n` amostras: partida/retomada absorvem o jitter do laço sem
+    /// underrun (a latência-alvo vira piso, não só teto).
+    pub fn prime(&self, n: usize) {
+        let len = self.len();
+        if len < n {
+            let zeros = vec![0.0f32; n - len];
+            self.push(&zeros);
+        }
+        self.last.store(0, Ordering::Relaxed);
+    }
+
+    /// Preenche `out`; em underrun decai a última amostra até o silêncio (sem DC preso nem
+    /// degrau na volta) e conta.
     pub fn pop(&self, out: &mut [f32]) {
         let tail = self.tail.load(Ordering::Acquire);
         let mut head = self.head.load(Ordering::Relaxed);
@@ -76,8 +96,10 @@ impl AudioRing {
         if n < out.len() {
             self.underruns.fetch_add(1, Ordering::Relaxed);
             for o in &mut out[n..] {
+                last *= 0.98; // ~5 ms até o silêncio
                 *o = last;
             }
+            self.last.store(last.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -121,13 +143,32 @@ mod tests {
     }
 
     #[test]
-    fn underrun_repeats_last_sample() {
+    fn underrun_decays_last_sample() {
         let r = AudioRing::new(4);
         r.push(&[0.5]);
         let mut out = [9.0; 3];
         r.pop(&mut out);
-        assert_eq!(out, [0.5, 0.5, 0.5]);
+        assert_eq!(out[0], 0.5);
+        assert!(out[1] < 0.5 && out[2] < out[1] && out[2] > 0.0, "decai: {out:?}");
         assert_eq!(r.underruns(), 1);
+        let mut more = [9.0; 400];
+        r.pop(&mut more);
+        assert!(more[399].abs() < 1e-3, "silêncio depois de ~5 ms");
+    }
+
+    #[test]
+    fn prime_and_capped_push() {
+        let r = AudioRing::new(64);
+        r.prime(10);
+        assert_eq!(r.len(), 10);
+        r.prime(4);
+        assert_eq!(r.len(), 10, "prime nunca descarta");
+        assert_eq!(r.push_capped(&[1.0; 20], 16), 6, "só até o teto");
+        assert_eq!(r.len(), 16);
+        let mut out = [0.0; 16];
+        r.pop(&mut out);
+        assert_eq!(&out[..10], &[0.0; 10]);
+        assert_eq!(&out[10..], &[1.0; 6]);
     }
 
     #[test]

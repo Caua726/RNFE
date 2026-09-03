@@ -70,52 +70,47 @@ impl TouchLayout {
         let pill_w = unit * 0.16 * scale;
         let pill_h = unit * 0.06 * scale;
         let m = unit * 0.05; // margem
+        // Faixa de gesto do sistema na borda inferior (Android): nada de botão ali
+        let inset = (unit * 0.06).max(24.0);
+        let (dpad, a, b, start, select, menu);
         if portrait {
-            // Zona de controle: abaixo da imagem
+            // Zona de controle: abaixo da imagem. MENU no topo da zona (fora do HUD do jogo),
+            // START/SELECT logo acima da faixa de gesto, d-pad e A/B entre os dois.
             let img_h = img_bottom.clamp(0.0, h);
-            let zone_top = img_h + m;
-            let zone_h = (h - zone_top).max(dpad_r * 2.5);
-            let cy = zone_top + zone_h * 0.45;
-            let dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
-            let a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
-            let b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
-            let py = h - m - pill_h;
-            let select = Rect { x: w * 0.5 - pill_w - m * 0.5, y: py, w: pill_w, h: pill_h };
-            let start = Rect { x: w * 0.5 + m * 0.5, y: py, w: pill_w, h: pill_h };
-            let menu = Rect { x: w - m - pill_w, y: m * 0.5, w: pill_w, h: pill_h };
-            TouchLayout {
-                width: w,
-                height: h,
-                portrait,
-                dpad,
-                dpad_dead: dpad_r * 0.25,
-                a,
-                b,
-                start,
-                select,
-                menu,
-            }
+            let zone_top = img_h + m * 0.6;
+            menu = Rect { x: w * 0.5 - pill_w * 0.5, y: zone_top, w: pill_w, h: pill_h };
+            let py = (h - inset - pill_h).max(zone_top + pill_h * 2.0);
+            select = Rect { x: w * 0.5 - pill_w - m * 0.5, y: py, w: pill_w, h: pill_h };
+            start = Rect { x: w * 0.5 + m * 0.5, y: py, w: pill_w, h: pill_h };
+            let top = menu.y + menu.h + m;
+            let bottom = py - m;
+            let cy = (top + (bottom - top) * 0.55).clamp(top + dpad_r, (bottom - dpad_r).max(top + dpad_r));
+            dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
+            a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
+            b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
         } else {
-            let cy = h * 0.62;
-            let dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
-            let a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
-            let b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
-            let py = h - m - pill_h;
-            let select = Rect { x: w * 0.5 - pill_w - m * 0.5, y: py, w: pill_w, h: pill_h };
-            let start = Rect { x: w * 0.5 + m * 0.5, y: py, w: pill_w, h: pill_h };
-            let menu = Rect { x: w - m - pill_w, y: m * 0.5, w: pill_w, h: pill_h };
-            TouchLayout {
-                width: w,
-                height: h,
-                portrait,
-                dpad,
-                dpad_dead: dpad_r * 0.25,
-                a,
-                b,
-                start,
-                select,
-                menu,
-            }
+            // Paisagem: imagem no centro, controles nas calhas laterais; START/SELECT abaixo do
+            // d-pad e de A/B (nunca sobre a imagem), MENU no canto superior esquerdo.
+            let cy = h * 0.52;
+            dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
+            a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
+            b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
+            let py = (cy + dpad_r + m * 0.6).min(h - inset - pill_h);
+            select = Rect { x: dpad.cx - pill_w * 0.5, y: py, w: pill_w, h: pill_h };
+            start = Rect { x: (a.cx + b.cx) * 0.5 - pill_w * 0.5, y: py, w: pill_w, h: pill_h };
+            menu = Rect { x: m, y: m * 0.5, w: pill_w, h: pill_h };
+        }
+        TouchLayout {
+            width: w,
+            height: h,
+            portrait,
+            dpad,
+            dpad_dead: dpad_r * 0.25,
+            a,
+            b,
+            start,
+            select,
+            menu,
         }
     }
 
@@ -162,6 +157,20 @@ impl TouchLayout {
 
     pub fn special(&self, x: f32, y: f32) -> Option<Special> {
         self.menu.contains(x, y).then_some(Special::Menu)
+    }
+
+    /// Retângulos onde o sistema não deve capturar gestos de borda (Android): d-pad e A/B.
+    pub fn gesture_exclusion(&self) -> [Rect; 2] {
+        let d = &self.dpad;
+        let reach = d.r * 1.3;
+        let ab_x0 = (self.b.cx - self.b.r * 1.3).min(self.a.cx - self.a.r * 1.3);
+        let ab_x1 = (self.a.cx + self.a.r * 1.3).max(self.b.cx + self.b.r * 1.3);
+        let ab_y0 = (self.a.cy - self.a.r * 1.3).min(self.b.cy - self.b.r * 1.3);
+        let ab_y1 = (self.a.cy + self.a.r * 1.3).max(self.b.cy + self.b.r * 1.3);
+        [
+            Rect { x: (d.cx - reach).max(0.0), y: d.cy - reach, w: reach * 2.0, h: reach * 2.0 },
+            Rect { x: ab_x0, y: ab_y0, w: ab_x1 - ab_x0, h: ab_y1 - ab_y0 },
+        ]
     }
 }
 
@@ -226,8 +235,13 @@ mod tests {
         assert!(l.portrait);
         assert!(l.dpad.cy - l.dpad.r > 1080.0 * 240.0 / 256.0, "d-pad abaixo da imagem");
         assert!(l.a.cx + l.a.r <= 1080.0 && l.b.cx - l.b.r >= 0.0);
-        assert!(l.start.y + l.start.h <= 2340.0);
-        assert!(l.menu.y >= 0.0);
+        assert!(l.start.y + l.start.h <= 2340.0 - 24.0, "START acima da faixa de gesto");
+        assert!(l.menu.y > 1080.0 * 240.0 / 256.0, "MENU fora da imagem em retrato");
+        assert!(l.dpad.cy - l.dpad.r > l.menu.y + l.menu.h, "d-pad abaixo do MENU");
+        assert!(l.dpad.cy + l.dpad.r < l.start.y, "d-pad acima de START/SELECT");
+        let ex = l.gesture_exclusion();
+        assert!(ex[0].x <= 1.0 && ex[0].contains(l.dpad.cx, l.dpad.cy));
+        assert!(ex[1].contains(l.a.cx, l.a.cy) && ex[1].contains(l.b.cx, l.b.cy));
     }
 
     #[test]
@@ -246,6 +260,13 @@ mod tests {
         assert!(!l.portrait);
         assert!(l.dpad.cx < 2340.0 * 0.3);
         assert!(l.a.cx > 2340.0 * 0.7);
+        // imagem 8:7 centralizada: x 512..1828; START/SELECT/d-pad/A/B ficam nas calhas
+        let (img_x0, img_x1) = (512.0, 1828.0);
+        assert!(l.select.x + l.select.w < img_x0, "SELECT na calha esquerda");
+        assert!(l.start.x > img_x1, "START na calha direita");
+        assert!(l.dpad.cx + l.dpad.r < img_x0 && l.b.cx - l.b.r > img_x1);
+        assert!(l.start.y + l.start.h <= 1080.0 - 24.0);
+        assert!(l.menu.x + l.menu.w < img_x0);
     }
 
     #[test]

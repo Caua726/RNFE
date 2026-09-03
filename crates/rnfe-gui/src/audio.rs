@@ -23,36 +23,74 @@ impl AudioOut {
     /// Abre o dispositivo padrão. `None` se não há áudio (a emulação segue muda).
     pub fn start() -> Option<AudioOut> {
         let host = cpal::default_host();
-        let device = host.default_output_device()?;
-        let config = device.default_output_config().ok()?;
+        let Some(device) = host.default_output_device() else {
+            log::warn!("áudio: nenhum dispositivo de saída");
+            return None;
+        };
+        let config = match device.default_output_config() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("áudio: sem configuração padrão: {e}");
+                return None;
+            }
+        };
         let sample_rate = config.sample_rate();
-        let channels = config.channels() as usize;
+        let channels = config.channels().max(1) as usize;
         let ring = AudioRing::new(sample_rate as usize / 4); // 250 ms de capacidade
-        let reader = ring.clone();
         let dead = Arc::new(AtomicBool::new(false));
-        let dead_cb = dead.clone();
-        let mut mono: Vec<f32> = Vec::new();
-        let stream = device
-            .build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let frames = data.len() / channels.max(1);
-                    mono.resize(frames, 0.0);
-                    reader.pop(&mut mono);
-                    for (frame, &s) in data.chunks_mut(channels.max(1)).zip(mono.iter()) {
-                        frame.fill(s);
-                    }
-                },
-                move |err| {
-                    log::error!("áudio: {err}");
-                    dead_cb.store(true, Ordering::Relaxed);
-                },
-                None,
-            )
-            .ok()?;
-        stream.play().ok()?;
-        log::info!("áudio: {sample_rate} Hz, {channels} canais");
+        let format = config.sample_format();
+        let stream_config: cpal::StreamConfig = config.into();
+        let built = match format {
+            cpal::SampleFormat::F32 => Self::build::<f32>(&device, &stream_config, channels, &ring, &dead),
+            cpal::SampleFormat::I16 => Self::build::<i16>(&device, &stream_config, channels, &ring, &dead),
+            cpal::SampleFormat::U16 => Self::build::<u16>(&device, &stream_config, channels, &ring, &dead),
+            other => {
+                log::warn!("áudio: formato {other:?} sem suporte");
+                return None;
+            }
+        };
+        let stream = match built {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("áudio: {e}");
+                return None;
+            }
+        };
+        if let Err(e) = stream.play() {
+            log::error!("áudio: play: {e}");
+            return None;
+        }
+        log::info!("áudio: {sample_rate} Hz, {channels} canais, {format:?}");
         Some(AudioOut { _stream: stream, ring, sample_rate, channels, dead })
+    }
+
+    fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
+        device: &cpal::Device,
+        config: &cpal::StreamConfig,
+        channels: usize,
+        ring: &Arc<AudioRing>,
+        dead: &Arc<AtomicBool>,
+    ) -> Result<cpal::Stream, cpal::BuildStreamError> {
+        let reader = ring.clone();
+        let dead_cb = dead.clone();
+        let mut mono: Vec<f32> = Vec::with_capacity(8192);
+        device.build_output_stream(
+            config,
+            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                let frames = data.len() / channels;
+                mono.resize(frames, 0.0);
+                reader.pop(&mut mono);
+                for (frame, &s) in data.chunks_mut(channels).zip(mono.iter()) {
+                    let v = T::from_sample(s);
+                    frame.fill(v);
+                }
+            },
+            move |err| {
+                log::error!("áudio: {err}");
+                dead_cb.store(true, Ordering::Relaxed);
+            },
+            None,
+        )
     }
 
     pub fn is_dead(&self) -> bool {

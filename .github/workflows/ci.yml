@@ -115,6 +115,9 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
       - name: Keystore de release (secrets; sem elas, assina com a de debug)
         env:
           KS_B64: ${{ secrets.RNFE_KEYSTORE_BASE64 }}

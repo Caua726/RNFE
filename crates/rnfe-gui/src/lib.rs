@@ -20,6 +20,8 @@ pub type RomPicker = Box<dyn Fn(EventLoopProxy<UserEvent>) + Send + Sync>;
 
 /// Vibração curta ao tocar num botão (Android via JNI; outras plataformas não têm).
 pub type Haptic = Box<dyn Fn() + Send + Sync>;
+/// Retângulos (l, t, r, b em px) onde o sistema não deve capturar gestos de borda (Android).
+pub type GestureExclusion = Box<dyn Fn([[i32; 4]; 2]) + Send + Sync>;
 
 /// O que o binário entrega ao frontend para começar.
 pub struct Launch {
@@ -31,11 +33,19 @@ pub struct Launch {
     /// Seletor de ROM próprio (Android usa o SAF por JNI).
     pub picker: Option<RomPicker>,
     pub haptic: Option<Haptic>,
+    pub gesture_exclusion: Option<GestureExclusion>,
 }
 
 impl Launch {
     pub fn new(storage: Box<dyn Storage>) -> Launch {
-        Launch { nes: None, rom_name: String::new(), storage, picker: None, haptic: None }
+        Launch {
+            nes: None,
+            rom_name: String::new(),
+            storage,
+            picker: None,
+            haptic: None,
+            gesture_exclusion: None,
+        }
     }
 }
 

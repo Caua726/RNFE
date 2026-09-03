@@ -1,0 +1,14 @@
+{
+  "name": "RNFE — emulador de NES",
+  "short_name": "RNFE",
+  "description": "Emulador de Famicom/NES em Rust, no navegador",
+  "start_url": "/RNFE/",
+  "scope": "/RNFE/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c0c10",
+  "theme_color": "#0c0c10",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
