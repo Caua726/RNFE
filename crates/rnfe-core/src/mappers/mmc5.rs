@@ -2,7 +2,11 @@
 //! (nametable extra, atributos estendidos ou RAM), tile de preenchimento, multiplicador,
 //! IRQ por scanline (detectada pelas 3 leituras iguais de nametable) e 2 pulsos + PCM.
 //!
-//! Não implementado ainda: a divisão vertical da tela (`$5200-$5202`).
+//! Divisão vertical (`$5200-$5202`): uma faixa de colunas de tiles (à esquerda ou à direita
+//! da coluna `$5200 & 31`) vem da ExRAM com rolagem vertical própria (`$5201`) e banco de CHR
+//! de 4 KB próprio (`$5202`), ignorando a rolagem horizontal. O MMC5 sabe em que coluna está
+//! contando as buscas de tile desde o começo da scanline (34 por linha: as 2 últimas são as
+//! primeiras colunas da linha seguinte).
 use super::{CartData, Mapper};
 use crate::cartridge::NtSource;
 
@@ -118,6 +122,17 @@ pub struct Mmc5 {
     exram: [u8; 1024],
     /// Byte da ExRAM do tile de fundo em curso (atributos estendidos).
     ext_tile: u8,
+    // Divisão vertical
+    split_ctrl: u8,
+    split_scroll: u8,
+    split_bank: u8,
+    /// Buscas de tile desde o começo da scanline (0-33).
+    tile_fetch: u8,
+    /// O tile em curso está na região dividida (vale para o atributo e o padrão seguintes).
+    split_active: bool,
+    /// Linha (com a rolagem `$5201`) e coluna de tela do tile em curso na região dividida.
+    split_y: u8,
+    split_col: u8,
     multiplicand: u8,
     multiplier: u8,
     // Detecção de scanline
@@ -155,6 +170,13 @@ impl Mmc5 {
             last_chr_b: false,
             exram: [0; 1024],
             ext_tile: 0,
+            split_ctrl: 0,
+            split_scroll: 0,
+            split_bank: 0,
+            tile_fetch: 0,
+            split_active: false,
+            split_y: 0,
+            split_col: 0,
             multiplicand: 0xFF,
             multiplier: 0xFF,
             last_nt_addr: 0,
@@ -209,6 +231,11 @@ impl Mmc5 {
 
     fn chr_bank_offset(&self, addr: u16, data: &CartData) -> usize {
         let use_b = if data.ppu_sprites_16 { !data.ppu_sprite_fetch } else { self.last_chr_b };
+        // Região dividida: banco de $5202 e a linha fina da rolagem própria
+        if self.split_active && !data.ppu_sprite_fetch {
+            let bank = self.split_bank as usize | ((self.chr_hi as usize & 3) << 8);
+            return bank * 0x1000 + (addr as usize & 0x0FF8) + (self.split_y as usize & 7);
+        }
         // Atributos estendidos: o fundo usa o banco de 4 KB do byte da ExRAM
         if self.exram_mode == 1 && !data.ppu_sprite_fetch {
             let bank = (self.ext_tile as usize & 0x3F) | ((self.chr_hi as usize & 3) << 6);
@@ -230,6 +257,8 @@ impl Mmc5 {
     }
 
     fn detect_scanline(&mut self) {
+        self.tile_fetch = 0;
+        self.split_active = false;
         if self.in_frame {
             self.scanline = self.scanline.wrapping_add(1);
             if self.scanline == self.irq_compare && self.irq_compare != 0 {
@@ -242,6 +271,7 @@ impl Mmc5 {
     }
 
     fn end_frame(&mut self) {
+        self.split_active = false;
         self.in_frame = false;
         self.scanline = 0;
         self.same_reads = 0;
@@ -308,6 +338,9 @@ impl Mapper for Mmc5 {
                 self.last_chr_b = i >= 8;
             }
             0x5130 => self.chr_hi = val & 3,
+            0x5200 => self.split_ctrl = val,
+            0x5201 => self.split_scroll = val,
+            0x5202 => self.split_bank = val,
             0x5203 => self.irq_compare = val,
             0x5204 => self.irq_enabled = val & 0x80 != 0,
             0x5205 => self.multiplicand = val,
@@ -381,6 +414,40 @@ impl Mapper for Mmc5 {
         let quadrant = (addr >> 10) as usize;
         let off = (addr & 0x03FF) as usize;
         let is_attr = off >= 0x3C0;
+        // Divisão vertical: decide por coluna de tela a cada busca de tile do fundo
+        if self.in_frame && !data.ppu_sprite_fetch {
+            if !is_attr {
+                let idx = self.tile_fetch;
+                self.tile_fetch = self.tile_fetch.saturating_add(1);
+                let (col, line) = if idx < 32 {
+                    (idx + 2, self.scanline)
+                } else if idx < 34 {
+                    (idx - 32, self.scanline.wrapping_add(1))
+                } else {
+                    (255, self.scanline)
+                };
+                let threshold = self.split_ctrl & 0x1F;
+                let right = self.split_ctrl & 0x40 != 0;
+                self.split_active = self.split_ctrl & 0x80 != 0
+                    && self.exram_mode < 2
+                    && col < 32
+                    && if right { col >= threshold } else { col < threshold };
+                if self.split_active {
+                    let y = (self.split_scroll as u16 + line as u16) % 240;
+                    self.split_y = y as u8;
+                    self.split_col = col;
+                    let row = (y / 8) as usize;
+                    return Some(NtSource::Value(self.exram[row * 32 + col as usize]));
+                }
+            } else if self.split_active {
+                let row = (self.split_y / 8) as usize;
+                let col = self.split_col as usize;
+                let attr = self.exram[0x3C0 + (row / 4) * 8 + col / 4];
+                let shift = ((row & 2) << 1) | (col & 2);
+                let pal = (attr >> shift) & 3;
+                return Some(NtSource::Value(pal * 0x55));
+            }
+        }
         // Atributos estendidos (modo 1): tile guarda o byte da ExRAM, atributo vem dele
         if self.exram_mode == 1 && !data.ppu_sprite_fetch {
             if !is_attr {
