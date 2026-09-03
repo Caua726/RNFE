@@ -53,8 +53,8 @@ M7, 03/09/2026 (g56, release, mínimo de 3 corridas de 1 500 frames):
 - BladeBuster (MMC3): **2,41 ms/frame** (415 fps, 6,9× tempo real) — F0 era 3,57 (1,48×; a meta de 2× não foi atingida), M2 3,8, M3 3,16
 - nestest: 3,12 ms · mmc3_test_2/1-clocking: 2,52 ms · VmHWM 4,2 MB
 - `bench --profile` BladeBuster: PPU 1,35 ms (55 %), APU 0,20 (8 %), CPU+bus ≈ 0,93 (37 %)
-- wasm 3,8 MB / 1,43 MB gzip; APK de debug 7,9 MB (sem strip; com strip no CI a partir de F5) — meta de 5 MB não medida ainda
-- Metas do pior caso: ≥ 125 fps num núcleo ✅ (415), RSS < 50 MB ✅ (4,2), wasm < 2 MB gzip ✅, APK < 5 MB ❓
+- wasm 3,8 MB / 1,43 MB gzip; APK de debug com strip: artefato de 2,4 MB no CI (era 7,9 MB sem strip)
+- Metas do pior caso: ≥ 125 fps num núcleo ✅ (415), RSS < 50 MB ✅ (4,2), wasm < 2 MB gzip ✅, APK < 5 MB ✅ (2,4)
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
