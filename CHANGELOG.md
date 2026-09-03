@@ -2,6 +2,13 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — F6 Mappers estendidos e áudio de expansão
+
+- F6-04 MMC5 (mapper 5): PRG em 4 modos com ROM/RAM por banco e PRG RAM até 64 KB protegida por `$5102/$5103`, CHR em 4 modos com conjuntos A/B (sprites 8×16 usam A para sprites e B para o fundo — a PPU informa a fase da busca via `CartData`), ExRAM (nametable, atributos estendidos com banco de 4 KB por tile, RAM da CPU), fill mode, multiplicador, IRQ por scanline detectada com 3 leituras iguais de nametable (`$5204` com in-frame e ack na leitura via `on_cpu_read`), 2 pulsos + PCM. Sem a divisão vertical.
+- F6-03 Namco 163 (mapper 19): CHR/nametables por registrador (CIRAM ou CHR), IRQ de 15 bits, RAM interna por `$4800/$F800`, proteção da PRG RAM, áudio wavetable de 1–8 canais. Infra `nt_source`/`nt_write` no trait `Mapper` (nametables pelo cartucho) e busca de NT no dot 1 na PPU.
+- F6-02 VRC6 (mappers 24/26): bancos, mirroring, PRG RAM, IRQ scanline/ciclo, 2 pulsos + serra, `$9003`.
+- F6-01 `Apu::clock(expansion)`: o áudio do cartucho entra só na amostra; Sunsoft 5B (3 tons do YM2149) no FME-7.
+
 ## Não publicado — F5 Android
 
 - F5-03 README: instalar o APK, abrir ROM pelo seletor do sistema, controles de toque/gamepad, onde ficam os saves.

@@ -25,10 +25,13 @@ pub mod mapper227;
 pub mod mmc1;
 pub mod mmc2;
 pub mod mmc3;
+pub mod mmc5;
+pub mod n163;
 pub mod nrom;
 pub mod uxrom;
+pub mod vrc6;
 
-use crate::cartridge::{Mirror, RomHeader};
+use crate::cartridge::{Mirror, NtSource, RomHeader};
 
 /// Conteúdo do cartucho: ROMs, RAMs e o que o header diz sobre elas.
 ///
@@ -55,6 +58,10 @@ pub struct CartData {
     pub prg_ram_dirty: bool,
     /// Ciclo de CPU da escrita em curso (o bus atualiza antes de `cpu_write`).
     pub cpu_cycle: u64,
+    /// A PPU está nos dots 257–320 (buscas de padrão de sprite). MMC5 troca o conjunto de CHR.
+    pub ppu_sprite_fetch: bool,
+    /// Sprites 8×16 (`$2000` bit 5).
+    pub ppu_sprites_16: bool,
 }
 
 impl CartData {
@@ -82,6 +89,8 @@ impl CartData {
             submapper: hdr.submapper,
             prg_ram_dirty: false,
             cpu_cycle: 0,
+            ppu_sprite_fetch: false,
+            ppu_sprites_16: false,
         }
     }
 
@@ -145,6 +154,9 @@ fn pad_pow2(mut v: Vec<u8>) -> Vec<u8> {
 pub trait Mapper {
     /// Leitura pela CPU (`$4020-$FFFF`). `None` = não mapeado (PRG RAM padrão ou open bus).
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8>;
+    /// Efeito colateral de uma leitura da CPU (registradores que limpam flags ao ler,
+    /// como `$5204` do MMC5). Chamado só pelo bus, nunca pelo debugger.
+    fn on_cpu_read(&mut self, _addr: u16) {}
     /// Escrita pela CPU. `false` = não tratada (cai na PRG RAM padrão em `$6000-$7FFF`).
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool;
     /// Offset físico em CHR para um endereço `$0000-$1FFF` da PPU.
@@ -159,6 +171,16 @@ pub trait Mapper {
     #[inline]
     fn ppu_write(&mut self, addr: u16, val: u8, data: &mut CartData) {
         data.chr_set(self.chr_offset(addr), val);
+    }
+    /// Nametables (`$2000-$2FFF`): `None` = mirroring padrão de `data.mirror` na VRAM da PPU.
+    /// `&mut self` porque alguns mappers observam essas leituras (MMC5 conta scanlines).
+    #[inline]
+    fn nt_source(&mut self, _addr: u16, _data: &CartData) -> Option<NtSource> {
+        None
+    }
+    /// Escrita em nametable tratada pelo mapper (ExRAM do MMC5). `false` = seguir `nt_source`.
+    fn nt_write(&mut self, _addr: u16, _val: u8, _data: &mut CartData) -> bool {
+        false
     }
     /// Borda de subida de A12 no barramento da PPU (já filtrada).
     fn a12_rise(&mut self) {}
@@ -204,9 +226,12 @@ pub enum MapperKind {
     Camerica(camerica::Camerica),
     Dxrom(dxrom::Dxrom),
     Mapper227(mapper227::Mapper227),
+    Vrc6(vrc6::Vrc6),
+    N163(n163::N163),
+    Mmc5(Box<mmc5::Mmc5>),
 }
 
-pub const SUPPORTED_MAPPERS: &[u16] = &[0, 1, 2, 3, 4, 7, 9, 11, 34, 66, 69, 71, 206, 227];
+pub const SUPPORTED_MAPPERS: &[u16] = &[0, 1, 2, 3, 4, 5, 7, 9, 11, 19, 24, 26, 34, 66, 69, 71, 206, 227];
 
 impl MapperKind {
     /// Cria o mapper para o `id`; `None` se não suportado.
@@ -226,6 +251,9 @@ impl MapperKind {
             71 => MapperKind::Camerica(camerica::Camerica::new()),
             206 => MapperKind::Dxrom(dxrom::Dxrom::new(data)),
             227 => MapperKind::Mapper227(mapper227::Mapper227::new()),
+            24 | 26 => MapperKind::Vrc6(vrc6::Vrc6::new(data)),
+            19 => MapperKind::N163(n163::N163::new(data)),
+            5 => MapperKind::Mmc5(Box::new(mmc5::Mmc5::new(data))),
             _ => return None,
         })
     }
@@ -246,6 +274,15 @@ impl MapperKind {
             MapperKind::Camerica(_) => "Camerica",
             MapperKind::Dxrom(_) => "DxROM",
             MapperKind::Mapper227(_) => "Mapper 227",
+            MapperKind::Vrc6(v) => {
+                if v.is_26() {
+                    "VRC6b"
+                } else {
+                    "VRC6a"
+                }
+            }
+            MapperKind::N163(_) => "Namco 163",
+            MapperKind::Mmc5(_) => "MMC5",
         }
     }
 }
@@ -267,6 +304,9 @@ macro_rules! dispatch {
             MapperKind::Camerica($m) => $e,
             MapperKind::Dxrom($m) => $e,
             MapperKind::Mapper227($m) => $e,
+            MapperKind::Vrc6($m) => $e,
+            MapperKind::N163($m) => $e,
+            MapperKind::Mmc5($m) => $e,
         }
     };
 }
@@ -275,6 +315,10 @@ impl Mapper for MapperKind {
     #[inline]
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         dispatch!(self, m => m.cpu_read(addr, data))
+    }
+    #[inline]
+    fn on_cpu_read(&mut self, addr: u16) {
+        dispatch!(self, m => m.on_cpu_read(addr))
     }
     #[inline]
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
@@ -291,6 +335,14 @@ impl Mapper for MapperKind {
     #[inline]
     fn ppu_write(&mut self, addr: u16, val: u8, data: &mut CartData) {
         dispatch!(self, m => m.ppu_write(addr, val, data))
+    }
+    #[inline]
+    fn nt_source(&mut self, addr: u16, data: &CartData) -> Option<NtSource> {
+        dispatch!(self, m => m.nt_source(addr, data))
+    }
+    #[inline]
+    fn nt_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
+        dispatch!(self, m => m.nt_write(addr, val, data))
     }
     #[inline]
     fn a12_rise(&mut self) {

@@ -152,3 +152,217 @@ fn fme7_wram_window() {
     cart.cpu_write(0xA000, 0x02); // ROM banco 2 (8 KB) = 2ª metade... do banco 16K nº 1
     assert_eq!(cart.cpu_read(0x6000), Some(1));
 }
+
+// ---------------------------------------------------------------- F6: VRC6 e 5B
+
+#[test]
+fn vrc6_banks_irq_and_audio() {
+    let mut cart = rom(24, 8, 0); // 128 KB, 16 bancos de 8 KB
+    assert_eq!(cart.cpu_read(0xE000), Some(7), "último banco de 16 KB (índice 7) fixo em $E000");
+    cart.cpu_write(0x8000, 2);
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    cart.cpu_write(0xC000, 9); // banco de 8 KB 9 = metade alta do banco de 16 KB 4
+    assert_eq!(cart.cpu_read(0xC000), Some(4));
+    // PRG RAM só com o bit 7 de $B003
+    assert_eq!(cart.cpu_read(0x6000), None);
+    cart.cpu_write(0xB003, 0x80);
+    cart.cpu_write(0x6000, 0x5A);
+    assert_eq!(cart.cpu_read(0x6000), Some(0x5A));
+
+    // IRQ em modo scanline: latch 0xFE → 2 clocks de 113⅔ ciclos até estourar
+    cart.cpu_write(0xF000, 0xFE);
+    cart.cpu_write(0xF001, 0x02);
+    for _ in 0..227 {
+        cart.cpu_clock();
+    }
+    assert!(!cart.irq_pending(), "ainda não");
+    for _ in 0..5 {
+        cart.cpu_clock();
+    }
+    assert!(cart.irq_pending(), "0xFE → 0xFF → estouro na 2ª scanline");
+    cart.cpu_write(0xF002, 0); // ack
+    assert!(!cart.irq_pending());
+
+    // Áudio: pulso 1 ligado, volume 15, duty 7 (metade) → saída > 0 em algum momento
+    cart.cpu_write(0x9000, 0x7F);
+    cart.cpu_write(0x9001, 0x10);
+    cart.cpu_write(0x9002, 0x80);
+    let mut max = 0.0f32;
+    for _ in 0..2000 {
+        cart.cpu_clock();
+        max = max.max(cart.audio_output());
+    }
+    assert!(max > 0.1, "pulso do VRC6 deveria soar: {max}");
+    cart.cpu_write(0x9003, 0x01); // halt
+    let v = cart.audio_output();
+    for _ in 0..100 {
+        cart.cpu_clock();
+    }
+    assert_eq!(cart.audio_output(), v, "congelado");
+}
+
+#[test]
+fn vrc6_mapper_26_swaps_a0_a1() {
+    let mut cart = rom(26, 4, 0);
+    // No mapper 26, $F002 (A1) faz o papel de $F001 (controle) e vice-versa
+    cart.cpu_write(0xF000, 0xFF);
+    cart.cpu_write(0xF002, 0x06); // = $F001 do 24: enable + cycle mode
+    cart.cpu_clock();
+    assert!(cart.irq_pending(), "modo ciclo com latch 0xFF estoura no 1º clock");
+    cart.cpu_write(0xF001, 0); // = $F002 do 24: ack
+    assert!(!cart.irq_pending());
+}
+
+#[test]
+fn sunsoft_5b_tone() {
+    let mut cart = rom(69, 2, 0);
+    cart.cpu_write(0x8000, 0x0F); // FME-7 cmd (irrelevante)
+    cart.cpu_write(0xC000, 0); // reg 0: período A baixo
+    cart.cpu_write(0xE000, 0x10);
+    cart.cpu_write(0xC000, 7); // mixer: tom A ligado (bit 0 = 0)
+    cart.cpu_write(0xE000, 0xFE);
+    cart.cpu_write(0xC000, 8); // volume A
+    cart.cpu_write(0xE000, 0x0F);
+    let mut seen_on = false;
+    let mut seen_off = false;
+    for _ in 0..1000 {
+        cart.cpu_clock();
+        let o = cart.audio_output();
+        if o > 0.05 {
+            seen_on = true;
+        } else {
+            seen_off = true;
+        }
+    }
+    assert!(seen_on && seen_off, "onda quadrada do 5B: on={seen_on} off={seen_off}");
+}
+
+#[test]
+fn n163_banks_nametables_irq_audio() {
+    let mut cart = rom(19, 8, 0); // horizontal
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0xE000, 5);
+    assert_eq!(cart.cpu_read(0x8000), Some(2), "banco de 8 KB 5 = metade alta do 16 KB 2");
+    // nametables: padrão segue o header (horizontal: $2000/$2400 → CIRAM 0, $2800/$2C00 → 1)
+    let mut ciram = [[0u8; 1024]; 4];
+    ciram[0][5] = 0xAA;
+    ciram[1][5] = 0xBB;
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0xAA);
+    assert_eq!(cart.nt_read(0x2405, &ciram), 0xAA);
+    assert_eq!(cart.nt_read(0x2805, &ciram), 0xBB);
+    cart.cpu_write(0xC000, 0xE1); // $2000 → CIRAM 1
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0xBB);
+    cart.cpu_write(0xC000, 0x00); // $2000 → CHR ROM banco 0 (CHR RAM aqui: zeros)
+    cart.chr_write(0x0005, 0x77);
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0x77);
+    cart.nt_write(0x2006, 0x66, &mut ciram);
+    assert_eq!(cart.chr_read(0x0006), 0x66, "escrita em NT mapeada para CHR RAM");
+
+    // IRQ: contador de 15 bits até $7FFF
+    cart.cpu_write(0x5000, 0xFD);
+    cart.cpu_write(0x5800, 0xFF); // $7FFD, enable
+    cart.cpu_clock();
+    assert!(!cart.irq_pending());
+    cart.cpu_clock();
+    assert!(cart.irq_pending());
+    assert_eq!(cart.cpu_read(0x5800), Some(0xFF));
+    cart.cpu_write(0x5800, 0x00); // ack + disable
+    assert!(!cart.irq_pending());
+
+    // Áudio: 1 canal (reg $7F = 0), onda quadrada na RAM $00-$0F (32 amostras), volume 15
+    cart.cpu_write(0xF800, 0x80); // endereço 0 com auto-incremento
+    for i in 0..16 {
+        cart.cpu_write(0x4800, if i < 8 { 0xFF } else { 0x00 });
+    }
+    cart.cpu_write(0xF800, 0x80 | 0x78); // canal 7
+    for v in [0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x0F] {
+        // freq $001000, fase 0, comprimento 256-128 = 32 amostras, offset 0, volume 15
+        cart.cpu_write(0x4800, v);
+    }
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for _ in 0..40_000 {
+        cart.cpu_clock();
+        let o = cart.audio_output();
+        lo = lo.min(o);
+        hi = hi.max(o);
+    }
+    assert!(hi > 0.1 && lo < -0.1, "onda do N163 deveria oscilar: {lo}..{hi}");
+    cart.cpu_write(0xE000, 0x40); // som desligado
+    assert_eq!(cart.audio_output(), 0.0);
+}
+
+#[test]
+fn mmc5_prg_modes_multiplier_fill_exram_and_scanlines() {
+    let mut cart = rom(5, 8, 0); // 128 KB = 16 bancos de 8 KB (valor = índice de 16 KB)
+    // power-on: modo 3, $5117 = $FF → último banco em $E000
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0x5100, 3);
+    cart.cpu_write(0x5114, 0x80 | 2); // $8000 ← banco 8 KB 2 (= 16 KB 1)
+    cart.cpu_write(0x5115, 0x80 | 5);
+    cart.cpu_write(0x5116, 0x80 | 9);
+    assert_eq!(cart.cpu_read(0x8000), Some(1));
+    assert_eq!(cart.cpu_read(0xA000), Some(2));
+    assert_eq!(cart.cpu_read(0xC000), Some(4));
+    cart.cpu_write(0x5100, 0); // 32 KB por $5117 = $FF → bancos 12-15
+    assert_eq!(cart.cpu_read(0x8000), Some(6));
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0x5100, 1); // 16 KB: $5115 (5 → par 4-5) e $5117
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    assert_eq!(cart.cpu_read(0xA000), Some(2));
+    assert_eq!(cart.cpu_read(0xC000), Some(7));
+
+    // PRG RAM: só grava com $5102 = 2 e $5103 = 1
+    cart.cpu_write(0x6000, 0x11);
+    assert_eq!(cart.cpu_read(0x6000), Some(0));
+    cart.cpu_write(0x5102, 2);
+    cart.cpu_write(0x5103, 1);
+    cart.cpu_write(0x6000, 0x11);
+    assert_eq!(cart.cpu_read(0x6000), Some(0x11));
+
+    // multiplicador
+    cart.cpu_write(0x5205, 200);
+    cart.cpu_write(0x5206, 3);
+    assert_eq!(cart.cpu_read(0x5205), Some((600 & 0xFF) as u8));
+    assert_eq!(cart.cpu_read(0x5206), Some((600u16 >> 8) as u8));
+
+    // nametables: $2000 fill, $2400 ExRAM, $2800 CIRAM 0, $2C00 CIRAM 1
+    let mut ciram = [[0u8; 1024]; 4];
+    ciram[1][0x10] = 0xC1;
+    cart.cpu_write(0x5105, 0b01_00_10_11);
+    cart.cpu_write(0x5106, 0x42);
+    cart.cpu_write(0x5107, 2);
+    assert_eq!(cart.nt_read(0x2010, &ciram), 0x42, "fill tile");
+    assert_eq!(cart.nt_read(0x23C5, &ciram), 0xAA, "fill attr 2 replicado");
+    cart.cpu_write(0x5104, 0); // ExRAM como nametable
+    cart.nt_write(0x2410, 0x77, &mut ciram);
+    assert_eq!(cart.nt_read(0x2410, &ciram), 0x77);
+    assert_eq!(cart.nt_read(0x2C10, &ciram), 0xC1);
+    cart.cpu_write(0x5104, 2); // ExRAM como RAM da CPU
+    assert_eq!(cart.cpu_read(0x5C10), Some(0x77));
+
+    // detecção de scanline: 3 leituras iguais → in_frame; depois cada trio conta uma linha
+    assert_eq!(cart.cpu_read(0x5204), Some(0x00));
+    cart.cpu_write(0x5203, 2);
+    cart.cpu_write(0x5204, 0x80);
+    for _ in 0..3 {
+        cart.nt_read(0x2800, &ciram);
+    }
+    assert_eq!(cart.cpu_read(0x5204), Some(0x40), "in_frame, scanline 0");
+    cart.nt_read(0x2801, &ciram); // quebra a sequência
+    for _ in 0..3 {
+        cart.nt_read(0x2802, &ciram);
+    }
+    assert!(!cart.irq_pending(), "scanline 1");
+    cart.nt_read(0x2803, &ciram);
+    for _ in 0..3 {
+        cart.nt_read(0x2804, &ciram);
+    }
+    assert!(cart.irq_pending(), "scanline 2 == $5203");
+    assert_eq!(cart.cpu_read(0x5204), Some(0xC0));
+    cart.cpu_read_mut(0x5204);
+    assert!(!cart.irq_pending(), "ler $5204 reconhece");
+    for _ in 0..400 {
+        cart.cpu_clock();
+    }
+    assert_eq!(cart.cpu_read(0x5204), Some(0x00), "sem leituras → fim do frame");
+}
