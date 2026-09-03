@@ -78,10 +78,12 @@ pub fn run(launch: Launch) -> Result<(), winit::error::EventLoopError> {
 pub fn run_android(
     android_app: winit::platform::android::activity::AndroidApp,
     launch: Launch,
+    on_proxy: impl FnOnce(EventLoopProxy<UserEvent>),
 ) -> Result<(), winit::error::EventLoopError> {
     use winit::platform::android::EventLoopBuilderExtAndroid;
     let el =
         winit::event_loop::EventLoop::<UserEvent>::with_user_event().with_android_app(android_app).build()?;
+    on_proxy(el.create_proxy());
     let mut app = App::new(launch, el.create_proxy());
     el.run_app(&mut app)
 }

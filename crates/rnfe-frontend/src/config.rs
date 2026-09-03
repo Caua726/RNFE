@@ -127,13 +127,15 @@ pub fn load_recent(storage: &dyn Storage) -> Vec<RecentRom> {
 }
 
 /// Registra uma ROM aberta (guarda os bytes e põe no topo da lista). Erros de espaço só avisam.
-pub fn push_recent(storage: &mut dyn Storage, hash: u64, name: &str, bytes: &[u8]) -> Vec<RecentRom> {
+pub fn push_recent(storage: &mut dyn Storage, hash: u64, name: &str, bytes: Option<&[u8]>) -> Vec<RecentRom> {
     let mut list = load_recent(storage);
     list.retain(|r| r.hash != hash);
     list.insert(0, RecentRom { hash, name: name.to_string() });
     list.truncate(RECENT_MAX);
-    if let Err(e) = storage.write(&RecentRom::rom_key(hash), bytes) {
-        log::warn!("recentes: não guardei a ROM: {e}");
+    if let Some(bytes) = bytes {
+        if let Err(e) = storage.write(&RecentRom::rom_key(hash), bytes) {
+            log::warn!("recentes: não guardei a ROM: {e}");
+        }
     }
     let text: String = list.iter().map(|r| format!("{:016x}\t{}\n", r.hash, r.name)).collect();
     if let Err(e) = storage.write(RECENT_KEY, text.as_bytes()) {
@@ -175,14 +177,15 @@ mod tests {
         let mut st = MemoryStorage::new();
         assert!(load_recent(&st).is_empty());
         for i in 0..10u64 {
-            push_recent(&mut st, i, &format!("jogo {i}"), &[i as u8; 16]);
+            push_recent(&mut st, i, &format!("jogo {i}"), Some(&[i as u8; 16]));
         }
         let l = load_recent(&st);
         assert_eq!(l.len(), RECENT_MAX);
         assert_eq!(l[0].hash, 9);
         assert_eq!(st.read(&RecentRom::rom_key(9)).unwrap(), vec![9u8; 16]);
-        push_recent(&mut st, 5, "jogo 5", &[5; 16]);
-        assert_eq!(load_recent(&st)[0].hash, 5, "reabrir sobe para o topo");
+        push_recent(&mut st, 5, "jogo 5", None);
+        assert_eq!(load_recent(&st)[0].hash, 5, "reabrir sobe para o topo (sem regravar)");
+        assert_eq!(st.read(&RecentRom::rom_key(5)).unwrap(), vec![5u8; 16]);
         let l = remove_recent(&mut st, 5);
         assert!(l.iter().all(|r| r.hash != 5));
         assert!(st.read(&RecentRom::rom_key(5)).is_none());

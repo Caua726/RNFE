@@ -15,6 +15,8 @@ use winit::event_loop::EventLoopProxy;
 use winit::platform::android::activity::AndroidApp;
 
 static PROXY: Mutex<Option<EventLoopProxy<UserEvent>>> = Mutex::new(None);
+/// ROM escolhida antes de o laço existir (processo recriado pelo sistema durante o SAF).
+static PENDING: Mutex<Option<(String, Vec<u8>)>> = Mutex::new(None);
 
 /// Chama um método `void` sem argumentos da `MainActivity` pela JNI.
 fn call_activity(app: &AndroidApp, method: &str) -> Result<(), String> {
@@ -51,8 +53,17 @@ pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomPicked<'l>(
     } else {
         UserEvent::RomLoaded { name, bytes }
     };
-    if let Some(p) = PROXY.lock().ok().and_then(|g| g.clone()) {
-        let _ = p.send_event(ev);
+    match PROXY.lock().ok().and_then(|g| g.clone()) {
+        Some(p) => {
+            let _ = p.send_event(ev);
+        }
+        None => {
+            if let UserEvent::RomLoaded { name, bytes } = ev {
+                if let Ok(mut g) = PENDING.lock() {
+                    *g = Some((name, bytes));
+                }
+            }
+        }
     }
 }
 
@@ -67,9 +78,6 @@ fn android_main(app: AndroidApp) {
     let picker_app = app.clone();
     let mut launch = Launch::new(Box::new(FsStorage::new(data_dir)));
     launch.picker = Some(Box::new(move |proxy| {
-        if let Ok(mut g) = PROXY.lock() {
-            *g = Some(proxy.clone());
-        }
         if let Err(e) = call_pick_rom(&picker_app) {
             log::error!("pickRom: {e}");
             let _ = proxy.send_event(UserEvent::RomLoadFailed(e));
@@ -81,7 +89,15 @@ fn android_main(app: AndroidApp) {
             log::debug!("vibrate: {e}");
         }
     }));
-    if let Err(e) = rnfe_gui::run_android(app, launch) {
+    let on_proxy = |proxy: EventLoopProxy<UserEvent>| {
+        if let Ok(mut g) = PROXY.lock() {
+            *g = Some(proxy.clone());
+        }
+        if let Some((name, bytes)) = PENDING.lock().ok().and_then(|mut g| g.take()) {
+            let _ = proxy.send_event(UserEvent::RomLoaded { name, bytes });
+        }
+    };
+    if let Err(e) = rnfe_gui::run_android(app, launch, on_proxy) {
         log::error!("laço de eventos: {e}");
     }
 }

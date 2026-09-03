@@ -38,6 +38,8 @@ pub enum UserEvent {
 const TURBO: f64 = 4.0;
 /// Frames que "Voltar 5 s" desfaz.
 const REWIND_FRAMES: u32 = 300;
+/// Identificador do mouse nos menus (dedos usam o id do toque).
+const MOUSE_ID: u64 = u64::MAX;
 
 /// O que muda a aparência do overlay (menus, toque, debug, toast).
 #[derive(Clone, PartialEq)]
@@ -72,8 +74,10 @@ pub struct App {
     /// Chave do último overlay desenhado: só se redesenha (e reenvia à GPU) quando muda.
     overlay_key: Option<OverlayKey>,
     overlay_size: (u32, u32),
-    /// Item de menu pressionado (índice) e onde começou o toque: a ação vale ao soltar.
-    pressed: Option<(usize, f32, f32)>,
+    /// Item de menu pressionado: índice, dedo (ou `MOUSE_ID`) e onde começou; a ação vale ao soltar.
+    pressed: Option<(usize, u64, f32, f32)>,
+    /// Ajustes mudaram e ainda não foram gravados (grava ao soltar o slider / trocar de tela).
+    config_dirty: bool,
     /// Tela de states: carregar ou salvar; quais slots existem.
     states_load: bool,
     slots: [bool; 3],
@@ -143,6 +147,7 @@ impl App {
             overlay_key: None,
             overlay_size: (0, 0),
             pressed: None,
+            config_dirty: false,
             states_load: false,
             slots: [false; 3],
             confirm_reset: false,
@@ -240,10 +245,23 @@ impl App {
         self.input.clear();
         self.touch.clear();
         self.rewinding = false;
+        self.save_config();
         if self.screen == Screen::Playing {
             self.pacer.resync(self.now());
+            // ROM vinda do SAF e o botão Voltar não passam por gesto de toque; só a web
+            // exige um gesto para o áudio
+            #[cfg(not(target_arch = "wasm32"))]
+            self.ensure_audio();
         }
         self.redraw();
+    }
+
+    /// Grava os ajustes se mudaram (não a cada evento de arrasto do slider).
+    fn save_config(&mut self) {
+        if self.config_dirty {
+            self.config_dirty = false;
+            self.config.save(self.storage.as_mut());
+        }
     }
 
     fn apply_config(&mut self) {
@@ -252,7 +270,7 @@ impl App {
         }
         self.refresh_touch_layout();
         self.layout_cache = None;
-        self.config.save(self.storage.as_mut());
+        self.config_dirty = true;
     }
 
     fn buzz(&self) {
@@ -314,13 +332,14 @@ impl App {
         self.set_screen(Screen::Playing);
     }
 
-    fn load_rom_bytes(&mut self, name: String, bytes: Vec<u8>, remember: bool) {
+    /// `store`: guardar os bytes em `roms/<hash>.nes` (ROM nova); reabrir dos recentes só
+    /// reordena a lista.
+    fn load_rom_bytes(&mut self, name: String, bytes: Vec<u8>, store: bool) {
         match crate::load_rom_bytes(&bytes) {
             Ok(nes) => {
-                if remember {
-                    let hash = nes.cartridge().rom_hash();
-                    self.recent = config::push_recent(self.storage.as_mut(), hash, &name, &bytes);
-                }
+                let hash = nes.cartridge().rom_hash();
+                self.recent =
+                    config::push_recent(self.storage.as_mut(), hash, &name, store.then_some(&bytes[..]));
                 self.install_nes(nes, name.clone());
                 self.toast(name);
             }
@@ -342,7 +361,7 @@ impl App {
     fn open_recent(&mut self, hash: u64) {
         let name = self.recent.iter().find(|r| r.hash == hash).map(|r| r.name.clone()).unwrap_or_default();
         match self.storage.read(&RecentRom::rom_key(hash)) {
-            Some(bytes) => self.load_rom_bytes(name, bytes, true),
+            Some(bytes) => self.load_rom_bytes(name, bytes, false),
             None => {
                 self.recent = config::remove_recent(self.storage.as_mut(), hash);
                 self.toast("ROM não está mais guardada");
@@ -476,8 +495,11 @@ impl App {
                 self.set_screen(Screen::Playing);
             }
             Action::Slide(setting, f) => {
+                let before = self.config.clone();
                 menu::set_fraction(&mut self.config, setting, f);
-                self.apply_config();
+                if self.config != before {
+                    self.apply_config();
+                }
             }
             Action::None => {}
             Action::Rewind => {
@@ -493,6 +515,7 @@ impl App {
             Action::Back => self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start }),
             Action::Quit => {
                 self.flush_save();
+                self.save_config();
                 el.exit();
             }
             Action::Adjust(setting, delta) => {
@@ -836,6 +859,9 @@ impl App {
                 _ => {}
             }
         }
+        if !pressed && key == KeyCode::Space && self.turbo && !self.playing() {
+            self.set_turbo(false); // soltou o turbo com o jogo pausado
+        }
         if !pressed {
             return;
         }
@@ -889,10 +915,13 @@ impl App {
 
     /// Começo de um toque/clique num menu: marca o item pressionado (a ação vale ao soltar);
     /// sliders reagem já no toque.
-    fn menu_press(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
+    fn menu_press(&mut self, id: u64, x: f32, y: f32, el: &ActiveEventLoop) {
+        if self.pressed.is_some() {
+            return; // já há um dedo num item: o segundo é ignorado
+        }
         let layout = self.layout();
-        self.pressed = menu::index_at(&layout, x, y).map(|i| (i, x, y));
-        if let Some((i, _, _)) = self.pressed {
+        self.pressed = menu::index_at(&layout, x, y).map(|i| (i, id, x, y));
+        if let Some((i, ..)) = self.pressed {
             if matches!(layout.items[i].kind, ItemKind::Slider { .. }) {
                 if let Some(a) = menu::hit(&layout, x, y) {
                     self.act(a, el);
@@ -902,8 +931,11 @@ impl App {
     }
 
     /// Arrasto com o dedo/mouse pressionado: sliders acompanham.
-    fn menu_drag(&mut self, x: f32, el: &ActiveEventLoop) {
-        let Some((i, _, _)) = self.pressed else { return };
+    fn menu_drag(&mut self, id: u64, x: f32, el: &ActiveEventLoop) {
+        let Some((i, pid, _, _)) = self.pressed else { return };
+        if pid != id {
+            return;
+        }
         let layout = self.layout();
         if let Some(a) = menu::slide(&layout, i, x) {
             self.act(a, el);
@@ -911,11 +943,15 @@ impl App {
     }
 
     /// Soltou: dispara a ação se ainda está sobre o mesmo item (senão, cancela).
-    fn menu_release(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
-        let Some((i, _, _)) = self.pressed.take() else { return };
+    fn menu_release(&mut self, id: u64, x: f32, y: f32, el: &ActiveEventLoop) {
+        if self.pressed.is_some_and(|p| p.1 != id) {
+            return; // soltou outro dedo
+        }
+        let Some((i, ..)) = self.pressed.take() else { return };
         let layout = self.layout();
         if matches!(layout.items.get(i).map(|it| &it.kind), Some(ItemKind::Slider { .. })) {
             self.layout_cache = None;
+            self.save_config();
             self.redraw();
             return;
         }
@@ -1029,6 +1065,7 @@ impl ApplicationHandler<UserEvent> for App {
         match ev {
             WindowEvent::CloseRequested => {
                 self.flush_save();
+                self.save_config();
                 el.exit();
             }
             WindowEvent::Resized(s) => {
@@ -1058,7 +1095,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.cursor = (position.x, position.y);
                 if !self.playing() {
                     if self.pressed.is_some() {
-                        self.menu_drag(position.x as f32, el);
+                        self.menu_drag(MOUSE_ID, position.x as f32, el);
                     }
                     self.redraw();
                 }
@@ -1068,10 +1105,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if state == ElementState::Pressed {
                     self.ensure_audio();
                     if !self.playing() {
-                        self.menu_press(x, y, el);
+                        self.menu_press(MOUSE_ID, x, y, el);
                     }
                 } else if !self.playing() {
-                    self.menu_release(x, y, el);
+                    self.menu_release(MOUSE_ID, x, y, el);
                 }
                 self.redraw();
             }
@@ -1093,7 +1130,7 @@ impl ApplicationHandler<UserEvent> for App {
                         } else {
                             self.touch.seen = true;
                             self.cursor = (-1.0, -1.0);
-                            self.menu_press(x, y, el);
+                            self.menu_press(t.id, x, y, el);
                         }
                     }
                     TouchPhase::Moved => {
@@ -1105,7 +1142,7 @@ impl ApplicationHandler<UserEvent> for App {
                             }
                             self.last_touch_buttons = b;
                         } else {
-                            self.menu_drag(x, el);
+                            self.menu_drag(t.id, x, el);
                         }
                     }
                     TouchPhase::Ended => {
@@ -1113,7 +1150,7 @@ impl ApplicationHandler<UserEvent> for App {
                             self.touch.up(t.id);
                             self.last_touch_buttons = self.touch.buttons();
                         } else {
-                            self.menu_release(x, y, el);
+                            self.menu_release(t.id, x, y, el);
                         }
                         self.cursor = (-1.0, -1.0);
                     }
@@ -1136,7 +1173,19 @@ impl ApplicationHandler<UserEvent> for App {
                     self.redraw();
                     return;
                 }
-                if let PhysicalKey::Code(code) = event.physical_key {
+                let code = match event.physical_key {
+                    PhysicalKey::Code(c) => Some(c),
+                    // Android: KEYCODE_BUTTON_* de gamepads não têm código físico no winit
+                    PhysicalKey::Unidentified(winit::keyboard::NativeKeyCode::Android(k)) => match k {
+                        96 | 97 => Some(KeyCode::KeyZ),  // BUTTON_A (sul) / BUTTON_B (leste) → A
+                        99 | 100 => Some(KeyCode::KeyX), // BUTTON_X / BUTTON_Y → B
+                        108 => Some(KeyCode::Enter),     // BUTTON_START
+                        109 => Some(KeyCode::Tab),       // BUTTON_SELECT
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(code) = code {
                     if event.state == ElementState::Pressed && !event.repeat {
                         self.ensure_audio();
                     }
@@ -1156,12 +1205,16 @@ impl ApplicationHandler<UserEvent> for App {
         self.input.clear();
         self.touch.clear();
         self.rewinding = false;
+        self.save_config();
         self.gpu = None;
         self.window = None;
         self.audio = None; // em background o stream pode ser desconectado; volta no próximo gesto
         self.overlay_key = None;
-        if self.nes.is_some() {
-            self.screen = Screen::Paused;
+        self.pressed = None;
+        self.confirm_reset = false;
+        if self.playing() {
+            self.set_screen(Screen::Paused);
+        } else {
             self.layout_cache = None;
         }
     }
@@ -1170,7 +1223,13 @@ impl ApplicationHandler<UserEvent> for App {
         self.advance();
         if self.playing() && self.gpu.is_some() {
             el.set_control_flow(ControlFlow::WaitUntil(self.start + self.pacer.next_deadline()));
+        } else if Instant::now() < self.toast_until {
+            // toast num menu: acorda na hora de apagá-lo
+            el.set_control_flow(ControlFlow::WaitUntil(self.toast_until));
         } else {
+            if self.overlay_key.as_ref().is_some_and(|k| k.toast.is_some()) {
+                self.redraw(); // o último overlay ainda tem o toast
+            }
             el.set_control_flow(ControlFlow::Wait);
         }
     }
