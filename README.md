@@ -92,7 +92,7 @@ embaixo, em paisagem ficam nas laterais.
 | 2 | UxROM | Castlevania, Contra, Mega Man |
 | 3 | CNROM | Arkanoid, Gradius |
 | 4 | MMC3 | Super Mario Bros. 3, Kirby's Adventure |
-| 5 | MMC5 (+ áudio) | Castlevania III, Just Breed — sem a divisão vertical ainda |
+| 5 | MMC5 (+ áudio, divisão vertical) | Castlevania III, Just Breed |
 | 7 | AxROM | Battletoads, Marble Madness |
 | 9 | MMC2 | Punch-Out!! |
 | 11 | Color Dreams | — |

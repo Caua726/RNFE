@@ -16,7 +16,7 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ## Onde parei
 Tarefa: F7 inteira (bench --profile, otimizações A/B, wasm medido, áudio/frame skip)
 Estado: concluída — marco M7; plano F0–F7 fechado
-Próximo: manutenção — split vertical do MMC5, MMC5/VRC6/N163 testados com jogos reais, keystore de release para o APK
+Próximo: manutenção — MMC5/VRC6/N163 testados com jogos reais (split vertical feito em 03/09), keystore de release para o APK
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
