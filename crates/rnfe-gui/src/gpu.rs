@@ -81,10 +81,11 @@ impl GpuState {
             })
             .await
             .ok_or("nenhum adaptador de GPU (WebGPU/WebGL indisponível?)")?;
+        // Só usamos 2 texturas e 1 uniform: os limites "downlevel" cabem em qualquer GLES3/Vulkan
         let limits = if cfg!(target_arch = "wasm32") {
             wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
         } else {
-            wgpu::Limits::default().using_resolution(adapter.limits())
+            wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits())
         };
         let (device, queue) = adapter
             .request_device(
@@ -98,6 +99,8 @@ impl GpuState {
             )
             .await
             .map_err(|e| format!("device: {e}"))?;
+        // Erro de validação (ex.: swapchain na rotação) vira log, não panic
+        device.on_uncaptured_error(Box::new(|e| log::error!("wgpu: {e}")));
         log::info!("GPU: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
 
         let caps = surface.get_capabilities(&adapter);
@@ -187,7 +190,7 @@ impl GpuState {
             })
         };
         let pipeline = make_pipeline(None);
-        let overlay_pipeline = make_pipeline(Some(wgpu::BlendState::ALPHA_BLENDING));
+        let overlay_pipeline = make_pipeline(Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
 
         let scale = Self::calc_scale(config.width, config.height, false);
         let nes =
@@ -339,9 +342,15 @@ impl GpuState {
         );
     }
 
-    /// Desenha um frame: imagem do NES (se houver) e overlay RGBA na resolução da janela
-    /// (se houver), com alpha.
-    pub fn render(&mut self, nes_rgba: Option<&[u8]>, overlay_rgba: Option<&[u8]>) {
+    /// Desenha um frame: imagem do NES (se houver) e o overlay (se `show_overlay`), com alpha
+    /// premultiplicado. `overlay_rgba` só precisa vir quando o overlay mudou (upload de
+    /// w×h×4 bytes). Devolve `false` se a superfície foi perdida (vale pedir outro redraw).
+    pub fn render(
+        &mut self,
+        nes_rgba: Option<&[u8]>,
+        show_overlay: bool,
+        overlay_rgba: Option<&[u8]>,
+    ) -> bool {
         if let Some(px) = nes_rgba {
             self.upload(&self.nes, px);
         }
@@ -354,11 +363,11 @@ impl GpuState {
             Ok(f) => f,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return false;
             }
             Err(e) => {
                 log::warn!("surface: {e:?}");
-                return;
+                return false;
             }
         };
         let view = frame.texture.create_view(&Default::default());
@@ -382,7 +391,7 @@ impl GpuState {
                 pass.set_bind_group(0, &self.nes.bind_group, &[]);
                 pass.draw(0..6, 0..1);
             }
-            if overlay_rgba.is_some() {
+            if show_overlay {
                 pass.set_pipeline(&self.overlay_pipeline);
                 pass.set_bind_group(0, &self.overlay.bind_group, &[]);
                 pass.draw(0..6, 0..1);
@@ -390,5 +399,6 @@ impl GpuState {
         }
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+        true
     }
 }

@@ -23,7 +23,12 @@ fn call_activity(app: &AndroidApp, method: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
-    env.call_method(&activity, method, "()V", &[]).map_err(|e| e.to_string())?;
+    if let Err(e) = env.call_method(&activity, method, "()V", &[]) {
+        // exceção Java pendente derrubaria a próxima chamada JNI
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
     Ok(())
 }
 

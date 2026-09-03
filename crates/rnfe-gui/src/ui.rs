@@ -300,7 +300,8 @@ fn blend(dst: &mut [u8], color: [u8; 4], alpha: u8) {
     for i in 0..3 {
         dst[i] = ((dst[i] as u32 * (255 - a) + color[i] as u32 * a) / 255) as u8;
     }
-    dst[3] = dst[3].max(a as u8);
+    // alpha premultiplicado: o overlay é composto com PREMULTIPLIED_ALPHA_BLENDING na GPU
+    dst[3] = (dst[3] as u32 * (255 - a) / 255 + a) as u8;
 }
 
 pub fn fill_rect(fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i32, color: [u8; 4]) {
@@ -349,9 +350,16 @@ fn fill_circle(fb: &mut [u8], w: u32, h: u32, c: &Circle, color: [u8; 4]) {
     }
 }
 
-/// Fundo (tela inicial / pausa).
+/// Fundo (tela inicial / pausa), já premultiplicado pelo alpha.
 pub fn clear(fb: &mut [u8], color: [u8; 4]) {
+    let a = color[3] as u32;
+    let pm = [
+        (color[0] as u32 * a / 255) as u8,
+        (color[1] as u32 * a / 255) as u8,
+        (color[2] as u32 * a / 255) as u8,
+        color[3],
+    ];
     for px in fb.chunks_exact_mut(4) {
-        px.copy_from_slice(&color);
+        px.copy_from_slice(&pm);
     }
 }

@@ -3,12 +3,15 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rnfe_frontend::AudioRing;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct AudioOut {
     _stream: cpal::Stream,
     pub ring: Arc<AudioRing>,
     pub sample_rate: u32,
     pub channels: usize,
+    /// O stream morreu (fone desconectado, saída trocada): recriar no próximo gesto.
+    dead: Arc<AtomicBool>,
 }
 
 impl AudioOut {
@@ -26,6 +29,8 @@ impl AudioOut {
         let channels = config.channels() as usize;
         let ring = AudioRing::new(sample_rate as usize / 4); // 250 ms de capacidade
         let reader = ring.clone();
+        let dead = Arc::new(AtomicBool::new(false));
+        let dead_cb = dead.clone();
         let mut mono: Vec<f32> = Vec::new();
         let stream = device
             .build_output_stream(
@@ -38,12 +43,19 @@ impl AudioOut {
                         frame.fill(s);
                     }
                 },
-                |err| log::error!("áudio: {err}"),
+                move |err| {
+                    log::error!("áudio: {err}");
+                    dead_cb.store(true, Ordering::Relaxed);
+                },
                 None,
             )
             .ok()?;
         stream.play().ok()?;
         log::info!("áudio: {sample_rate} Hz, {channels} canais");
-        Some(AudioOut { _stream: stream, ring, sample_rate, channels })
+        Some(AudioOut { _stream: stream, ring, sample_rate, channels, dead })
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Relaxed)
     }
 }

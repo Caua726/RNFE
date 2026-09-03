@@ -144,13 +144,16 @@ pub struct MenuState {
     pub version: String,
 }
 
-/// Escala base pela janela: 1,0 em ~720 px de lado menor, até 2,5 em telas densas.
-pub fn ui_scale(w: f32, h: f32, config: &Config) -> f32 {
-    (w.min(h) / 720.0).clamp(0.8, 2.5) * config.text_scale
+/// Escala da interface: pelo fator de DPI da janela (`Window::scale_factor`, ~2,6 num celular
+/// de 1080 px; 1,0 num desktop comum), com um piso pela janela e o `text_scale` do usuário.
+/// Resultado: fonte ≈ 16 dp e linhas ≥ 48 dp em qualquer tela.
+pub fn ui_scale(w: f32, h: f32, config: &Config, dpi: f32) -> f32 {
+    let dpi = if dpi.is_finite() && dpi > 0.0 { dpi } else { 1.0 };
+    (0.9 * dpi).max(w.min(h) / 1000.0).clamp(0.7, 4.0) * config.text_scale
 }
 
-pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, st: &MenuState) -> Layout {
-    let s = ui_scale(w, h, config);
+pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &MenuState) -> Layout {
+    let s = ui_scale(w, h, config, dpi);
     let font = 18.0 * s;
     let row_h = 52.0 * s;
     let gap = 10.0 * s;
@@ -168,15 +171,18 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, st: &MenuState) -
                 format!("Famicom / NES · v{}", st.version)
             };
             y = h * 0.34;
+            let n = 2.0 + if st.recent.is_empty() { 0.0 } else { 1.0 } + if st.can_quit { 1.0 } else { 0.0 };
+            let avail = h - y - gap;
+            let rh = row_h.min((avail - gap * (n - 1.0)) / n).max(16.0 * s);
             let mut push = |label: &str, action: Action, y: &mut f32| {
                 items.push(Item {
-                    rect: Rect { x, y: *y, w: bw, h: row_h },
+                    rect: Rect { x, y: *y, w: bw, h: rh },
                     label: label.into(),
                     value: String::new(),
                     action,
                     active: false,
                 });
-                *y += row_h + gap;
+                *y += rh + gap;
             };
             push("Abrir ROM", Action::OpenRom, &mut y);
             if !st.recent.is_empty() {
@@ -348,9 +354,15 @@ mod tests {
     #[test]
     fn every_screen_fits_phone_and_desktop() {
         let c = Config::default();
-        for (w, h) in [(1080.0, 2340.0), (2340.0, 1080.0), (768.0, 720.0), (480.0, 320.0)] {
+        for (w, h, dpi) in [
+            (1080.0, 2340.0, 2.6),
+            (2340.0, 1080.0, 2.6),
+            (768.0, 720.0, 1.0),
+            (480.0, 320.0, 1.0),
+            (1440.0, 3120.0, 3.5),
+        ] {
             for sc in [Screen::Start, Screen::Paused, Screen::Settings, Screen::Recents] {
-                let l = layout(sc, w, h, &c, &state());
+                let l = layout(sc, w, h, &c, dpi, &state());
                 assert!(!l.items.is_empty());
                 fits(&l, w, h);
                 // sem sobreposição entre linhas
@@ -370,11 +382,13 @@ mod tests {
     #[test]
     fn hit_returns_actions() {
         let c = Config::default();
-        let l = layout(Screen::Paused, 1080.0, 2340.0, &c, &state());
+        let l = layout(Screen::Paused, 1080.0, 2340.0, &c, 2.6, &state());
         let first = &l.items[0];
+        assert!(first.rect.h >= 48.0 * 2.6 * 0.9, "linha com pelo menos ~48 dp: {}", first.rect.h);
+        assert!(l.font >= 16.0 * 2.6 * 0.85, "fonte de ~16 dp: {}", l.font);
         assert_eq!(hit(&l, first.rect.x + 1.0, first.rect.y + 1.0), Some(Action::Resume));
         assert_eq!(hit(&l, 0.0, 0.0), None);
-        let l = layout(Screen::Recents, 1080.0, 2340.0, &c, &state());
+        let l = layout(Screen::Recents, 1080.0, 2340.0, &c, 2.6, &state());
         let open = l.items.iter().find(|i| i.action == Action::OpenRecent(2)).unwrap();
         assert_eq!(hit(&l, open.rect.x + 2.0, open.rect.y + 2.0), Some(Action::OpenRecent(2)));
         let rm = l.items.iter().find(|i| i.action == Action::RemoveRecent(2)).unwrap();
@@ -399,7 +413,7 @@ mod tests {
         assert!(c.high_contrast);
         assert_eq!(Setting::Volume.value(&c), "90%");
         assert_eq!(Setting::HighContrast.value(&c), "Sim");
-        let l = layout(Screen::Settings, 1080.0, 2340.0, &c, &state());
+        let l = layout(Screen::Settings, 1080.0, 2340.0, &c, 2.6, &state());
         let minus = l.items.iter().filter(|i| i.label == "−").count();
         assert_eq!(minus, Setting::ALL.iter().filter(|s| !s.is_bool()).count());
     }
@@ -407,10 +421,15 @@ mod tests {
     #[test]
     fn text_scale_changes_ui_scale() {
         let mut c = Config::default();
-        let a = ui_scale(1080.0, 2340.0, &c);
+        let a = ui_scale(1080.0, 2340.0, &c, 2.6);
         c.text_scale = 1.5;
-        assert!((ui_scale(1080.0, 2340.0, &c) - a * 1.5).abs() < 1e-4);
-        let start = layout(Screen::Start, 1080.0, 2340.0, &c, &MenuState::default());
+        assert!((ui_scale(1080.0, 2340.0, &c, 2.6) - a * 1.5).abs() < 1e-4);
+        assert!(ui_scale(768.0, 720.0, &Config::default(), 1.0) < a, "desktop menor que celular denso");
+        assert_eq!(
+            ui_scale(768.0, 720.0, &Config::default(), f32::NAN),
+            ui_scale(768.0, 720.0, &Config::default(), 1.0)
+        );
+        let start = layout(Screen::Start, 1080.0, 2340.0, &c, 2.6, &MenuState::default());
         assert!(start.items.iter().all(|i| !matches!(i.action, Action::Recents)), "sem recentes, sem botão");
     }
 }
