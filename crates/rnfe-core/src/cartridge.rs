@@ -183,6 +183,8 @@ pub struct Cartridge {
     chr_dynamic: bool,
     nt_cache: [NtCache; 4],
     nt_dynamic: bool,
+    /// Nível da linha IRQ do mapper, atualizado a cada chamada que pode mudá-lo.
+    irq: bool,
 }
 
 impl Cartridge {
@@ -234,6 +236,7 @@ impl Cartridge {
             prg_ram_fallback,
             chr_cache: [0; 8],
             nt_cache: [NtCache::Ciram(0); 4],
+            irq: false,
         };
         cart.refresh_caches();
         Ok(cart)
@@ -322,6 +325,7 @@ impl Cartridge {
     pub fn cpu_read_mut(&mut self, addr: u16) -> Option<u8> {
         let v = self.cpu_read(addr);
         self.mapper.on_cpu_read(addr);
+        self.irq = self.mapper.irq_pending();
         v
     }
 
@@ -330,6 +334,7 @@ impl Cartridge {
         if self.mapper.cpu_write(addr, data, &mut self.data) {
             if !(0x6000..0x8000).contains(&addr) {
                 self.refresh_caches();
+                self.irq = self.mapper.irq_pending();
             }
             return true;
         }
@@ -352,7 +357,9 @@ impl Cartridge {
                 NtCache::Value(v) => v,
             };
         }
-        match self.mapper.nt_source(addr, &self.data) {
+        let src = self.mapper.nt_source(addr, &self.data);
+        self.irq = self.mapper.irq_pending(); // MMC5 detecta scanlines (e dispara IRQ) aqui
+        match src {
             None => {
                 let (nt, off) = mirror_nametable(addr, self.get_mirror());
                 ciram[nt][off]
@@ -418,6 +425,7 @@ impl Cartridge {
     #[inline]
     pub fn a12_rise(&mut self) {
         self.mapper.a12_rise();
+        self.irq = self.mapper.irq_pending();
     }
 
     #[inline]
@@ -428,12 +436,14 @@ impl Cartridge {
     #[inline]
     pub fn cpu_clock(&mut self) {
         self.mapper.cpu_clock();
+        self.irq = self.mapper.irq_pending();
     }
 
-    /// Nível da linha IRQ do mapper.
+    /// Nível da linha IRQ do mapper (cache atualizado em `cpu_clock`, `a12_rise`,
+    /// `cpu_write`, `cpu_read_mut`, `reset` e `restore`).
     #[inline]
     pub fn irq_pending(&self) -> bool {
-        self.mapper.irq_pending()
+        self.irq
     }
 
     /// Áudio de expansão do cartucho, em [-1, 1].
@@ -445,6 +455,7 @@ impl Cartridge {
     pub fn reset(&mut self) {
         self.mapper.reset(&mut self.data);
         self.refresh_caches();
+        self.irq = self.mapper.irq_pending();
     }
 
     /// Estado interno do mapper, em texto (diagnóstico).
@@ -497,6 +508,7 @@ impl Cartridge {
         self.data.prg_ram_dirty = true;
         self.mapper = st.mapper;
         self.refresh_caches();
+        self.irq = self.mapper.irq_pending();
         Ok(())
     }
 
