@@ -136,10 +136,12 @@ pub struct Ppu {
     oam_addr: u8,
     sprites_scanline: [ObjectAttributeEntry; 8],
     sprite_count: usize,
-    sprite_shifter_pattern_lo: [u8; 8],
-    sprite_shifter_pattern_hi: [u8; 8],
+    /// Pixels de sprite da linha atual, um byte por x: bits 0-1 cor, bits 2-3 paleta,
+    /// bit 4 atrás do fundo, bit 5 é o sprite 0; 0 = transparente. Preenchido nos dots
+    /// 257–320 (o primeiro sprite opaco de cada x vence) e lido no mux de pixel.
+    #[cfg_attr(feature = "serde", serde(with = "crate::state::bytes"))]
+    sprite_line: [u8; 256],
     sprite_zero_hit_possible: bool,
-    sprite_zero_being_rendered: bool,
     /// Dot em que a avaliação (com o bug do hardware) setaria a flag de overflow nesta linha.
     overflow_dot: Option<i16>,
     /// "OAM secundário": sprites avaliados para a linha seguinte, copiados no dot 257.
@@ -163,8 +165,9 @@ pub struct Ppu {
     dots: u64,
     /// Dot em que A12 ficou baixo pela última vez (`None` = está alto).
     a12_low_since: Option<u64>,
-    /// Endereço do padrão do sprite sendo buscado (dots 257–320).
+    /// Endereço e plano baixo do padrão do sprite sendo buscado (dots 257–320).
     sprite_fetch_addr: u16,
+    sprite_fetch_lo: u8,
 
     // Frame par/ímpar
     odd_frame: bool,
@@ -224,10 +227,8 @@ impl Ppu {
             oam_addr: 0,
             sprites_scanline: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             sprite_count: 0,
-            sprite_shifter_pattern_lo: [0; 8],
-            sprite_shifter_pattern_hi: [0; 8],
+            sprite_line: [0; 256],
             sprite_zero_hit_possible: false,
-            sprite_zero_being_rendered: false,
             overflow_dot: None,
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
             next_sprite_count: 0,
@@ -240,6 +241,7 @@ impl Ppu {
             dots: 0,
             a12_low_since: None,
             sprite_fetch_addr: 0,
+            sprite_fetch_lo: 0,
             odd_frame: false,
             prevent_vbl: false,
             io_bus: 0,
@@ -474,6 +476,27 @@ impl Ppu {
         }
     }
 
+    /// Escreve os 8 pixels do sprite do `slot` no buffer da linha (o primeiro opaco vence).
+    fn draw_sprite_slot(&mut self, slot: usize, lo: u8, hi: u8) {
+        let sp = self.sprites_scanline[slot];
+        let (lo, hi) =
+            if sp.attribute & 0x40 != 0 { (lo.reverse_bits(), hi.reverse_bits()) } else { (lo, hi) };
+        let tag = ((sp.attribute & 0x03) << 2)
+            | if sp.attribute & 0x20 != 0 { 0x10 } else { 0 }
+            | if slot == 0 { 0x20 } else { 0 };
+        for px in 0..8usize {
+            let x = sp.x as usize + px;
+            if x >= 256 {
+                break;
+            }
+            let bit = 7 - px;
+            let pixel = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+            if pixel != 0 && self.sprite_line[x] == 0 {
+                self.sprite_line[x] = tag | pixel;
+            }
+        }
+    }
+
     /// Endereço do padrão (plano baixo) do sprite no `slot` para a linha atual; slots vazios
     /// e a linha de pré-render usam o tile $FF, como o hardware.
     fn sprite_pattern_addr(&self, slot: usize) -> u16 {
@@ -511,11 +534,7 @@ impl Ppu {
             if self.scanline == -1 && self.cycle == 1 {
                 // Limpar vblank, sprite overflow, sprite zero hit
                 self.status &= !(0x80 | 0x40 | 0x20);
-                // Limpar sprite shifters
-                for i in 0..8 {
-                    self.sprite_shifter_pattern_lo[i] = 0;
-                    self.sprite_shifter_pattern_hi[i] = 0;
-                }
+                self.sprite_line = [0; 256];
             }
 
             // Dot 1: a busca de nametable do 1º tile (o mesmo endereço dos dots 337/339 —
@@ -600,6 +619,7 @@ impl Ppu {
                 cart.data.ppu_sprite_fetch = false;
             }
             if self.cycle == 257 {
+                self.sprite_line = [0; 256];
                 self.sprites_scanline = self.next_sprites;
                 self.sprite_count = self.next_sprite_count;
                 self.sprite_zero_hit_possible = self.next_sprite_zero;
@@ -621,17 +641,12 @@ impl Ppu {
                     0 | 2 => self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF)),
                     4 => {
                         self.sprite_fetch_addr = self.sprite_pattern_addr(slot);
-                        let lo = self.vram_read(self.sprite_fetch_addr, cart);
-                        if slot < self.sprite_count && self.scanline >= 0 {
-                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
-                            self.sprite_shifter_pattern_lo[slot] = if flip { lo.reverse_bits() } else { lo };
-                        }
+                        self.sprite_fetch_lo = self.vram_read(self.sprite_fetch_addr, cart);
                     }
                     6 => {
                         let hi = self.vram_read(self.sprite_fetch_addr + 8, cart);
                         if slot < self.sprite_count && self.scanline >= 0 {
-                            let flip = self.sprites_scanline[slot].attribute & 0x40 != 0;
-                            self.sprite_shifter_pattern_hi[slot] = if flip { hi.reverse_bits() } else { hi };
+                            self.draw_sprite_slot(slot, self.sprite_fetch_lo, hi);
                         }
                     }
                     _ => {}
@@ -650,18 +665,6 @@ impl Ppu {
         let visible = self.scanline >= 0 && self.scanline < 240;
         if visible && self.cycle >= 1 && self.cycle <= 256 {
             self.render_pixel();
-        }
-
-        // Shifters de sprite avançam durante a linha (o x de cada sprite conta até zero)
-        if visible && self.cycle >= 1 && self.cycle <= 256 {
-            for i in 0..self.sprite_count {
-                if self.sprites_scanline[i].x > 0 {
-                    self.sprites_scanline[i].x -= 1;
-                } else {
-                    self.sprite_shifter_pattern_lo[i] <<= 1;
-                    self.sprite_shifter_pattern_hi[i] <<= 1;
-                }
-            }
         }
 
         self.cycle += 1;
@@ -756,27 +759,14 @@ impl Ppu {
         let mut fg_pixel = 0u8;
         let mut fg_palette = 0u8;
         let mut fg_priority = false;
+        let mut sprite_zero = false;
 
         if (self.mask & 0x10) != 0 && ((self.mask & 0x04) != 0 || self.cycle >= 9) {
-            self.sprite_zero_being_rendered = false;
-
-            for i in 0..self.sprite_count {
-                if self.sprites_scanline[i].x == 0 {
-                    let fg_pixel_lo = if (self.sprite_shifter_pattern_lo[i] & 0x80) > 0 { 1 } else { 0 };
-                    let fg_pixel_hi = if (self.sprite_shifter_pattern_hi[i] & 0x80) > 0 { 1 } else { 0 };
-                    fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo;
-
-                    fg_palette = (self.sprites_scanline[i].attribute & 0x03) + 0x04;
-                    fg_priority = (self.sprites_scanline[i].attribute & 0x20) == 0;
-
-                    if fg_pixel != 0 {
-                        if i == 0 {
-                            self.sprite_zero_being_rendered = true;
-                        }
-                        break;
-                    }
-                }
-            }
+            let e = self.sprite_line[(self.cycle - 1) as usize];
+            fg_pixel = e & 0x03;
+            fg_palette = ((e >> 2) & 0x03) + 0x04;
+            fg_priority = e & 0x10 == 0;
+            sprite_zero = e & 0x20 != 0;
         }
 
         let mut pixel = 0u8;
@@ -801,7 +791,7 @@ impl Ppu {
             }
 
             if self.sprite_zero_hit_possible
-                && self.sprite_zero_being_rendered
+                && sprite_zero
                 && (self.mask & 0x08) != 0
                 && (self.mask & 0x10) != 0
             {

@@ -112,6 +112,7 @@ impl Nes {
     }
 
     /// O framebuffer RGBA precisa ser reconvertido (estado restaurado).
+    #[allow(dead_code)]
     pub(crate) fn mark_dirty(&mut self) {
         self.rgba_dirty = true;
     }
