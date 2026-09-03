@@ -256,7 +256,7 @@ impl Mapper for Mmc5 {
             0x5015 => Some((self.pulse1.length > 0) as u8 | ((self.pulse2.length > 0) as u8) << 1),
             0x5204 => Some(((self.irq_pending as u8) << 7) | ((self.in_frame as u8) << 6)),
             0x5205 => Some((self.multiplicand as u16 * self.multiplier as u16) as u8),
-            0x5206 => Some((self.multiplicand as u16 * self.multiplier as u16 >> 8) as u8),
+            0x5206 => Some(((self.multiplicand as u16 * self.multiplier as u16) >> 8) as u8),
             0x5C00..=0x5FFF => {
                 if self.exram_mode >= 2 {
                     Some(self.exram[(addr & 0x3FF) as usize])
