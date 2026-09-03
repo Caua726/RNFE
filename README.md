@@ -18,9 +18,11 @@ O progresso é medido por ROMs de teste, não por sensação: [docs/STATUS.md](d
 gerado a cada marco e lista as 116 ROMs (blargg e outras) com o resultado atual — 115 passam —
 e o `nestest` é comparado instrução a instrução (8 991 linhas) com o log de referência.
 
-Numa varredura de 857 ROMs licenciadas dos EUA (600 frames cada, `examples/sweep`), 97 % carregam e
-mostram imagem; Castlevania III (MMC5), Akumajou Densetsu (VRC6), Gimmick! (5B), Splatterhouse (N163),
-Batman: Return of the Joker (FME-7) e Punch-Out!! (MMC2) chegam à fase 1 com HUD correto.
+Numa varredura de 857 ROMs dos EUA de um pack (600 frames cada, `examples/sweep`), 815 mostram imagem,
+27 ainda estão em intros longas (todas as conferidas renderizam depois), 12 usam mappers que faltam
+(64, 65, 68, 228…) e 3 travam executando lixo (dumps ruins). Castlevania III (MMC5), Akumajou Densetsu
+(VRC6), Gimmick! (5B), Splatterhouse (N163), Batman: Return of the Joker (FME-7) e Punch-Out!! (MMC2)
+chegam à fase 1 com HUD correto.
 
 O plano de trabalho, com o que vem a seguir, está em [PLAN.md](PLAN.md).
 
