@@ -145,6 +145,13 @@ impl Mapper for N163 {
         true
     }
 
+    fn on_cpu_read(&mut self, addr: u16) {
+        // a leitura da porta de dados também auto-incrementa o endereço
+        if (0x4800..=0x4FFF).contains(&addr) && self.ram_addr & 0x80 != 0 {
+            self.ram_addr = 0x80 | (self.ram_addr.wrapping_add(1) & 0x7F);
+        }
+    }
+
     fn manages_prg_ram(&self) -> bool {
         true
     }

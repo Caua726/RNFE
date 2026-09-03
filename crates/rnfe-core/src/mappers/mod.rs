@@ -94,6 +94,12 @@ impl CartData {
         }
     }
 
+    /// Um `CartData` vazio só com os metadados do header: para saber se o mapper existe antes
+    /// de copiar as ROMs.
+    pub(crate) fn probe(hdr: &RomHeader) -> CartData {
+        CartData::new(vec![0; 16384], vec![0; 8192], true, hdr)
+    }
+
     /// Byte de PRG ROM no offset físico (espelha se passar do fim).
     #[inline(always)]
     pub fn prg_at(&self, offset: usize) -> u8 {

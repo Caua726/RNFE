@@ -338,6 +338,12 @@ impl Cpu6502 {
         }
         let base = (page as u16) << 8;
         for i in 0..256u16 {
+            // O DMC interrompe o DMA de OAM (na taxa mais alta o buffer esvaziaria antes)
+            if bus.take_dmc_dma() {
+                self.dma_read(bus, base | i);
+                let v = self.dma_read(bus, bus.dmc_address());
+                bus.dmc_feed(v);
+            }
             let v = self.dma_read(bus, base | i);
             self.write(bus, 0x2004, v);
         }

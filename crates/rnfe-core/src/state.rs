@@ -169,13 +169,19 @@ impl Nes {
         if got != expected {
             return Err(StateError::RomMismatch { expected, got });
         }
-        let st: State = postcard::from_bytes(&data[14..]).map_err(|e| StateError::Corrupt(e.to_string()))?;
+        let mut st: State =
+            postcard::from_bytes(&data[14..]).map_err(|e| StateError::Corrupt(e.to_string()))?;
         self.bus.cartridge.restore(st.cart)?;
+        // O state não guarda a imagem: mantém o último frame em vez de uma tela cinza
+        std::mem::swap(&mut st.ppu.screen, &mut self.bus.ppu.screen);
+        // …nem a taxa de amostragem do frontend
+        let rate = self.bus.apu.sample_rate;
         self.cpu = st.cpu;
         self.bus.ppu = st.ppu;
         self.bus.apu = st.apu;
+        self.bus.apu.set_sample_rate(rate);
         self.bus.restore(st.bus);
-        self.mark_dirty();
+        self.bus.cartridge.data.ppu_sprites_16 = self.bus.ppu.control & 0x20 != 0;
         Ok(())
     }
 }

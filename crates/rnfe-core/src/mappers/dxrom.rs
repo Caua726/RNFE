@@ -24,8 +24,8 @@ impl Mapper for Dxrom {
         let bank = match addr {
             0x8000..=0x9FFF => self.prg_banks[0] as usize,
             0xA000..=0xBFFF => self.prg_banks[1] as usize,
-            0xC000..=0xDFFF => data.prg_8k() - 2,
-            _ => data.prg_8k() - 1,
+            0xC000..=0xDFFF => data.prg_8k().saturating_sub(2),
+            _ => data.prg_8k().saturating_sub(1),
         };
         Some(data.prg_at(bank * 0x2000 + (addr & 0x1FFF) as usize))
     }

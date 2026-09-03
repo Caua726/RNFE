@@ -74,6 +74,8 @@ pub struct GpuState {
     integer_scale: bool,
     /// Corta 8 linhas em cima e embaixo (área que as TVs não mostravam).
     overscan: bool,
+    /// Janela minimizada (0×0): não há o que desenhar até o próximo `Resized`.
+    minimized: bool,
     tex_format: wgpu::TextureFormat,
 }
 
@@ -234,6 +236,7 @@ impl GpuState {
         Ok(GpuState {
             integer_scale: false,
             overscan: false,
+            minimized: false,
             tex_format,
             surface,
             device,
@@ -349,8 +352,10 @@ impl GpuState {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
+            self.minimized = true;
             return;
         }
+        self.minimized = false;
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
@@ -395,6 +400,9 @@ impl GpuState {
         show_overlay: bool,
         overlay_rgba: Option<&[u8]>,
     ) -> bool {
+        if self.minimized {
+            return true; // nada a desenhar (e nada de laço ocupado pedindo redraw)
+        }
         if let Some(px) = nes_rgba {
             self.upload(&self.nes, px);
         }

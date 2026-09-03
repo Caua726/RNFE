@@ -209,7 +209,12 @@ impl Bus {
     /// Reset do console: RAM preservada (como no hardware), PPU/APU/mapper reiniciados.
     pub fn reset(&mut self) {
         self.cartridge.reset();
-        self.ppu = Ppu::new();
+        // Reset por botão: só os registradores da PPU reiniciam; VRAM, paleta e OAM ficam
+        let mut ppu = Ppu::new();
+        ppu.nametable = self.ppu.nametable;
+        ppu.palette_table = self.ppu.palette_table;
+        ppu.oam = self.ppu.oam;
+        self.ppu = ppu;
         self.apu.reset(true);
         self.oam_dma_page = None;
         self.open_bus = 0;

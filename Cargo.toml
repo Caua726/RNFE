@@ -51,6 +51,3 @@ strip = "debuginfo"
 [profile.release.package.rnfe-core]
 codegen-units = 1
 
-[profile.web]
-inherits = "release"
-opt-level = 3

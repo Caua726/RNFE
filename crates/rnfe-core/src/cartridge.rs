@@ -1,6 +1,6 @@
 //! Cartucho: header iNES / NES 2.0, ROMs, PRG RAM e o mapper.
 
-use crate::mappers::{CartData, Mapper, MapperKind, SUPPORTED_MAPPERS};
+use crate::mappers::{CartData, Mapper, MapperKind};
 use std::fmt;
 
 /// Erro ao interpretar uma ROM iNES.
@@ -69,7 +69,8 @@ pub fn mirror_nametable(addr: u16, mirror: Mirror) -> (usize, usize) {
     (nt, offset)
 }
 
-/// Limite de bom senso para cada ROM (o maior cartucho licenciado tem 1 MB).
+/// Limite de bom senso para cada ROM (o maior cartucho licenciado tem 1 MB; 64 MB cobre
+/// qualquer multicart e o tamanho exponencial do NES 2.0 sem estourar o `usize` do wasm).
 const MAX_ROM: usize = 64 << 20;
 
 /// O que o header diz, já decodificado (iNES 1 ou NES 2.0).
@@ -154,7 +155,8 @@ fn nes2_rom_size(lo: u8, hi: u8, unit: usize) -> Result<usize, RomError> {
     if hi == 0x0F {
         let exp = (lo >> 2) as u32;
         let mult = (lo & 0x03) as usize * 2 + 1;
-        if exp > 40 {
+        if exp > 26 {
+            // acima de 64 MB nunca cabe (e 1 << exp estouraria o usize de 32 bits no wasm)
             return Err(RomError::BadHeader("tamanho exponencial absurdo"));
         }
         Ok((1usize << exp) * mult)
@@ -191,7 +193,7 @@ impl Cartridge {
     /// Interpreta uma ROM iNES / NES 2.0 a partir dos bytes do arquivo.
     pub fn from_bytes(buffer: &[u8]) -> Result<Self, RomError> {
         let hdr = RomHeader::parse(buffer)?;
-        if !SUPPORTED_MAPPERS.contains(&hdr.mapper) {
+        if MapperKind::create(hdr.mapper, &CartData::probe(&hdr)).is_none() {
             return Err(RomError::UnsupportedMapper(hdr.mapper));
         }
         let mut offset = 16 + if hdr.trainer { 512 } else { 0 };

@@ -447,6 +447,9 @@ impl Dmc {
 
     /// Byte entregue pelo DMA.
     fn feed(&mut self, data: u8) {
+        if self.bytes_remaining == 0 {
+            return; // $4015 desligou o canal entre o pedido do DMA e a busca: descarta
+        }
         self.sample_buffer = Some(data);
         self.current_addr = self.current_addr.wrapping_add(1) | 0x8000;
         self.bytes_remaining -= 1;
@@ -458,6 +461,13 @@ impl Dmc {
             }
         }
     }
+}
+
+/// Coeficiente de um passa-alta RC de 1ª ordem (`y = α·(y₋₁ + x − x₋₁)`) com corte `fc`.
+fn hp_alpha(fc: f64, fs: f64) -> f32 {
+    let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
+    let dt = 1.0 / fs.max(1.0);
+    (rc / (rc + dt)) as f32
 }
 
 // ------------------------------------------------------------------ APU
@@ -495,7 +505,9 @@ pub struct Apu {
     sample_step: f64,
     sample_clock: f64,
 
-    // Filtros high-pass (NES tem dois: 90 Hz e 440 Hz)
+    // Filtros high-pass (NES tem dois: 90 Hz e 440 Hz); coeficientes dependem da taxa
+    hp1_alpha: f32,
+    hp2_alpha: f32,
     hp1_prev_in: f32,
     hp1_prev_out: f32,
     hp2_prev_in: f32,
@@ -529,6 +541,8 @@ impl Apu {
             sample_rate: 44100.0,
             sample_step: 44100.0 / CPU_HZ,
             sample_clock: 0.0,
+            hp1_alpha: hp_alpha(90.0, 44100.0),
+            hp2_alpha: hp_alpha(440.0, 44100.0),
             hp1_prev_in: 0.0,
             hp1_prev_out: 0.0,
             hp2_prev_in: 0.0,
@@ -574,6 +588,8 @@ impl Apu {
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.sample_rate = rate;
         self.sample_step = rate as f64 / CPU_HZ;
+        self.hp1_alpha = hp_alpha(90.0, rate as f64);
+        self.hp2_alpha = hp_alpha(440.0, rate as f64);
     }
 
     /// Nível da linha IRQ da APU (frame counter ou DMC).
@@ -681,6 +697,7 @@ impl Apu {
                     }
                 } else {
                     self.dmc.bytes_remaining = 0;
+                    self.dmc.dma_pending = false;
                 }
             }
 
@@ -821,14 +838,12 @@ impl Apu {
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
             let raw = self.mix() + expansion();
-            // High-pass 1 (~90 Hz)
-            let alpha1: f32 = 0.999835;
-            let hp1 = alpha1 * self.hp1_prev_out + raw - self.hp1_prev_in;
+            // High-pass 1 (90 Hz)
+            let hp1 = self.hp1_alpha * (self.hp1_prev_out + raw - self.hp1_prev_in);
             self.hp1_prev_in = raw;
             self.hp1_prev_out = hp1;
-            // High-pass 2 (~440 Hz)
-            let alpha2: f32 = 0.996;
-            let hp2 = alpha2 * self.hp2_prev_out + hp1 - self.hp2_prev_in;
+            // High-pass 2 (440 Hz)
+            let hp2 = self.hp2_alpha * (self.hp2_prev_out + hp1 - self.hp2_prev_in);
             self.hp2_prev_in = hp1;
             self.hp2_prev_out = hp2;
             self.sample_buffer.push(hp2 * 0.8);

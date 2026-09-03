@@ -50,7 +50,7 @@ impl Mapper for Mmc3 {
         let bank = match (addr >> 13) & 3 {
             0 => {
                 if swap {
-                    last - 1
+                    last.saturating_sub(1)
                 } else {
                     self.regs[6] as usize
                 }
@@ -60,7 +60,7 @@ impl Mapper for Mmc3 {
                 if swap {
                     self.regs[6] as usize
                 } else {
-                    last - 1
+                    last.saturating_sub(1)
                 }
             }
             _ => last,
