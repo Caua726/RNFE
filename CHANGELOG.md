@@ -4,6 +4,8 @@ Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
 ## Não publicado — F8 APK polido
 
+- fix (revisão por agentes, 03/09): interface pelo DPI da janela (`scale_factor`: fonte ≈ 16 dp, linhas ≥ 48 dp no celular); overlay com alpha premultiplicado (os botões de toque ficavam quase invisíveis); overlay de 10 MB só redesenhado/reenviado quando muda; botão/gesto Voltar do Android (tecla lógica `BrowserBack`) = Esc; fila de áudio mono (latência caía pela metade errada: ~220 ms → ~110 ms); área de toque calculada pela borda real da imagem (8:7); limites `downlevel` da GPU + `on_uncaptured_error`; áudio recriado se o stream morrer e solto em `suspended`; pausa ao perder o foco; cursor limpo após o toque (item "aceso" errado); exceção JNI pendente limpa; tema com `shortEdges` (sem faixa preta no recorte da câmera).
+
 - F8-05 Acessibilidade: ajustes de tamanho e opacidade dos botões de toque, botões sempre visíveis, tamanho do texto, alto contraste (tema próprio, contorno escuro nos controles), vibração ao tocar (Android via JNI), escala inteira, volume — persistidos em `config`. Exemplos `embed` (núcleo) e `menu_layout` (menus em ASCII); 6 testes novos (config, recentes, layout dos menus em 4 tamanhos, hit-test, ajustes).
 - F8-03 Android: tela sempre ligada, permissão de vibração; fila de áudio visível no overlay de debug.
 - F8-02 Menus de toque (modelo puro em `rnfe_frontend::menu`, desenho no gui): início (Abrir ROM, Recentes, Ajustes), pausa (continuar, salvar/carregar state, voltar 5 s, turbo, reset, outra ROM, ajustes, sair no desktop), ajustes, recentes (as ROMs abertas ficam guardadas no Storage e reabrem sem o seletor).

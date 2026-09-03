@@ -1,5 +1,5 @@
 //! Mostra como os menus de toque ficam num tamanho de tela, em ASCII:
-//! `cargo run -p rnfe-frontend --example menu_layout -- 1080 2340 paused`
+//! `cargo run -p rnfe-frontend --example menu_layout -- 1080 2340 paused [dpi]`
 use rnfe_frontend::config::{Config, RecentRom};
 use rnfe_frontend::menu::{MenuState, Screen, layout};
 
@@ -24,7 +24,9 @@ fn main() {
         ],
         version: "0.2.0".into(),
     };
-    let l = layout(screen, w, h, &Config::default(), &st);
+    let dpi: f32 =
+        args.get(4).and_then(|s| s.parse().ok()).unwrap_or(if w.min(h) >= 1000.0 { 2.6 } else { 1.0 });
+    let l = layout(screen, w, h, &Config::default(), dpi, &st);
     println!(
         "{:?} em {w}x{h}: escala {:.2}, fonte {:.0}px, {} itens",
         screen,

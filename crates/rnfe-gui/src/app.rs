@@ -39,6 +39,18 @@ const TURBO: f64 = 4.0;
 /// Frames que "Voltar 5 s" desfaz.
 const REWIND_FRAMES: u32 = 300;
 
+/// O que muda a aparência do overlay (menus, toque, debug, toast).
+#[derive(Clone, PartialEq)]
+struct OverlayKey {
+    screen: Screen,
+    touch: Buttons,
+    touch_visible: bool,
+    debug: Option<(u32, u32, usize)>,
+    toast: Option<String>,
+    cursor: (i32, i32),
+    layout_gen: u64,
+}
+
 pub struct App {
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
@@ -53,6 +65,11 @@ pub struct App {
     recent: Vec<RecentRom>,
     screen: Screen,
     layout_cache: Option<Layout>,
+    /// `Window::scale_factor()`: ~2,6 num celular, 1,0 num desktop comum.
+    dpi: f32,
+    /// Chave do último overlay desenhado: só se redesenha (e reenvia à GPU) quando muda.
+    overlay_key: Option<OverlayKey>,
+    overlay_size: (u32, u32),
     save: SaveManager,
     rewind: Rewind,
     audio: Option<AudioOut>,
@@ -112,6 +129,9 @@ impl App {
             recent,
             screen,
             layout_cache: None,
+            dpi: 1.0,
+            overlay_key: None,
+            overlay_size: (0, 0),
             save,
             rewind: Rewind::new(Rewind::DEFAULT_CAP),
             audio: None,
@@ -175,6 +195,14 @@ impl App {
         self.screen == Screen::Playing && self.nes.is_some()
     }
 
+    fn refresh_touch_layout(&mut self) {
+        let (w, h) = self.size();
+        let img_bottom =
+            self.gpu.as_ref().map(|g| g.viewport.1 + g.viewport.3).unwrap_or(w as f32 * 240.0 / 256.0);
+        self.touch_layout =
+            TouchLayout::for_viewport(w as f32, h as f32, img_bottom, self.config.touch_scale);
+    }
+
     fn set_screen(&mut self, s: Screen) {
         if s == Screen::Playing && self.nes.is_none() {
             self.screen = Screen::Start;
@@ -192,11 +220,10 @@ impl App {
     }
 
     fn apply_config(&mut self) {
-        let (w, h) = self.size();
-        self.touch_layout = TouchLayout::for_size_scaled(w as f32, h as f32, self.config.touch_scale);
         if let Some(g) = self.gpu.as_mut() {
             g.set_integer_scale(self.config.integer_scale);
         }
+        self.refresh_touch_layout();
         self.layout_cache = None;
         self.config.save(self.storage.as_mut());
     }
@@ -211,6 +238,10 @@ impl App {
 
     /// Áudio nasce no primeiro gesto do usuário (exigência dos navegadores; inofensivo no desktop).
     fn ensure_audio(&mut self) {
+        if self.audio.as_ref().is_some_and(|a| a.is_dead()) {
+            log::warn!("áudio desconectado: recriando o stream");
+            self.audio = None;
+        }
         if self.audio.is_some() {
             return;
         }
@@ -363,7 +394,7 @@ impl App {
             return l.clone();
         }
         let (w, h) = self.size();
-        let l = menu::layout(self.screen, w as f32, h as f32, &self.config, &self.menu_state());
+        let l = menu::layout(self.screen, w as f32, h as f32, &self.config, self.dpi, &self.menu_state());
         self.layout_cache = Some(l.clone());
         l
     }
@@ -500,7 +531,7 @@ impl App {
                 }
                 a.ring.push(&nes.bus.apu.sample_buffer);
                 nes.bus.apu.sample_buffer.clear();
-                a.ring.trim_to(AudioOut::TARGET_QUEUE * a.channels.max(1));
+                a.ring.trim_to(AudioOut::TARGET_QUEUE); // o anel é mono
             }
         } else {
             nes.bus.apu.sample_buffer.clear();
@@ -615,22 +646,47 @@ impl App {
         let Some((w, h)) = self.gpu.as_ref().map(|g| g.size()) else { return };
         let size = (w * h * 4) as usize;
         self.overlay.resize(size, 0);
-        let mut has_overlay = false;
         let show_toast = Instant::now() < self.toast_until;
+        let touch_visible = self.touch.seen || self.config.touch_always;
+        let key = OverlayKey {
+            screen: self.screen,
+            touch: self.touch.buttons(),
+            touch_visible,
+            debug: self.debug_overlay.then(|| (self.fps_display, self.skipped_frames, self.rewind.len())),
+            toast: show_toast.then(|| self.toast_msg.clone()),
+            cursor: if self.playing() { (0, 0) } else { (self.cursor.0 as i32, self.cursor.1 as i32) },
+            layout_gen: self.layout_cache.as_ref().map(|l| l.items.len() as u64).unwrap_or(0),
+        };
+        let dirty = self.overlay_key.as_ref() != Some(&key)
+            || self.overlay_size != (w, h)
+            || self.layout_cache.is_none();
+        let has_overlay = self.screen != Screen::Playing
+            || self.nes.is_none()
+            || touch_visible
+            || self.debug_overlay
+            || show_toast;
+        if !dirty {
+            let Some(gpu) = self.gpu.as_mut() else { return };
+            let fb = self.nes.as_mut().map(|n| n.framebuffer());
+            if !gpu.render(fb, has_overlay, None) {
+                self.redraw();
+            }
+            return;
+        }
+        self.overlay_key = Some(key);
+        self.overlay_size = (w, h);
         let theme = self.theme();
-        let s = menu::ui_scale(w as f32, h as f32, &self.config);
+        let s = menu::ui_scale(w as f32, h as f32, &self.config, self.dpi);
 
         if self.screen != Screen::Playing || self.nes.is_none() {
             self.draw_menu(w, h);
-            has_overlay = true;
         } else {
             self.overlay.fill(0);
-            if self.touch.seen || self.config.touch_always {
+            if touch_visible {
                 let pressed = self.touch.buttons();
                 let (op, hc) = (self.config.touch_opacity, self.config.high_contrast);
                 let layout = self.touch_layout.clone();
                 self.ui.draw_touch_controls(&mut self.overlay, w, h, &layout, pressed, op, &theme, hc);
-                has_overlay = true;
             }
             if self.debug_overlay {
                 if let Some(nes) = self.nes.as_ref() {
@@ -691,18 +747,18 @@ impl App {
                         [160, 160, 160, 255],
                     );
                 }
-                has_overlay = true;
             }
         }
         if show_toast {
             let msg = self.toast_msg.clone();
             self.ui.draw_toast(&mut self.overlay, w, h, &msg, 16.0 * s);
-            has_overlay = true;
         }
         let Some(gpu) = self.gpu.as_mut() else { return };
         let fb = self.nes.as_mut().map(|n| n.framebuffer());
         let ov = if has_overlay { Some(self.overlay.as_slice()) } else { None };
-        gpu.render(fb, ov);
+        if !gpu.render(fb, has_overlay, ov) {
+            self.redraw();
+        }
     }
 
     fn handle_key(&mut self, key: KeyCode, pressed: bool, el: &ActiveEventLoop) {
@@ -810,13 +866,10 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let window = Arc::new(el.create_window(attrs).expect("janela"));
         self.window = Some(window.clone());
-        let size = window.inner_size();
-        self.touch_layout = TouchLayout::for_size_scaled(
-            size.width.max(1) as f32,
-            size.height.max(1) as f32,
-            self.config.touch_scale,
-        );
+        self.dpi = window.scale_factor() as f32;
+        log::info!("janela {}x{} @{:.2}", window.inner_size().width, window.inner_size().height, self.dpi);
         self.layout_cache = None;
+        self.overlay_key = None;
         #[cfg(feature = "gamepad")]
         {
             self.gilrs = gilrs::Gilrs::new().ok();
@@ -833,6 +886,7 @@ impl ApplicationHandler<UserEvent> for App {
                     self.gpu_error = Some(e);
                 }
             }
+            self.refresh_touch_layout();
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -858,6 +912,7 @@ impl ApplicationHandler<UserEvent> for App {
                             g.resize(s.width, s.height);
                         }
                     }
+                    self.refresh_touch_layout();
                     self.layout_cache = None;
                     self.pacer.resync(self.now());
                     self.redraw();
@@ -896,11 +951,12 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(g) = self.gpu.as_mut() {
                     g.resize(s.width, s.height);
                 }
-                self.touch_layout = TouchLayout::for_size_scaled(
-                    s.width.max(1) as f32,
-                    s.height.max(1) as f32,
-                    self.config.touch_scale,
-                );
+                self.refresh_touch_layout();
+                self.layout_cache = None;
+                self.redraw();
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.dpi = scale_factor as f32;
                 self.layout_cache = None;
                 self.redraw();
             }
@@ -909,6 +965,10 @@ impl ApplicationHandler<UserEvent> for App {
                 self.input.clear();
                 self.touch.clear();
                 self.rewinding = false;
+                // Cortina de notificações, diálogo, outro app: pausa em vez de correr às cegas
+                if self.playing() {
+                    self.set_screen(Screen::Paused);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
@@ -956,11 +1016,22 @@ impl ApplicationHandler<UserEvent> for App {
                     TouchPhase::Ended | TouchPhase::Cancelled => {
                         self.touch.up(t.id);
                         self.last_touch_buttons = self.touch.buttons();
+                        // sem mouse, nenhum item deve ficar "sob o cursor" depois do toque
+                        self.cursor = (-1.0, -1.0);
                     }
                 }
                 self.redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                use winit::keyboard::{Key, NamedKey};
+                // Botão/gesto Voltar do Android chega só como tecla lógica (sem código físico)
+                if matches!(event.logical_key, Key::Named(NamedKey::BrowserBack | NamedKey::GoBack)) {
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        self.handle_key(KeyCode::Escape, true, el);
+                    }
+                    self.redraw();
+                    return;
+                }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if event.state == ElementState::Pressed && !event.repeat {
                         self.ensure_audio();
@@ -983,6 +1054,8 @@ impl ApplicationHandler<UserEvent> for App {
         self.rewinding = false;
         self.gpu = None;
         self.window = None;
+        self.audio = None; // em background o stream pode ser desconectado; volta no próximo gesto
+        self.overlay_key = None;
         if self.nes.is_some() {
             self.screen = Screen::Paused;
             self.layout_cache = None;

@@ -12,7 +12,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|density"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            android:theme="@style/Theme.RNFE">
             <meta-data android:name="android.app.lib_name" android:value="rnfe_android" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

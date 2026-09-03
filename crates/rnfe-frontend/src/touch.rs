@@ -56,6 +56,12 @@ impl TouchLayout {
 
     /// Como `for_size`, com os botões multiplicados por `scale` (0,6–1,6).
     pub fn for_size_scaled(w: f32, h: f32, scale: f32) -> TouchLayout {
+        Self::for_viewport(w, h, w * 240.0 / 256.0, scale)
+    }
+
+    /// Layout sabendo onde a imagem do NES termina em retrato (`img_bottom`, px): os controles
+    /// começam logo abaixo dela. Em paisagem `img_bottom` é ignorado.
+    pub fn for_viewport(w: f32, h: f32, img_bottom: f32, scale: f32) -> TouchLayout {
         let portrait = h > w;
         let unit = if portrait { w } else { h }; // lado menor
         let scale = scale.clamp(0.5, 2.0);
@@ -65,8 +71,8 @@ impl TouchLayout {
         let pill_h = unit * 0.06 * scale;
         let m = unit * 0.05; // margem
         if portrait {
-            // Zona de controle: abaixo da imagem (que ocupa w × w×240/256 no topo)
-            let img_h = w * 240.0 / 256.0;
+            // Zona de controle: abaixo da imagem
+            let img_h = img_bottom.clamp(0.0, h);
             let zone_top = img_h + m;
             let zone_h = (h - zone_top).max(dpad_r * 2.5);
             let cy = zone_top + zone_h * 0.45;
@@ -222,6 +228,16 @@ mod tests {
         assert!(l.a.cx + l.a.r <= 1080.0 && l.b.cx - l.b.r >= 0.0);
         assert!(l.start.y + l.start.h <= 2340.0);
         assert!(l.menu.y >= 0.0);
+    }
+
+    #[test]
+    fn viewport_moves_controls_under_the_image() {
+        let a = TouchLayout::for_viewport(1080.0, 2340.0, 886.0, 1.0);
+        let b = TouchLayout::for_viewport(1080.0, 2340.0, 1012.0, 1.0);
+        assert!(a.dpad.cy < b.dpad.cy, "imagem mais baixa (8:7) → d-pad mais alto");
+        assert!(a.dpad.cy - a.dpad.r >= 886.0, "não invade a imagem");
+        let big = TouchLayout::for_viewport(1080.0, 2340.0, 886.0, 1.5);
+        assert!(big.dpad.r > a.dpad.r * 1.4);
     }
 
     #[test]

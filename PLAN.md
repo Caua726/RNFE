@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F8 inteira — APK polido
-Estado: mergeada em main (PR #2), CI verde, APK assinado de 4,7 MB (a .so vai sem compressão dentro do APK; o artefato zipado tem 2,3 MB) em Downloads/rnfe.apk; falta o usuário testar no g56 (desinstalar o APK de debug antes: assinatura diferente)
-Próximo: ajustes que o teste no g56 pedir; depois jogos reais para MMC5/VRC6/N163 quando houver ROMs
+Tarefa: correções da revisão do APK (dois agentes: código do gui + fontes do winit/cpal/wgpu)
+Estado: 13 correções aplicadas (DPI, alpha premultiplicado, overlay só quando muda, Voltar, áudio, toque, GPU downlevel, cutout); PR aberto
+Próximo: o usuário testa o APK novo no g56 (desinstalar o anterior); se ainda houver problema, parear a depuração sem fio para eu ver logcat/capturas
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
