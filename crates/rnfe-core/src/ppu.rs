@@ -66,7 +66,7 @@ const NES_PALETTE: [[u8; 4]; 64] = [
     [0, 0, 0, 255],
 ];
 
-use crate::cartridge::{Cartridge, Mirror};
+use crate::cartridge::Cartridge;
 
 /// Dots entre a escrita em `$2001` e o render ligar/desligar de fato.
 /// Dots que A12 precisa ficar baixo para a próxima subida clockar o MMC3 (~3 ciclos de M2).
@@ -410,21 +410,6 @@ impl Ppu {
         }
     }
 
-    #[inline]
-    fn mirror_nametable(addr: u16, mirror: Mirror) -> (usize, usize) {
-        let addr = addr & 0x0FFF;
-        let table = (addr >> 10) as usize; // 0-3
-        let offset = (addr & 0x03FF) as usize;
-        let nt = match mirror {
-            Mirror::Vertical => table & 1,
-            Mirror::Horizontal => table >> 1,
-            Mirror::OneScreenLo => 0,
-            Mirror::OneScreenHi => 1,
-            Mirror::FourScreen => table,
-        };
-        (nt, offset)
-    }
-
     /// Um endereço foi posto no barramento da PPU: detector de borda de A12 com o filtro do
     /// MMC3 (A12 precisa ter ficado baixo por alguns ciclos de M2 para a subida contar).
     #[inline]
@@ -462,8 +447,7 @@ impl Ppu {
         if addr <= 0x1FFF {
             cart.chr_read(addr)
         } else if addr <= 0x3EFF {
-            let (nt, offset) = Self::mirror_nametable(addr, cart.get_mirror());
-            self.nametable[nt][offset]
+            cart.nt_read(addr, &self.nametable)
         } else {
             let addr = Self::palette_index(addr);
             self.palette_table[addr] & if (self.mask & 0x01) != 0 { 0x30 } else { 0x3F }
@@ -483,8 +467,7 @@ impl Ppu {
         if addr <= 0x1FFF {
             cart.chr_write(addr, data);
         } else if addr <= 0x3EFF {
-            let (nt, offset) = Self::mirror_nametable(addr, cart.get_mirror());
-            self.nametable[nt][offset] = data;
+            cart.nt_write(addr, data, &mut self.nametable);
         } else {
             self.palette_table[Self::palette_index(addr)] = data;
         }
@@ -534,6 +517,11 @@ impl Ppu {
                 }
             }
 
+            // Dot 1: a busca de nametable do 1º tile (o mesmo endereço dos dots 337/339 —
+            // é assim que o MMC5 detecta o começo de uma scanline).
+            if self.cycle == 1 && self.rendering {
+                self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
+            }
             if (self.cycle >= 2 && self.cycle < 258) || (self.cycle >= 321 && self.cycle < 338) {
                 self.update_shifters();
 

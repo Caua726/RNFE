@@ -236,3 +236,57 @@ fn sunsoft_5b_tone() {
     }
     assert!(seen_on && seen_off, "onda quadrada do 5B: on={seen_on} off={seen_off}");
 }
+
+#[test]
+fn n163_banks_nametables_irq_audio() {
+    let mut cart = rom(19, 8, 0); // horizontal
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0xE000, 5);
+    assert_eq!(cart.cpu_read(0x8000), Some(2), "banco de 8 KB 5 = metade alta do 16 KB 2");
+    // nametables: padrão segue o header (horizontal: $2000/$2400 → CIRAM 0, $2800/$2C00 → 1)
+    let mut ciram = [[0u8; 1024]; 4];
+    ciram[0][5] = 0xAA;
+    ciram[1][5] = 0xBB;
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0xAA);
+    assert_eq!(cart.nt_read(0x2405, &ciram), 0xAA);
+    assert_eq!(cart.nt_read(0x2805, &ciram), 0xBB);
+    cart.cpu_write(0xC000, 0xE1); // $2000 → CIRAM 1
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0xBB);
+    cart.cpu_write(0xC000, 0x00); // $2000 → CHR ROM banco 0 (CHR RAM aqui: zeros)
+    cart.chr_write(0x0005, 0x77);
+    assert_eq!(cart.nt_read(0x2005, &ciram), 0x77);
+    cart.nt_write(0x2006, 0x66, &mut ciram);
+    assert_eq!(cart.chr_read(0x0006), 0x66, "escrita em NT mapeada para CHR RAM");
+
+    // IRQ: contador de 15 bits até $7FFF
+    cart.cpu_write(0x5000, 0xFD);
+    cart.cpu_write(0x5800, 0xFF); // $7FFD, enable
+    cart.cpu_clock();
+    assert!(!cart.irq_pending());
+    cart.cpu_clock();
+    assert!(cart.irq_pending());
+    assert_eq!(cart.cpu_read(0x5800), Some(0xFF));
+    cart.cpu_write(0x5800, 0x00); // ack + disable
+    assert!(!cart.irq_pending());
+
+    // Áudio: 1 canal (reg $7F = 0), onda quadrada na RAM $00-$0F (32 amostras), volume 15
+    cart.cpu_write(0xF800, 0x80); // endereço 0 com auto-incremento
+    for i in 0..16 {
+        cart.cpu_write(0x4800, if i < 8 { 0xFF } else { 0x00 });
+    }
+    cart.cpu_write(0xF800, 0x80 | 0x78); // canal 7
+    for v in [0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x0F] {
+        // freq $001000, fase 0, comprimento 256-128 = 32 amostras, offset 0, volume 15
+        cart.cpu_write(0x4800, v);
+    }
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for _ in 0..40_000 {
+        cart.cpu_clock();
+        let o = cart.audio_output();
+        lo = lo.min(o);
+        hi = hi.max(o);
+    }
+    assert!(hi > 0.1 && lo < -0.1, "onda do N163 deveria oscilar: {lo}..{hi}");
+    cart.cpu_write(0xE000, 0x40); // som desligado
+    assert_eq!(cart.audio_output(), 0.0);
+}

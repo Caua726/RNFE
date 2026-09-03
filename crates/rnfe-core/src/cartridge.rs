@@ -42,6 +42,33 @@ pub enum Mirror {
     FourScreen,
 }
 
+/// De onde vem um byte de nametable (`$2000-$2FFF`) — o mapper decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NtSource {
+    /// Página da VRAM interna da PPU (0-3).
+    Ciram(u8),
+    /// Offset físico em CHR (ROM ou RAM).
+    Chr(usize),
+    /// Valor pronto (tile de preenchimento, ExRAM…); escritas são ignoradas.
+    Value(u8),
+}
+
+/// Página da VRAM (0-3) e offset para um endereço `$2000-$3EFF` com o mirroring dado.
+#[inline]
+pub fn mirror_nametable(addr: u16, mirror: Mirror) -> (usize, usize) {
+    let addr = addr & 0x0FFF;
+    let table = (addr >> 10) as usize;
+    let offset = (addr & 0x03FF) as usize;
+    let nt = match mirror {
+        Mirror::Vertical => table & 1,
+        Mirror::Horizontal => table >> 1,
+        Mirror::OneScreenLo => 0,
+        Mirror::OneScreenHi => 1,
+        Mirror::FourScreen => table,
+    };
+    (nt, offset)
+}
+
 /// Limite de bom senso para cada ROM (o maior cartucho licenciado tem 1 MB).
 const MAX_ROM: usize = 64 << 20;
 
@@ -253,6 +280,37 @@ impl Cartridge {
             return true;
         }
         false
+    }
+
+    /// Leitura de nametable (`$2000-$3EFF` da PPU): o mapper pode redirecionar para CHR,
+    /// para uma página específica da VRAM ou devolver um valor próprio.
+    #[inline]
+    pub fn nt_read(&mut self, addr: u16, ciram: &[[u8; 1024]; 4]) -> u8 {
+        match self.mapper.nt_source(addr, &self.data) {
+            None => {
+                let (nt, off) = mirror_nametable(addr, self.get_mirror());
+                ciram[nt][off]
+            }
+            Some(NtSource::Ciram(p)) => ciram[(p & 3) as usize][(addr & 0x03FF) as usize],
+            Some(NtSource::Chr(o)) => self.data.chr_at(o),
+            Some(NtSource::Value(v)) => v,
+        }
+    }
+
+    #[inline]
+    pub fn nt_write(&mut self, addr: u16, val: u8, ciram: &mut [[u8; 1024]; 4]) {
+        if self.mapper.nt_write(addr, val, &mut self.data) {
+            return;
+        }
+        match self.mapper.nt_source(addr, &self.data) {
+            None => {
+                let (nt, off) = mirror_nametable(addr, self.get_mirror());
+                ciram[nt][off] = val;
+            }
+            Some(NtSource::Ciram(p)) => ciram[(p & 3) as usize][(addr & 0x03FF) as usize] = val,
+            Some(NtSource::Chr(o)) => self.data.chr_set(o, val),
+            Some(NtSource::Value(_)) => {}
+        }
     }
 
     /// Leitura de CHR (`$0000-$1FFF` da PPU) pelo mapper.
