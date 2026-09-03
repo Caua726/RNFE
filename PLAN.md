@@ -15,7 +15,7 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 
 ## Onde parei
 Tarefa: F8 inteira — APK polido
-Estado: mergeada em main (PR #2), CI verde, APK assinado de 2,3 MB em Downloads/rnfe.apk; falta o usuário testar no g56 (desinstalar o APK de debug antes: assinatura diferente)
+Estado: mergeada em main (PR #2), CI verde, APK assinado de 4,7 MB (a .so vai sem compressão dentro do APK; o artefato zipado tem 2,3 MB) em Downloads/rnfe.apk; falta o usuário testar no g56 (desinstalar o APK de debug antes: assinatura diferente)
 Próximo: ajustes que o teste no g56 pedir; depois jogos reais para MMC5/VRC6/N163 quando houver ROMs
 
 ## Linha de base
@@ -63,7 +63,7 @@ M7, 03/09/2026 (g56, release, mínimo de 3 corridas de 1 500 frames):
 - [x] F8-04 tamanho: LTO fat + 1 cgu no build Android, medir; sem gilrs no Android se pesar
 - [x] F8-05 acessibilidade: tamanho e opacidade dos botões de toque, texto maior, alto contraste, vibração ao tocar (JNI), controles sempre visíveis; tudo persistido em `config`
 
-M8, 03/09/2026: APK assinado (release) de 2,3 MB (LTO fat, 1 cgu, strip, sem gilrs) com ícone, menus de toque, ajustes persistidos e recentes; keystore em `~/.rnfe-release/` do celular (senha em `secrets.env`) e nos secrets do repositório.
+M8, 03/09/2026: APK assinado (release) de 4,7 MB — .so de 4,8 MB sem compressão no pacote, 2,3 MB zipado (LTO fat, 1 cgu, strip, sem gilrs) com ícone, menus de toque, ajustes persistidos e recentes; keystore em `~/.rnfe-release/` do celular (senha em `secrets.env`) e nos secrets do repositório.
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
