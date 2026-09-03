@@ -152,3 +152,87 @@ fn fme7_wram_window() {
     cart.cpu_write(0xA000, 0x02); // ROM banco 2 (8 KB) = 2ª metade... do banco 16K nº 1
     assert_eq!(cart.cpu_read(0x6000), Some(1));
 }
+
+// ---------------------------------------------------------------- F6: VRC6 e 5B
+
+#[test]
+fn vrc6_banks_irq_and_audio() {
+    let mut cart = rom(24, 8, 0); // 128 KB, 16 bancos de 8 KB
+    assert_eq!(cart.cpu_read(0xE000), Some(7), "último banco de 16 KB (índice 7) fixo em $E000");
+    cart.cpu_write(0x8000, 2);
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    cart.cpu_write(0xC000, 9); // banco de 8 KB 9 = metade alta do banco de 16 KB 4
+    assert_eq!(cart.cpu_read(0xC000), Some(4));
+    // PRG RAM só com o bit 7 de $B003
+    assert_eq!(cart.cpu_read(0x6000), None);
+    cart.cpu_write(0xB003, 0x80);
+    cart.cpu_write(0x6000, 0x5A);
+    assert_eq!(cart.cpu_read(0x6000), Some(0x5A));
+
+    // IRQ em modo scanline: latch 0xFE → 2 clocks de 113⅔ ciclos até estourar
+    cart.cpu_write(0xF000, 0xFE);
+    cart.cpu_write(0xF001, 0x02);
+    for _ in 0..227 {
+        cart.cpu_clock();
+    }
+    assert!(!cart.irq_pending(), "ainda não");
+    for _ in 0..5 {
+        cart.cpu_clock();
+    }
+    assert!(cart.irq_pending(), "0xFE → 0xFF → estouro na 2ª scanline");
+    cart.cpu_write(0xF002, 0); // ack
+    assert!(!cart.irq_pending());
+
+    // Áudio: pulso 1 ligado, volume 15, duty 7 (metade) → saída > 0 em algum momento
+    cart.cpu_write(0x9000, 0x7F);
+    cart.cpu_write(0x9001, 0x10);
+    cart.cpu_write(0x9002, 0x80);
+    let mut max = 0.0f32;
+    for _ in 0..2000 {
+        cart.cpu_clock();
+        max = max.max(cart.audio_output());
+    }
+    assert!(max > 0.1, "pulso do VRC6 deveria soar: {max}");
+    cart.cpu_write(0x9003, 0x01); // halt
+    let v = cart.audio_output();
+    for _ in 0..100 {
+        cart.cpu_clock();
+    }
+    assert_eq!(cart.audio_output(), v, "congelado");
+}
+
+#[test]
+fn vrc6_mapper_26_swaps_a0_a1() {
+    let mut cart = rom(26, 4, 0);
+    // No mapper 26, $F002 (A1) faz o papel de $F001 (controle) e vice-versa
+    cart.cpu_write(0xF000, 0xFF);
+    cart.cpu_write(0xF002, 0x06); // = $F001 do 24: enable + cycle mode
+    cart.cpu_clock();
+    assert!(cart.irq_pending(), "modo ciclo com latch 0xFF estoura no 1º clock");
+    cart.cpu_write(0xF001, 0); // = $F002 do 24: ack
+    assert!(!cart.irq_pending());
+}
+
+#[test]
+fn sunsoft_5b_tone() {
+    let mut cart = rom(69, 2, 0);
+    cart.cpu_write(0x8000, 0x0F); // FME-7 cmd (irrelevante)
+    cart.cpu_write(0xC000, 0); // reg 0: período A baixo
+    cart.cpu_write(0xE000, 0x10);
+    cart.cpu_write(0xC000, 7); // mixer: tom A ligado (bit 0 = 0)
+    cart.cpu_write(0xE000, 0xFE);
+    cart.cpu_write(0xC000, 8); // volume A
+    cart.cpu_write(0xE000, 0x0F);
+    let mut seen_on = false;
+    let mut seen_off = false;
+    for _ in 0..1000 {
+        cart.cpu_clock();
+        let o = cart.audio_output();
+        if o > 0.05 {
+            seen_on = true;
+        } else {
+            seen_off = true;
+        }
+    }
+    assert!(seen_on && seen_off, "onda quadrada do 5B: on={seen_on} off={seen_off}");
+}

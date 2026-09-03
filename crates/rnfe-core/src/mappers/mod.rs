@@ -27,6 +27,7 @@ pub mod mmc2;
 pub mod mmc3;
 pub mod nrom;
 pub mod uxrom;
+pub mod vrc6;
 
 use crate::cartridge::{Mirror, RomHeader};
 
@@ -204,9 +205,10 @@ pub enum MapperKind {
     Camerica(camerica::Camerica),
     Dxrom(dxrom::Dxrom),
     Mapper227(mapper227::Mapper227),
+    Vrc6(vrc6::Vrc6),
 }
 
-pub const SUPPORTED_MAPPERS: &[u16] = &[0, 1, 2, 3, 4, 7, 9, 11, 34, 66, 69, 71, 206, 227];
+pub const SUPPORTED_MAPPERS: &[u16] = &[0, 1, 2, 3, 4, 7, 9, 11, 24, 26, 34, 66, 69, 71, 206, 227];
 
 impl MapperKind {
     /// Cria o mapper para o `id`; `None` se não suportado.
@@ -226,6 +228,7 @@ impl MapperKind {
             71 => MapperKind::Camerica(camerica::Camerica::new()),
             206 => MapperKind::Dxrom(dxrom::Dxrom::new(data)),
             227 => MapperKind::Mapper227(mapper227::Mapper227::new()),
+            24 | 26 => MapperKind::Vrc6(vrc6::Vrc6::new(data)),
             _ => return None,
         })
     }
@@ -246,6 +249,13 @@ impl MapperKind {
             MapperKind::Camerica(_) => "Camerica",
             MapperKind::Dxrom(_) => "DxROM",
             MapperKind::Mapper227(_) => "Mapper 227",
+            MapperKind::Vrc6(v) => {
+                if v.is_26() {
+                    "VRC6b"
+                } else {
+                    "VRC6a"
+                }
+            }
         }
     }
 }
@@ -267,6 +277,7 @@ macro_rules! dispatch {
             MapperKind::Camerica($m) => $e,
             MapperKind::Dxrom($m) => $e,
             MapperKind::Mapper227($m) => $e,
+            MapperKind::Vrc6($m) => $e,
         }
     };
 }
