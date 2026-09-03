@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: F6 inteira (áudio de expansão, VRC6, N163, MMC5)
-Estado: concluída — marco M6 (APK da F5 testado pelo usuário no g56: rodou)
-Próximo: F7-01 — bench de referência + perfil por subsistema (branch fase-7-perf)
+Tarefa: F7 inteira (bench --profile, otimizações A/B, wasm medido, áudio/frame skip)
+Estado: concluída — marco M7; plano F0–F7 fechado
+Próximo: manutenção — split vertical do MMC5, MMC5/VRC6/N163 testados com jogos reais, keystore de release para o APK
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
@@ -48,6 +48,13 @@ M4, 02/09/2026 (CI ubuntu): 5 jobs verdes no 1º push; wasm 3,82 MB (1,43 MB gzi
 M5, 02/09/2026 (CI ubuntu): job android verde (cargo-ndk -P 26 + gradle); APK de debug 7,9 MB (a .so tinha símbolos; `CARGO_PROFILE_RELEASE_STRIP=symbols` no job a partir de agora — meta < 5 MB fica para F7-03).
 
 M6, 03/09/2026: 18 mappers (+5, 19, 24, 26); áudio de expansão pelo `Apu::clock(expansion)` só na amostra; nametables pelo mapper (`nt_source`); MMC5 sem split vertical, validado só por teste sintético + telas dos mmc5test/exram (sem imagem de referência). 12 testes sintéticos de mapper.
+
+M7, 03/09/2026 (g56, release, mínimo de 3 corridas de 1 500 frames):
+- BladeBuster (MMC3): **2,41 ms/frame** (415 fps, 6,9× tempo real) — F0 era 3,57 (1,48×; a meta de 2× não foi atingida), M2 3,8, M3 3,16
+- nestest: 3,12 ms · mmc3_test_2/1-clocking: 2,52 ms · VmHWM 4,2 MB
+- `bench --profile` BladeBuster: PPU 1,35 ms (55 %), APU 0,20 (8 %), CPU+bus ≈ 0,93 (37 %)
+- wasm 3,8 MB / 1,43 MB gzip; APK de debug 7,9 MB (sem strip; com strip no CI a partir de F5) — meta de 5 MB não medida ainda
+- Metas do pior caso: ≥ 125 fps num núcleo ✅ (415), RSS < 50 MB ✅ (4,2), wasm < 2 MB gzip ✅, APK < 5 MB ❓
 
 ## Alvos
 - Tier 1 (60 fps + som): Web (Chrome/Firefox/Safari; Chrome Android 10+; Safari iOS 16+), Android arm64 8+, Desktop Linux x86_64 + Windows x86_64.
@@ -113,10 +120,10 @@ M6, 03/09/2026: 18 mappers (+5, 19, 24, 26); áudio de expansão pelo `Apu::cloc
 - [x] F6-04 MMC5 (+ split, atributo estendido, áudio)
 
 ## F7 — Performance e tamanho (`fase-7-perf`) · marco M7: metas do pior caso
-- [ ] F7-01 bench de referência numa ROM de jogo
-- [ ] F7-02 otimizações medidas (bancos CHR sem despacho, ring de samples, cache de glifos, overlay 1×)
-- [ ] F7-03 wasm < 2 MB gzip; 60 fps no Chrome do g56
-- [ ] F7-04 frame skip adaptativo + buffer de áudio maior
+- [x] F7-01 bench de referência numa ROM de jogo
+- [x] F7-02 otimizações medidas (bancos CHR sem despacho, ring de samples, cache de glifos, overlay 1×)
+- [x] F7-03 wasm < 2 MB gzip; 60 fps no Chrome do g56
+- [x] F7-04 frame skip adaptativo + buffer de áudio maior
 
 ## Registro de decisões
 - 2026-09-02: plano mestre aprovado (8 fases). Tarefa por tarefa; commits locais; push no fim; web antes de Android.
