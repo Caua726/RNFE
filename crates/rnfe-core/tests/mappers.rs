@@ -366,3 +366,58 @@ fn mmc5_prg_modes_multiplier_fill_exram_and_scanlines() {
     }
     assert_eq!(cart.cpu_read(0x5204), Some(0x00), "sem leituras → fim do frame");
 }
+
+#[test]
+fn mmc5_vertical_split() {
+    let mut cart = rom(5, 2, 0);
+    let ciram = [[0u8; 1024]; 4];
+    // ExRAM como nametable normal em $2000 (modo 0) com um padrão conhecido; CHR RAM
+    cart.cpu_write(0x5104, 0);
+    cart.cpu_write(0x5105, 0b00_00_00_00); // tudo CIRAM 0 (zeros)
+    for i in 0..960u16 {
+        cart.cpu_write(0x5104, 2); // modo RAM para escrever pela CPU
+        cart.cpu_write(0x5C00 + i, ((i / 32) * 16 + i % 32) as u8); // row*16 + col (trunca)
+    }
+    cart.cpu_write(0x5C00 + 0x3C0 + 1, 0b11_10_01_00); // atributo do bloco (colunas 4-7, linhas 0-3)
+    cart.cpu_write(0x5104, 0);
+    cart.cpu_write(0x5101, 0); // CHR 8 KB
+    cart.cpu_write(0x5127, 0);
+    cart.chr_write(0x1000 + 0x0035, 0xAB); // banco 1 de 4 KB, tile 3, linha fina 5
+    cart.cpu_write(0x5200, 0x80 | 6); // split à esquerda: colunas 0-5
+    cart.cpu_write(0x5201, 8 * 3 + 5); // rolagem: linha 29 → row 3, fine y 5 (na scanline 0)
+    cart.cpu_write(0x5202, 1);
+
+    // scanline 0 detectada (3 leituras iguais); essa 3ª leitura é a busca do tile idx 0 = coluna 2
+    // (endereços distintos entre buscas, para não disparar outra detecção sem querer)
+    let t = cart.nt_read(0x2010, &ciram);
+    let _ = cart.nt_read(0x2010, &ciram);
+    let t0 = cart.nt_read(0x2010, &ciram);
+    assert_eq!(t, 0, "antes da detecção: CIRAM");
+    assert_eq!(t0, 3 * 16 + 2, "coluna 2 da região dividida, linha 3 da ExRAM");
+    // atributo desse tile: bloco 0 (col 2 → col/4 = 0), quadrante col&2=2, row&2=2 → shift 6
+    cart.cpu_write(0x5104, 2);
+    cart.cpu_write(0x5C00 + 0x3C0, 0b10_00_00_00);
+    cart.cpu_write(0x5104, 0);
+    assert_eq!(cart.nt_read(0x23C0, &ciram), 0b10 * 0x55, "paleta 2 replicada");
+    // padrão: banco $5202 (4 KB 1), tile 3 (endereço $0030 pedido pela PPU), linha fina do split (5)
+    assert_eq!(cart.chr_read(0x0030), 0xAB, "linha fina vem da rolagem do split, banco de $5202");
+    // idx 1 → coluna 3 (ainda split); idx 2..3 → colunas 4,5 (split); idx 4 → coluna 6 (normal)
+    assert_eq!(cart.nt_read(0x2001, &ciram), 3 * 16 + 3);
+    let _ = cart.nt_read(0x2002, &ciram);
+    let _ = cart.nt_read(0x2003, &ciram);
+    assert_eq!(cart.nt_read(0x2004, &ciram), 0, "coluna 6: nametable normal (CIRAM 0)");
+    assert_eq!(cart.chr_read(0x0030), 0, "fora do split: banco normal (0), CHR RAM zerada");
+    // lado direito
+    cart.cpu_write(0x5200, 0x80 | 0x40 | 30); // colunas 30 e 31
+    for i in 5..28u16 {
+        let _ = cart.nt_read(0x2020 + i, &ciram);
+    }
+    assert_eq!(cart.nt_read(0x2050, &ciram), 3 * 16 + 30, "idx 28 = coluna 30");
+    assert_eq!(cart.nt_read(0x2051, &ciram), 3 * 16 + 31);
+    assert_eq!(cart.nt_read(0x2052, &ciram), 0, "coluna 32: fora da tela, normal");
+    let _ = cart.nt_read(0x2053, &ciram); // idx 31
+    // idx 32/33 = colunas 0/1 da linha seguinte (scanline 1 → linha 30 → ainda row 3)
+    cart.cpu_write(0x5200, 0x80 | 2);
+    assert_eq!(cart.nt_read(0x2060, &ciram), 3 * 16, "coluna 0 da próxima linha");
+    assert_eq!(cart.nt_read(0x2061, &ciram), 3 * 16 + 1);
+}
