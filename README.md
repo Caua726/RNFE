@@ -32,7 +32,7 @@ cargo run -p rnfe-desktop --release -- caminho/para/jogo.nes
 # terminal (inclusive Termux no Android) — sem dependências além do próprio Rust
 cargo run -p rnfe-tty --release -- caminho/para/jogo.nes
 
-# Android (arm64, 8.0+): APK em Releases (tag v*) ou no artefato "rnfe-android-debug-apk" de cada CI;
+# Android (arm64, 8.0+): APK em Releases (tag v*) ou no artefato "rnfe-android-apk" de cada CI (scripts/apk.sh baixa e instala no Termux);
 # build local: cargo install cargo-ndk; cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs build -p rnfe-android --release
 #              cd android && gradle assembleDebug   (precisa do Android SDK + NDK)
 

@@ -88,6 +88,20 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Keystore de release (secrets; sem elas, assina com a de debug)
+        env:
+          KS_B64: ${{ secrets.RNFE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/rnfe-release.jks"
+            echo "RNFE_KEYSTORE=$RUNNER_TEMP/rnfe-release.jks" >> "$GITHUB_ENV"
+            echo "RNFE_KEYSTORE_PASSWORD=${{ secrets.RNFE_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "RNFE_KEY_ALIAS=${{ secrets.RNFE_KEY_ALIAS }}" >> "$GITHUB_ENV"
+            echo "RNFE_KEY_PASSWORD=${{ secrets.RNFE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "assinatura: release"
+          else
+            echo "assinatura: debug (sem secrets)"
+          fi
       - working-directory: android
         run: gradle --no-daemon assembleRelease
       - run: cp android/app/build/outputs/apk/release/app-release.apk rnfe-android-arm64.apk && ls -la rnfe-android-arm64.apk
