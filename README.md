@@ -83,7 +83,7 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 | Reset | R | menu → Reset | — | R |
 | Pausa / menu | Esc | MENU | — | — |
 | Abrir ROM | O ou clique | toque em Open ROM | — | — |
-| Save / load state | F5 / F7 | menu | — | 1 / 2 |
+| Save / load state | F5 / F7 (slot 1) | menu → Salvar / Carregar (3 slots) | — | 1 / 2 |
 | Rewind (segurar) | Backspace | — | — | Backspace |
 | Turbo (segurar) | Espaço | — | — | — |
 | Sair | Esc (sem ROM) | — | — | Q ou Ctrl-C |
@@ -91,9 +91,10 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 
 Os controles de toque aparecem no primeiro toque; em retrato a imagem fica em cima e os botões
 embaixo, em paisagem ficam nas laterais. O botão **MENU** (ou Esc) abre o menu de pausa: salvar e
-carregar state, voltar 5 s, turbo, reset, abrir outra ROM e **Ajustes** — tamanho e opacidade dos
-botões de toque, botões sempre visíveis, tamanho do texto, alto contraste, vibração, escala
-inteira e volume. Tudo fica guardado, junto com a lista de ROMs recentes (reabrem sem o seletor).
+carregar state (3 slots), voltar 5 s, turbo, reset (com confirmação), abrir outra ROM e
+**Ajustes** com sliders — tamanho e opacidade dos botões de toque, botões sempre visíveis, tamanho
+do texto, alto contraste, vibração, escala inteira e volume. Tudo fica guardado, junto com a lista
+de ROMs recentes (reabrem sem o seletor).
 
 ## Mappers
 

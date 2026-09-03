@@ -17,8 +17,8 @@ use crate::ui::{self, Theme, Ui};
 use crate::{Haptic, Launch, RomPicker};
 use rnfe_core::{Buttons, Nes, Storage};
 use rnfe_frontend::config::{self, Config, RecentRom};
-use rnfe_frontend::menu::{self, Action, Layout, MenuState, Screen};
-use rnfe_frontend::touch::Special;
+use rnfe_frontend::menu::{self, Action, ItemKind, Layout, MenuState, Screen};
+use rnfe_frontend::touch::{Rect, Special};
 use rnfe_frontend::{FramePacer, InputState, NTSC_FPS, Rewind, SaveManager, TouchLayout, TouchState};
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,6 +49,8 @@ struct OverlayKey {
     toast: Option<String>,
     cursor: (i32, i32),
     layout_gen: u64,
+    pressed: Option<usize>,
+    slider: Option<u32>,
 }
 
 pub struct App {
@@ -70,6 +72,14 @@ pub struct App {
     /// Chave do último overlay desenhado: só se redesenha (e reenvia à GPU) quando muda.
     overlay_key: Option<OverlayKey>,
     overlay_size: (u32, u32),
+    /// Item de menu pressionado (índice) e onde começou o toque: a ação vale ao soltar.
+    pressed: Option<(usize, f32, f32)>,
+    /// Tela de states: carregar ou salvar; quais slots existem.
+    states_load: bool,
+    slots: [bool; 3],
+    confirm_reset: bool,
+    /// Frames emulados nesta ROM (tempo de jogo).
+    play_frames: u64,
     save: SaveManager,
     rewind: Rewind,
     audio: Option<AudioOut>,
@@ -132,6 +142,11 @@ impl App {
             dpi: 1.0,
             overlay_key: None,
             overlay_size: (0, 0),
+            pressed: None,
+            states_load: false,
+            slots: [false; 3],
+            confirm_reset: false,
+            play_frames: 0,
             save,
             rewind: Rewind::new(Rewind::DEFAULT_CAP),
             audio: None,
@@ -173,8 +188,15 @@ impl App {
         self.toast_until = Instant::now() + Duration::from_secs(2);
     }
 
-    fn state_key(&self) -> Option<String> {
-        self.nes.as_ref().map(|n| format!("state/{:016x}/1.rnfs", n.cartridge().rom_hash()))
+    fn state_key(&self, slot: u8) -> Option<String> {
+        self.nes.as_ref().map(|n| format!("state/{:016x}/{slot}.rnfs", n.cartridge().rom_hash()))
+    }
+
+    fn refresh_slots(&mut self) {
+        for i in 0..3u8 {
+            self.slots[i as usize] =
+                self.state_key(i + 1).map(|k| self.storage.read(&k).is_some()).unwrap_or(false);
+        }
     }
 
     fn redraw(&self) {
@@ -209,6 +231,11 @@ impl App {
         } else {
             self.screen = s;
         }
+        if s == Screen::States {
+            self.refresh_slots();
+        }
+        self.confirm_reset = false;
+        self.pressed = None;
         self.layout_cache = None;
         self.input.clear();
         self.touch.clear();
@@ -277,6 +304,7 @@ impl App {
         }
         self.nes = Some(nes);
         self.rom_name = name;
+        self.play_frames = 0;
         self.rewind.clear();
         self.turbo = false;
         self.pacer.set_speed(1.0);
@@ -331,26 +359,26 @@ impl App {
         }
     }
 
-    fn save_state(&mut self) {
-        let Some(key) = self.state_key() else { return };
+    fn save_state(&mut self, slot: u8) {
+        let Some(key) = self.state_key(slot) else { return };
         let data = self.nes.as_ref().map(|n| n.save_state()).unwrap_or_default();
         match self.storage.write(&key, &data) {
-            Ok(()) => self.toast("State salvo"),
+            Ok(()) => self.toast(format!("State salvo no slot {slot}")),
             Err(e) => self.toast(format!("Erro: {e}")),
         }
     }
 
-    fn load_state(&mut self) {
-        let Some(key) = self.state_key() else { return };
+    fn load_state(&mut self, slot: u8) {
+        let Some(key) = self.state_key(slot) else { return };
         let Some(data) = self.storage.read(&key) else {
-            self.toast("Sem state salvo");
+            self.toast(format!("Slot {slot} vazio"));
             return;
         };
         let r = self.nes.as_mut().map(|n| n.load_state(&data));
         match r {
             Some(Ok(())) => {
                 self.rewind.clear();
-                self.toast("State carregado");
+                self.toast(format!("State {slot} carregado"));
             }
             Some(Err(e)) => self.toast(format!("Erro: {e}")),
             None => {}
@@ -386,6 +414,10 @@ impl App {
             can_quit: cfg!(not(any(target_arch = "wasm32", target_os = "android"))),
             recent: self.recent.clone(),
             version: env!("CARGO_PKG_VERSION").into(),
+            confirm_reset: self.confirm_reset,
+            states_load: self.states_load,
+            slots: self.slots,
+            play_seconds: self.play_frames / 60,
         }
     }
 
@@ -400,7 +432,16 @@ impl App {
     }
 
     fn act(&mut self, action: Action, el: &ActiveEventLoop) {
-        self.buzz();
+        if matches!(action, Action::None) {
+            return;
+        }
+        if !matches!(action, Action::Slide(..)) {
+            self.buzz();
+        }
+        if !matches!(action, Action::Reset) && self.confirm_reset {
+            self.confirm_reset = false;
+            self.layout_cache = None;
+        }
         match action {
             Action::Resume => self.set_screen(Screen::Playing),
             Action::OpenRom => self.open_rom(),
@@ -414,14 +455,31 @@ impl App {
                 }
             }
             Action::Reset => {
-                self.reset();
+                if self.confirm_reset {
+                    self.reset();
+                    self.set_screen(Screen::Playing);
+                } else {
+                    self.confirm_reset = true;
+                    self.layout_cache = None;
+                }
+            }
+            Action::States { load } => {
+                self.states_load = load;
+                self.set_screen(Screen::States);
+            }
+            Action::SaveSlot(n) => {
+                self.save_state(n);
                 self.set_screen(Screen::Playing);
             }
-            Action::SaveState => self.save_state(),
-            Action::LoadState => {
-                self.load_state();
+            Action::LoadSlot(n) => {
+                self.load_state(n);
                 self.set_screen(Screen::Playing);
             }
+            Action::Slide(setting, f) => {
+                menu::set_fraction(&mut self.config, setting, f);
+                self.apply_config();
+            }
+            Action::None => {}
             Action::Rewind => {
                 self.rewind_5s();
                 self.set_screen(Screen::Playing);
@@ -513,6 +571,7 @@ impl App {
                 continue;
             }
             nes.run_frame();
+            self.play_frames += 1;
             self.rewind.record(nes);
             if let Err(e) = self.save.tick(nes, self.storage.as_mut()) {
                 log::error!("erro ao gravar save: {e}");
@@ -552,10 +611,27 @@ impl App {
         ui::clear(&mut fb, if self.screen == Screen::Paused { theme.bg } else { theme.panel });
         let s = layout.ui_scale;
         let (mx, my) = (self.cursor.0 as f32, self.cursor.1 as f32);
-        let title_size = if self.screen == Screen::Start { 56.0 * s } else { 30.0 * s };
+        let title_size = if self.screen == Screen::Start { 64.0 * s } else { 30.0 * s };
         let title_y =
-            if self.screen == Screen::Start { (h as f32 * 0.16) as i32 } else { (h as f32 * 0.05) as i32 };
-        self.ui.draw_text_centered(&mut fb, w, h, &layout.title, title_size, title_y, theme.text);
+            if self.screen == Screen::Start { (h as f32 * 0.17) as i32 } else { (h as f32 * 0.05) as i32 };
+        if self.screen == Screen::Start {
+            // marca: um cartucho estilizado atrás do título
+            let cw = 150.0 * s;
+            let ch = 90.0 * s;
+            let cx = (w as f32 - cw) / 2.0;
+            let cy = title_y as f32 - 12.0 * s;
+            ui::fill_round_rect(
+                &mut fb,
+                w,
+                h,
+                &Rect { x: cx, y: cy + 4.0 * s, w: cw, h: ch },
+                10.0 * s,
+                [0, 0, 0, 110],
+            );
+            ui::fill_round_rect(&mut fb, w, h, &Rect { x: cx, y: cy, w: cw, h: ch }, 10.0 * s, theme.accent);
+        }
+        let title_color = if self.screen == Screen::Start { theme.on_accent } else { theme.text };
+        self.ui.draw_text_centered(&mut fb, w, h, &layout.title, title_size, title_y, title_color);
         self.ui.draw_text_centered(
             &mut fb,
             w,
@@ -577,50 +653,14 @@ impl App {
                 theme.accent,
             );
         }
-        for item in &layout.items {
-            let hot = item.active || item.rect.contains(mx, my);
-            let label = item.label.clone();
-            if item.value.is_empty() {
-                self.ui.draw_button_rect(&mut fb, w, h, &item.rect, &label, layout.font, hot, &theme);
-            } else {
-                // linha de ajuste: rótulo à esquerda, valor à direita
-                let r = &item.rect;
-                ui::fill_rect(
-                    &mut fb,
-                    w,
-                    h,
-                    r.x as i32,
-                    r.y as i32,
-                    r.w as i32,
-                    r.h as i32,
-                    if hot { theme.button_hot } else { theme.button },
-                );
-                ui::outline(&mut fb, w, h, r.x as i32, r.y as i32, r.w as i32, r.h as i32, theme.border);
-                let ty = r.y as i32 + (r.h as i32 - layout.font as i32) / 2 - layout.font as i32 / 8;
-                let pad = (12.0 * s) as i32;
-                let vw = self.ui.text_width(&item.value, layout.font);
-                self.ui.draw_text_clipped(
-                    &mut fb,
-                    w,
-                    h,
-                    &label,
-                    layout.font,
-                    r.x as i32 + pad,
-                    ty,
-                    r.w as i32 - vw - pad * 3,
-                    theme.text,
-                );
-                self.ui.draw_text(
-                    &mut fb,
-                    w,
-                    h,
-                    &item.value,
-                    layout.font,
-                    r.x as i32 + r.w as i32 - vw - pad,
-                    ty,
-                    theme.accent,
-                );
-            }
+        let pressed_idx = self.pressed.map(|p| p.0);
+        for (i, item) in layout.items.iter().enumerate() {
+            let hot = pressed_idx == Some(i) || (pressed_idx.is_none() && item.rect.contains(mx, my));
+            self.ui.draw_item(&mut fb, w, h, item, &layout, hot, &theme);
+        }
+        if self.screen == Screen::Recents && layout.items.len() == 1 {
+            let msg = "Abra uma ROM: ela aparece aqui";
+            self.ui.draw_text_centered(&mut fb, w, h, msg, 14.0 * s, (h as f32 * 0.5) as i32, theme.dim);
         }
         if self.screen == Screen::Start {
             let hint = if self.picker.is_some() {
@@ -656,6 +696,19 @@ impl App {
             toast: show_toast.then(|| self.toast_msg.clone()),
             cursor: if self.playing() { (0, 0) } else { (self.cursor.0 as i32, self.cursor.1 as i32) },
             layout_gen: self.layout_cache.as_ref().map(|l| l.items.len() as u64).unwrap_or(0),
+            pressed: self.pressed.map(|p| p.0),
+            slider: self.layout_cache.as_ref().map(|l| {
+                l.items
+                    .iter()
+                    .filter_map(|i| {
+                        if let ItemKind::Slider { fraction } = i.kind {
+                            Some((fraction * 1000.0) as u32)
+                        } else {
+                            None
+                        }
+                    })
+                    .sum()
+            }),
         };
         let dirty = self.overlay_key.as_ref() != Some(&key)
             || self.overlay_size != (w, h)
@@ -790,7 +843,7 @@ impl App {
             KeyCode::Escape => match self.screen {
                 Screen::Playing => self.set_screen(Screen::Paused),
                 Screen::Paused => self.set_screen(Screen::Playing),
-                Screen::Settings | Screen::Recents => self.act(Action::Back, el),
+                Screen::Settings | Screen::Recents | Screen::States => self.act(Action::Back, el),
                 Screen::Start => {
                     self.flush_save();
                     el.exit();
@@ -808,8 +861,8 @@ impl App {
                     self.toast("Cobertura -> log");
                 }
             }
-            KeyCode::F5 => self.save_state(),
-            KeyCode::F7 => self.load_state(),
+            KeyCode::F5 => self.save_state(1),
+            KeyCode::F7 => self.load_state(1),
             KeyCode::F6 => {
                 if let Some(n) = &self.nes {
                     log::info!("{}", rnfe_core::diagnostic::diagnostic_report(&n.cpu, &n.bus));
@@ -834,12 +887,43 @@ impl App {
         }
     }
 
-    /// Clique/toque numa tela de menu.
-    fn handle_menu_press(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
+    /// Começo de um toque/clique num menu: marca o item pressionado (a ação vale ao soltar);
+    /// sliders reagem já no toque.
+    fn menu_press(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
         let layout = self.layout();
-        if let Some(a) = menu::hit(&layout, x, y) {
+        self.pressed = menu::index_at(&layout, x, y).map(|i| (i, x, y));
+        if let Some((i, _, _)) = self.pressed {
+            if matches!(layout.items[i].kind, ItemKind::Slider { .. }) {
+                if let Some(a) = menu::hit(&layout, x, y) {
+                    self.act(a, el);
+                }
+            }
+        }
+    }
+
+    /// Arrasto com o dedo/mouse pressionado: sliders acompanham.
+    fn menu_drag(&mut self, x: f32, el: &ActiveEventLoop) {
+        let Some((i, _, _)) = self.pressed else { return };
+        let layout = self.layout();
+        if let Some(a) = menu::slide(&layout, i, x) {
             self.act(a, el);
         }
+    }
+
+    /// Soltou: dispara a ação se ainda está sobre o mesmo item (senão, cancela).
+    fn menu_release(&mut self, x: f32, y: f32, el: &ActiveEventLoop) {
+        let Some((i, _, _)) = self.pressed.take() else { return };
+        let layout = self.layout();
+        if matches!(layout.items.get(i).map(|it| &it.kind), Some(ItemKind::Slider { .. })) {
+            self.layout_cache = None;
+            self.redraw();
+            return;
+        }
+        if menu::index_at(&layout, x, y) == Some(i) {
+            let a = layout.items[i].action.clone();
+            self.act(a, el);
+        }
+        self.redraw();
     }
 }
 
@@ -973,14 +1057,21 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
                 if !self.playing() {
+                    if self.pressed.is_some() {
+                        self.menu_drag(position.x as f32, el);
+                    }
                     self.redraw();
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                self.ensure_audio();
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
                 let (x, y) = (self.cursor.0 as f32, self.cursor.1 as f32);
-                if !self.playing() {
-                    self.handle_menu_press(x, y, el);
+                if state == ElementState::Pressed {
+                    self.ensure_audio();
+                    if !self.playing() {
+                        self.menu_press(x, y, el);
+                    }
+                } else if !self.playing() {
+                    self.menu_release(x, y, el);
                 }
                 self.redraw();
             }
@@ -1001,22 +1092,35 @@ impl ApplicationHandler<UserEvent> for App {
                             }
                         } else {
                             self.touch.seen = true;
-                            self.cursor = (t.location.x, t.location.y);
-                            self.handle_menu_press(x, y, el);
+                            self.cursor = (-1.0, -1.0);
+                            self.menu_press(x, y, el);
                         }
                     }
                     TouchPhase::Moved => {
-                        self.touch.moved(&self.touch_layout, t.id, x, y);
-                        let b = self.touch.buttons();
-                        if b != self.last_touch_buttons && b.0 & !self.last_touch_buttons.0 != 0 {
-                            self.buzz();
+                        if self.playing() {
+                            self.touch.moved(&self.touch_layout, t.id, x, y);
+                            let b = self.touch.buttons();
+                            if b != self.last_touch_buttons && b.0 & !self.last_touch_buttons.0 != 0 {
+                                self.buzz();
+                            }
+                            self.last_touch_buttons = b;
+                        } else {
+                            self.menu_drag(x, el);
                         }
-                        self.last_touch_buttons = b;
                     }
-                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                    TouchPhase::Ended => {
+                        if self.playing() {
+                            self.touch.up(t.id);
+                            self.last_touch_buttons = self.touch.buttons();
+                        } else {
+                            self.menu_release(x, y, el);
+                        }
+                        self.cursor = (-1.0, -1.0);
+                    }
+                    TouchPhase::Cancelled => {
                         self.touch.up(t.id);
                         self.last_touch_buttons = self.touch.buttons();
-                        // sem mouse, nenhum item deve ficar "sob o cursor" depois do toque
+                        self.pressed = None;
                         self.cursor = (-1.0, -1.0);
                     }
                 }

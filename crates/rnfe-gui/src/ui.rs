@@ -3,6 +3,7 @@
 
 use fontdue::Font;
 use rnfe_core::Buttons;
+use rnfe_frontend::menu::{Item, Layout};
 use rnfe_frontend::touch::{Circle, Rect, TouchLayout};
 use std::collections::HashMap;
 
@@ -19,6 +20,13 @@ pub struct Theme {
     pub button_hot: [u8; 4],
     pub border: [u8; 4],
     pub accent: [u8; 4],
+    pub accent_hot: [u8; 4],
+    pub on_accent: [u8; 4],
+    pub danger: [u8; 4],
+    pub danger_text: [u8; 4],
+    pub track: [u8; 4],
+    /// Contorno em todo item (alto contraste).
+    pub outline: bool,
     pub touch: [u8; 4],
     pub touch_hot: [u8; 4],
 }
@@ -27,13 +35,19 @@ impl Theme {
     pub fn normal() -> Theme {
         Theme {
             bg: [12, 12, 16, 235],
-            panel: [22, 22, 30, 255],
+            panel: [18, 18, 26, 255],
             text: [225, 225, 230, 255],
             dim: [130, 130, 140, 255],
-            button: [38, 38, 52, 255],
-            button_hot: [70, 90, 140, 255],
+            button: [40, 40, 56, 255],
+            button_hot: [72, 72, 100, 255],
             border: [70, 70, 90, 255],
-            accent: [120, 170, 255, 255],
+            accent: [232, 84, 74, 255],
+            accent_hot: [255, 120, 108, 255],
+            on_accent: [255, 250, 245, 255],
+            danger: [160, 40, 40, 255],
+            danger_text: [255, 150, 140, 255],
+            track: [60, 60, 76, 255],
+            outline: false,
             touch: [255, 255, 255, 255],
             touch_hot: [255, 255, 255, 255],
         }
@@ -49,6 +63,12 @@ impl Theme {
             button_hot: [255, 255, 0, 255],
             border: [255, 255, 255, 255],
             accent: [255, 255, 0, 255],
+            accent_hot: [255, 255, 160, 255],
+            on_accent: [0, 0, 0, 255],
+            danger: [255, 60, 60, 255],
+            danger_text: [255, 120, 120, 255],
+            track: [90, 90, 90, 255],
+            outline: true,
             touch: [255, 255, 0, 255],
             touch_hot: [255, 255, 255, 255],
         }
@@ -361,5 +381,225 @@ pub fn clear(fb: &mut [u8], color: [u8; 4]) {
     ];
     for px in fb.chunks_exact_mut(4) {
         px.copy_from_slice(&pm);
+    }
+}
+
+/// Retângulo com cantos arredondados (raio em px), com alpha.
+pub fn fill_round_rect(fb: &mut [u8], w: u32, h: u32, r: &Rect, radius: f32, color: [u8; 4]) {
+    let rad = radius.min(r.w / 2.0).min(r.h / 2.0).max(0.0);
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.w, r.y + r.h);
+    let py0 = y0.max(0.0) as i32;
+    let py1 = (y1.ceil() as i32).min(h as i32);
+    for py in py0..py1 {
+        let cy = py as f32 + 0.5;
+        // largura da linha nesta altura (cantos circulares)
+        let inset = if cy < y0 + rad {
+            let d = y0 + rad - cy;
+            rad - (rad * rad - d * d).max(0.0).sqrt()
+        } else if cy > y1 - rad {
+            let d = cy - (y1 - rad);
+            rad - (rad * rad - d * d).max(0.0).sqrt()
+        } else {
+            0.0
+        };
+        let sx = (x0 + inset).max(0.0) as i32;
+        let ex = ((x1 - inset).ceil() as i32).min(w as i32);
+        for px in sx..ex {
+            let idx = ((py as u32 * w + px as u32) * 4) as usize;
+            if color[3] == 255 {
+                fb[idx..idx + 4].copy_from_slice(&color);
+            } else {
+                blend(&mut fb[idx..idx + 4], color, 255);
+            }
+        }
+    }
+}
+
+/// Contorno arredondado (2 px) por diferença de dois retângulos.
+pub fn stroke_round_rect(fb: &mut [u8], w: u32, h: u32, r: &Rect, radius: f32, color: [u8; 4], t: f32) {
+    // desenha o anel em 4 fatias finas: simples e suficiente para bordas de 2 px
+    let outer = *r;
+    fill_round_rect(fb, w, h, &Rect { x: outer.x, y: outer.y, w: outer.w, h: t }, 0.0, color);
+    fill_round_rect(fb, w, h, &Rect { x: outer.x, y: outer.y + outer.h - t, w: outer.w, h: t }, 0.0, color);
+    fill_round_rect(
+        fb,
+        w,
+        h,
+        &Rect { x: outer.x, y: outer.y + radius, w: t, h: outer.h - radius * 2.0 },
+        0.0,
+        color,
+    );
+    fill_round_rect(
+        fb,
+        w,
+        h,
+        &Rect { x: outer.x + outer.w - t, y: outer.y + radius, w: t, h: outer.h - radius * 2.0 },
+        0.0,
+        color,
+    );
+}
+
+impl Ui {
+    /// Um item de menu, conforme o tipo: botão, destaque, perigo, slider, toggle, slot, título.
+    pub fn draw_item(
+        &mut self,
+        fb: &mut [u8],
+        w: u32,
+        h: u32,
+        it: &Item,
+        layout: &Layout,
+        hot: bool,
+        theme: &Theme,
+    ) {
+        use rnfe_frontend::menu::ItemKind;
+        let r = it.rect;
+        let rad = layout.radius;
+        let font = layout.font;
+        let pad = rad;
+        if matches!(it.kind, ItemKind::Header) {
+            self.draw_text(
+                fb,
+                w,
+                h,
+                &it.label,
+                font * 0.8,
+                r.x as i32 + pad as i32,
+                (r.y + r.h * 0.5 - font * 0.4) as i32,
+                theme.dim,
+            );
+            return;
+        }
+        // sombra suave
+        let shadow = Rect { x: r.x, y: r.y + 3.0 * layout.ui_scale, w: r.w, h: r.h };
+        fill_round_rect(fb, w, h, &shadow, rad, [0, 0, 0, 90]);
+        let (fill, text_color) = match &it.kind {
+            ItemKind::Primary => (if hot { theme.accent_hot } else { theme.accent }, theme.on_accent),
+            ItemKind::Danger => (
+                if hot || it.active { theme.danger } else { theme.button },
+                if hot || it.active { [255, 255, 255, 255] } else { theme.danger_text },
+            ),
+            _ => (if hot || it.active { theme.button_hot } else { theme.button }, theme.text),
+        };
+        fill_round_rect(fb, w, h, &r, rad, fill);
+        if theme.outline {
+            stroke_round_rect(fb, w, h, &r, rad, theme.border, 2.0 * layout.ui_scale.max(1.0));
+        }
+        let ty = |size: f32, cy: f32| (cy - size * 0.55) as i32;
+        match &it.kind {
+            ItemKind::Slider { fraction } => {
+                // rótulo em cima à esquerda, valor à direita, trilha embaixo
+                let cy = r.y + r.h * 0.30;
+                let vw = self.text_width(&it.value, font * 0.9);
+                self.draw_text_clipped(
+                    fb,
+                    w,
+                    h,
+                    &it.label,
+                    font * 0.9,
+                    (r.x + pad) as i32,
+                    ty(font * 0.9, cy),
+                    (r.w - pad * 3.0 - vw as f32) as i32,
+                    text_color,
+                );
+                self.draw_text(
+                    fb,
+                    w,
+                    h,
+                    &it.value,
+                    font * 0.9,
+                    (r.x + r.w - pad - vw as f32) as i32,
+                    ty(font * 0.9, cy),
+                    theme.accent,
+                );
+                let t = rnfe_frontend::menu::slider_track(&r, layout);
+                fill_round_rect(fb, w, h, &t, t.h / 2.0, theme.track);
+                let filled = Rect { x: t.x, y: t.y, w: t.w * fraction, h: t.h };
+                fill_round_rect(fb, w, h, &filled, t.h / 2.0, theme.accent);
+                let kr = t.h * 1.1;
+                let knob = Circle { cx: t.x + t.w * fraction, cy: t.y + t.h / 2.0, r: kr };
+                fill_circle(fb, w, h, &Circle { cx: knob.cx, cy: knob.cy + 2.0, r: kr }, [0, 0, 0, 80]);
+                fill_circle(fb, w, h, &knob, theme.on_accent);
+            }
+            ItemKind::Toggle { on } => {
+                let cy = r.y + r.h / 2.0;
+                // pílula do toggle à direita
+                let pw = r.h * 0.9;
+                let ph = r.h * 0.46;
+                let px = r.x + r.w - pad - pw;
+                let pill = Rect { x: px, y: cy - ph / 2.0, w: pw, h: ph };
+                fill_round_rect(fb, w, h, &pill, ph / 2.0, if *on { theme.accent } else { theme.track });
+                let kx = if *on { px + pw - ph / 2.0 } else { px + ph / 2.0 };
+                fill_circle(fb, w, h, &Circle { cx: kx, cy, r: ph * 0.42 }, theme.on_accent);
+                self.draw_text_clipped(
+                    fb,
+                    w,
+                    h,
+                    &it.label,
+                    font,
+                    (r.x + pad) as i32,
+                    ty(font, cy),
+                    (r.w - pad * 3.0 - pw) as i32,
+                    text_color,
+                );
+            }
+            ItemKind::Slot { filled } => {
+                let cy = r.y + r.h / 2.0;
+                let dot = Circle { cx: r.x + pad + font * 0.5, cy, r: font * 0.28 };
+                fill_circle(fb, w, h, &dot, if *filled { theme.accent } else { theme.track });
+                self.draw_text_clipped(
+                    fb,
+                    w,
+                    h,
+                    &it.label,
+                    font,
+                    (r.x + pad + font * 1.3) as i32,
+                    ty(font, cy),
+                    (r.w - pad * 2.0 - font * 1.3) as i32,
+                    if *filled { text_color } else { theme.dim },
+                );
+            }
+            _ => {
+                let cy = r.y + r.h / 2.0;
+                if it.value.is_empty() {
+                    let tw = self.text_width(&it.label, font);
+                    let tx =
+                        if tw as f32 > r.w - pad * 2.0 { r.x + pad } else { r.x + (r.w - tw as f32) / 2.0 };
+                    self.draw_text_clipped(
+                        fb,
+                        w,
+                        h,
+                        &it.label,
+                        font,
+                        tx as i32,
+                        ty(font, cy),
+                        (r.w - pad * 2.0) as i32,
+                        text_color,
+                    );
+                } else {
+                    let vw = self.text_width(&it.value, font);
+                    self.draw_text_clipped(
+                        fb,
+                        w,
+                        h,
+                        &it.label,
+                        font,
+                        (r.x + pad) as i32,
+                        ty(font, cy),
+                        (r.w - pad * 3.0 - vw as f32) as i32,
+                        text_color,
+                    );
+                    self.draw_text(
+                        fb,
+                        w,
+                        h,
+                        &it.value,
+                        font,
+                        (r.x + r.w - pad - vw as f32) as i32,
+                        ty(font, cy),
+                        theme.accent,
+                    );
+                }
+            }
+        }
     }
 }
