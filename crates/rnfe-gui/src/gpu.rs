@@ -64,6 +64,8 @@ pub struct GpuState {
     overlay: Layer,
     /// Onde a imagem do NES ficou na janela (px): x, y, w, h — para o layout de toque.
     pub viewport: (f32, f32, f32, f32),
+    /// Múltiplos inteiros de 256×240 (pixels quadrados) em vez de preencher com aspecto 8:7.
+    integer_scale: bool,
 }
 
 impl GpuState {
@@ -187,7 +189,7 @@ impl GpuState {
         let pipeline = make_pipeline(None);
         let overlay_pipeline = make_pipeline(Some(wgpu::BlendState::ALPHA_BLENDING));
 
-        let scale = Self::calc_scale(config.width, config.height);
+        let scale = Self::calc_scale(config.width, config.height, false);
         let nes =
             Self::make_layer(&device, &bind_group_layout, &sampler, NES_WIDTH, NES_HEIGHT, scale, "nes");
         let overlay = Self::make_layer(
@@ -199,8 +201,9 @@ impl GpuState {
             [1.0, 1.0, 0.0, 0.0],
             "overlay",
         );
-        let viewport = Self::calc_viewport(config.width, config.height);
+        let viewport = Self::calc_viewport(config.width, config.height, false);
         Ok(GpuState {
+            integer_scale: false,
             surface,
             device,
             queue,
@@ -254,19 +257,28 @@ impl GpuState {
 
     /// Escala xy e deslocamento zw (clip space) do quad do NES. Em retrato a imagem gruda no
     /// topo (os controles de toque ocupam o resto); em paisagem, centralizada.
-    fn calc_scale(win_w: u32, win_h: u32) -> [f32; 4] {
-        let win_aspect = win_w as f32 / win_h.max(1) as f32;
-        if win_aspect > NES_ASPECT {
-            [NES_ASPECT / win_aspect, 1.0, 0.0, 0.0]
+    fn calc_scale(win_w: u32, win_h: u32, integer: bool) -> [f32; 4] {
+        let (w, h) = (win_w.max(1) as f32, win_h.max(1) as f32);
+        let portrait = h > w;
+        let (sx, sy) = if integer {
+            let k = (w / NES_WIDTH as f32).min(h / NES_HEIGHT as f32).floor().max(1.0);
+            ((NES_WIDTH as f32 * k / w).min(1.0), (NES_HEIGHT as f32 * k / h).min(1.0))
         } else {
-            let sy = win_aspect / NES_ASPECT;
-            [1.0, sy, 0.0, 1.0 - sy]
-        }
+            let win_aspect = w / h;
+            if win_aspect > NES_ASPECT {
+                (NES_ASPECT / win_aspect, 1.0)
+            } else {
+                (1.0, win_aspect / NES_ASPECT)
+            }
+        };
+        // retrato: imagem no topo (os controles de toque ficam embaixo); senão centralizada
+        let oy = if portrait { 1.0 - sy } else { 0.0 };
+        [sx, sy, 0.0, oy]
     }
 
     /// Retângulo da imagem do NES na janela (px).
-    fn calc_viewport(win_w: u32, win_h: u32) -> (f32, f32, f32, f32) {
-        let [sx, sy, _, oy] = Self::calc_scale(win_w, win_h);
+    fn calc_viewport(win_w: u32, win_h: u32, integer: bool) -> (f32, f32, f32, f32) {
+        let [sx, sy, _, oy] = Self::calc_scale(win_w, win_h, integer);
         let w = win_w as f32 * sx;
         let h = win_h as f32 * sy;
         let y = (1.0 - oy - sy) * 0.5 * win_h as f32;
@@ -277,6 +289,16 @@ impl GpuState {
         (self.config.width, self.config.height)
     }
 
+    /// Liga/desliga a escala inteira (pixels quadrados).
+    pub fn set_integer_scale(&mut self, on: bool) {
+        if self.integer_scale != on {
+            self.integer_scale = on;
+            let scale = Self::calc_scale(self.config.width, self.config.height, on);
+            self.queue.write_buffer(&self.nes.scale_buffer, 0, bytemuck::cast_slice(&scale));
+            self.viewport = Self::calc_viewport(self.config.width, self.config.height, on);
+        }
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -284,7 +306,7 @@ impl GpuState {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
-        let scale = Self::calc_scale(width, height);
+        let scale = Self::calc_scale(width, height, self.integer_scale);
         self.queue.write_buffer(&self.nes.scale_buffer, 0, bytemuck::cast_slice(&scale));
         self.overlay = Self::make_layer(
             &self.device,
@@ -295,7 +317,7 @@ impl GpuState {
             [1.0, 1.0, 0.0, 0.0],
             "overlay",
         );
-        self.viewport = Self::calc_viewport(width, height);
+        self.viewport = Self::calc_viewport(width, height, self.integer_scale);
     }
 
     fn upload(&self, layer: &Layer, rgba: &[u8]) {

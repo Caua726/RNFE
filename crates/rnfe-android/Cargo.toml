@@ -13,7 +13,8 @@ name = "rnfe_android"
 crate-type = ["cdylib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
-rnfe-gui.workspace = true
+# sem gilrs: não há backend de gamepad do gilrs no Android (o winit já entrega os botões)
+rnfe-gui = { path = "../rnfe-gui", default-features = false }
 rnfe-frontend.workspace = true
 log.workspace = true
 winit = { workspace = true, features = ["android-native-activity"] }

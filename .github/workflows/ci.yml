@@ -109,20 +109,34 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
           echo "NDK: $ANDROID_NDK_HOME"
           cargo ndk -t arm64-v8a -P 26 clippy -p rnfe-android -- -D warnings
-          CARGO_PROFILE_RELEASE_STRIP=symbols cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs build -p rnfe-android --release
+          CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs build -p rnfe-android --release
           ls -la android/app/src/main/jniLibs/arm64-v8a
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: APK (gradle assembleDebug)
+      - name: Keystore de release (secrets; sem elas, assina com a de debug)
+        env:
+          KS_B64: ${{ secrets.RNFE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/rnfe-release.jks"
+            echo "RNFE_KEYSTORE=$RUNNER_TEMP/rnfe-release.jks" >> "$GITHUB_ENV"
+            echo "RNFE_KEYSTORE_PASSWORD=${{ secrets.RNFE_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "RNFE_KEY_ALIAS=${{ secrets.RNFE_KEY_ALIAS }}" >> "$GITHUB_ENV"
+            echo "RNFE_KEY_PASSWORD=${{ secrets.RNFE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "assinatura: release"
+          else
+            echo "assinatura: debug (sem secrets)"
+          fi
+      - name: APK (gradle assembleRelease)
         working-directory: android
-        run: gradle --no-daemon assembleDebug
-      - run: ls -la android/app/build/outputs/apk/debug/
+        run: gradle --no-daemon assembleRelease
+      - run: ls -la android/app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
-          name: rnfe-android-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: rnfe-android-apk
+          path: android/app/build/outputs/apk/release/*.apk
 
   pages:
     name: GitHub Pages

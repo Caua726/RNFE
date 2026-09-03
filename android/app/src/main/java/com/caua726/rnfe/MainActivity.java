@@ -5,8 +5,11 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.OpenableColumns;
 import android.view.View;
+import android.view.WindowManager;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 
@@ -24,7 +27,20 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Jogo em andamento: a tela não pode apagar sozinha
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         hideSystemUi();
+    }
+
+    /** Vibração curta ao tocar num botão (chamada pelo Rust via JNI). */
+    public void vibrate() {
+        try {
+            Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+            if (v != null && v.hasVibrator()) {
+                v.vibrate(VibrationEffect.createOneShot(12, VibrationEffect.DEFAULT_AMPLITUDE));
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
