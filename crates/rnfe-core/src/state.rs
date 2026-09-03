@@ -125,6 +125,9 @@ pub struct CartState {
     pub prg_ram: Vec<u8>,
     /// Só se o cartucho tem CHR RAM.
     pub chr_ram: Option<Vec<u8>>,
+    /// CHR RAM extra (TQROM), vazia nos outros.
+    #[serde(default)]
+    pub chr_ram_extra: Vec<u8>,
     pub mirror: Mirror,
     pub mapper: MapperKind,
 }

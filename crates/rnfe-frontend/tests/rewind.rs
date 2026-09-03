@@ -1,13 +1,10 @@
 #![cfg(feature = "state")]
-use rnfe_core::testing::runner::{fnv1a64, load};
+use rnfe_core::testing::runner::{fnv1a64, load_or_skip};
 use rnfe_frontend::Rewind;
 
 #[test]
 fn rewind_restores_middle_of_history() {
-    let Ok(mut nes) = load("other/BladeBuster.nes") else {
-        eprintln!("SKIP: ROM ausente");
-        return;
-    };
+    let Some(mut nes) = load_or_skip("other/BladeBuster.nes") else { return };
     let mut rw = Rewind::new(Rewind::DEFAULT_CAP);
     let mut hashes = Vec::new();
     for _ in 0..60 {
@@ -33,10 +30,7 @@ fn rewind_restores_middle_of_history() {
 
 #[test]
 fn rewind_respects_memory_cap() {
-    let Ok(mut nes) = load("other/nestest.nes") else {
-        eprintln!("SKIP: ROM ausente");
-        return;
-    };
+    let Some(mut nes) = load_or_skip("other/nestest.nes") else { return };
     nes.run_frame();
     let one = nes.save_state().len();
     let mut rw = Rewind::new(one * 3 + 1);

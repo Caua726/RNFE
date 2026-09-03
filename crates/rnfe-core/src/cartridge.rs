@@ -479,6 +479,7 @@ impl Cartridge {
         crate::state::CartState {
             prg_ram: self.data.prg_ram.clone(),
             chr_ram: self.data.chr_is_ram.then(|| self.data.chr.clone()),
+            chr_ram_extra: self.data.chr_ram.clone(),
             mirror: self.data.mirror,
             mapper: self.mapper.clone(),
         }
@@ -505,6 +506,9 @@ impl Cartridge {
         self.data.prg_ram = st.prg_ram;
         if let Some(c) = st.chr_ram {
             self.data.chr = c;
+        }
+        if st.chr_ram_extra.len() == self.data.chr_ram.len() {
+            self.data.chr_ram = st.chr_ram_extra;
         }
         self.data.mirror = st.mirror;
         self.data.prg_ram_dirty = true;

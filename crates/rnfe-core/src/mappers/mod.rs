@@ -28,6 +28,7 @@ pub mod mmc3;
 pub mod mmc5;
 pub mod n163;
 pub mod nrom;
+pub mod simple;
 pub mod uxrom;
 pub mod vrc6;
 
@@ -58,6 +59,8 @@ pub struct CartData {
     pub prg_ram_dirty: bool,
     /// Ciclo de CPU da escrita em curso (o bus atualiza antes de `cpu_write`).
     pub cpu_cycle: u64,
+    /// CHR RAM extra de mappers que têm ROM e RAM ao mesmo tempo (TQROM): 8 KB.
+    pub chr_ram: Vec<u8>,
     /// A PPU está nos dots 257–320 (buscas de padrão de sprite). MMC5 troca o conjunto de CHR.
     pub ppu_sprite_fetch: bool,
     /// Sprites 8×16 (`$2000` bit 5).
@@ -89,6 +92,7 @@ impl CartData {
             submapper: hdr.submapper,
             prg_ram_dirty: false,
             cpu_cycle: 0,
+            chr_ram: if hdr.mapper == 119 { vec![0; 8192] } else { Vec::new() },
             ppu_sprite_fetch: false,
             ppu_sprites_16: false,
         }
@@ -110,6 +114,19 @@ impl CartData {
     #[inline(always)]
     pub fn chr_at(&self, offset: usize) -> u8 {
         self.chr[offset & self.chr_mask]
+    }
+
+    /// CHR RAM extra (TQROM), com máscara de 8 KB.
+    #[inline(always)]
+    pub fn chr_ram_at(&self, offset: usize) -> u8 {
+        self.chr_ram.get(offset & 0x1FFF).copied().unwrap_or(0)
+    }
+
+    #[inline(always)]
+    pub fn chr_ram_set(&mut self, offset: usize, value: u8) {
+        if let Some(b) = self.chr_ram.get_mut(offset & 0x1FFF) {
+            *b = value;
+        }
     }
 
     /// Escrita em CHR: só tem efeito em CHR RAM.
@@ -244,9 +261,13 @@ pub enum MapperKind {
     Vrc6(vrc6::Vrc6),
     N163(n163::N163),
     Mmc5(Box<mmc5::Mmc5>),
+    Nina(simple::Nina),
+    Cprom(simple::Cprom),
+    Quattro(simple::Quattro),
 }
 
-pub const SUPPORTED_MAPPERS: &[u16] = &[0, 1, 2, 3, 4, 5, 7, 9, 11, 19, 24, 26, 34, 66, 69, 71, 206, 227];
+pub const SUPPORTED_MAPPERS: &[u16] =
+    &[0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 19, 24, 26, 34, 66, 69, 71, 79, 113, 118, 119, 206, 227, 232];
 
 impl MapperKind {
     /// Cria o mapper para o `id`; `None` se não suportado.
@@ -269,6 +290,10 @@ impl MapperKind {
             24 | 26 => MapperKind::Vrc6(vrc6::Vrc6::new(data)),
             19 => MapperKind::N163(n163::N163::new(data)),
             5 => MapperKind::Mmc5(Box::new(mmc5::Mmc5::new(data))),
+            79 | 113 => MapperKind::Nina(simple::Nina::new(data)),
+            13 => MapperKind::Cprom(simple::Cprom::new()),
+            232 => MapperKind::Quattro(simple::Quattro::new()),
+            118 | 119 => MapperKind::Mmc3(mmc3::Mmc3::new(data)),
             _ => return None,
         })
     }
@@ -298,6 +323,9 @@ impl MapperKind {
             }
             MapperKind::N163(_) => "Namco 163",
             MapperKind::Mmc5(_) => "MMC5",
+            MapperKind::Nina(_) => "NINA-03/06",
+            MapperKind::Cprom(_) => "CPROM",
+            MapperKind::Quattro(_) => "Camerica Quattro",
         }
     }
 }
@@ -322,6 +350,9 @@ macro_rules! dispatch {
             MapperKind::Vrc6($m) => $e,
             MapperKind::N163($m) => $e,
             MapperKind::Mmc5($m) => $e,
+            MapperKind::Nina($m) => $e,
+            MapperKind::Cprom($m) => $e,
+            MapperKind::Quattro($m) => $e,
         }
     };
 }

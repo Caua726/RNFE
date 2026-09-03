@@ -9,7 +9,14 @@ fn main() {
     let frames: u32 = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(60);
     let cart = rnfe_core::Cartridge::from_bytes(&bytes).expect("ROM inválida");
     let mut nes = rnfe_core::Nes::new(cart);
-    for _ in 0..frames {
+    for f in 0..frames {
+        let start = std::env::args().nth(4).is_some_and(|a| a == "start");
+        let b = if start && f % 120 < 10 && f > 60 {
+            rnfe_core::Buttons::START
+        } else {
+            rnfe_core::Buttons::NONE
+        };
+        nes.set_controller(0, b);
         nes.run_frame();
     }
     let ppu = &nes.bus.ppu;

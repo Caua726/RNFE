@@ -14,9 +14,9 @@ cargo run -q -p rnfe-core --release --bin status | tail -3
 ```
 
 ## Onde parei
-Tarefa: passada de UI/UX (menus arredondados, ação ao soltar, sliders, slots de state, reset confirmado, ações rápidas)
-Estado: código pronto e verificado no celular; PR → CI → APK
-Próximo: o usuário testa o APK no g56; próximos candidatos: editor de posição dos botões de toque, capturas de tela, lista de recentes com miniatura
+Tarefa: revisão por 9 agentes aplicada (Android, UI, UX, núcleo, CI) + 6 mappers + varredura com jogos reais
+Estado: check verde; push em main → CI → APK
+Próximo: usuário testa o APK no g56 (menus, toque, gamepad, "Abrir com"); candidatos: mappers 64/68/65/105 (14 ROMs dos EUA), miniaturas nos slots, PWA offline (service worker), GpuCore mantido em suspended (volta mais rápida), overlay em meia resolução
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):

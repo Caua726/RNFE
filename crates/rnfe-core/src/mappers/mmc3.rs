@@ -17,6 +17,10 @@ pub struct Mmc3 {
     ram_ctrl: u8,
     /// Revisão A (NEC, submapper 4.4): IRQ só na transição para 0, não a cada clock em 0.
     rev_a: bool,
+    /// 118 (TxSROM): o bit 7 de cada banco de CHR escolhe a página de nametable.
+    txsrom: bool,
+    /// 119 (TQROM): o bit 6 do banco de CHR escolhe CHR RAM (8 KB) em vez da ROM.
+    tqrom: bool,
 }
 
 impl Mmc3 {
@@ -31,6 +35,21 @@ impl Mmc3 {
             irq_pending: false,
             ram_ctrl: 0x80,
             rev_a: data.submapper == 4,
+            txsrom: data.mapper == 118,
+            tqrom: data.mapper == 119,
+        }
+    }
+
+    /// Registrador de CHR que cobre o endereço (com a inversão de A12 do bit 7).
+    #[inline]
+    fn chr_reg(&self, addr: u16) -> (usize, usize) {
+        let a = addr ^ ((self.bank_select as u16 & 0x80) << 5); // inverte A12 se bit 7
+        match a >> 10 {
+            0 => (self.regs[0] as usize, 0),
+            1 => (self.regs[0] as usize, 1),
+            2 => (self.regs[1] as usize, 0),
+            3 => (self.regs[1] as usize, 1),
+            n => (self.regs[n as usize - 2] as usize, 0),
         }
     }
 }
@@ -113,15 +132,55 @@ impl Mapper for Mmc3 {
 
     #[inline]
     fn chr_offset(&self, addr: u16) -> usize {
-        let a = addr ^ ((self.bank_select as u16 & 0x80) << 5); // inverte A12 se bit 7
-        let bank = match a >> 10 {
-            0 => self.regs[0] as usize,
-            1 => self.regs[0] as usize + 1,
-            2 => self.regs[1] as usize,
-            3 => self.regs[1] as usize + 1,
-            n => self.regs[n as usize - 2] as usize,
-        };
+        let (reg, odd) = self.chr_reg(addr);
+        let bank = if self.tqrom { reg & 0x3F } else { reg } + odd;
         bank * 0x0400 + (addr & 0x03FF) as usize
+    }
+
+    fn chr_dynamic(&self) -> bool {
+        self.tqrom
+    }
+
+    fn nt_dynamic(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    fn ppu_read(&mut self, addr: u16, data: &CartData) -> u8 {
+        if self.tqrom {
+            let (reg, odd) = self.chr_reg(addr);
+            if reg & 0x40 != 0 {
+                // CHR RAM de 8 KB: 8 bancos de 1 KB no fim da CHR (o cartucho reserva)
+                let bank = ((reg & 0x07) + odd) & 0x07;
+                return data.chr_ram_at(bank * 0x0400 + (addr & 0x03FF) as usize);
+            }
+        }
+        data.chr_at(self.chr_offset(addr))
+    }
+
+    #[inline]
+    fn ppu_write(&mut self, addr: u16, val: u8, data: &mut CartData) {
+        if self.tqrom {
+            let (reg, odd) = self.chr_reg(addr);
+            if reg & 0x40 != 0 {
+                let bank = ((reg & 0x07) + odd) & 0x07;
+                data.chr_ram_set(bank * 0x0400 + (addr & 0x03FF) as usize, val);
+            }
+            return;
+        }
+        data.chr_set(self.chr_offset(addr), val);
+    }
+
+    #[inline]
+    fn nt_source(&mut self, addr: u16, _data: &CartData) -> Option<crate::cartridge::NtSource> {
+        if !self.txsrom {
+            return None;
+        }
+        // TxSROM: nametable de cada quadrante = bit 7 do registrador de CHR que cobre a
+        // mesma posição em $0000-$0FFF (modo normal) — regs 0,0,1,1 ou 2,3,4,5 com A12 invertido
+        let q = (addr >> 10) as usize & 3;
+        let reg = if self.bank_select & 0x80 == 0 { [0, 0, 1, 1][q] } else { [2, 3, 4, 5][q] };
+        Some(crate::cartridge::NtSource::Ciram((self.regs[reg] >> 7) & 1))
     }
 
     fn a12_rise(&mut self) {

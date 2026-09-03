@@ -13,8 +13,15 @@ fn main() {
     println!("{}", cart.describe());
     let mut nes = rnfe_core::Nes::new(cart);
     let t = std::time::Instant::now();
-    for _ in 0..frames {
+    for f in 0..frames {
+        // START a cada 2 s (sai de títulos); JAM interrompe e mostra onde
+        let b = if f % 120 < 10 && f > 60 { rnfe_core::Buttons::START } else { rnfe_core::Buttons::NONE };
+        nes.set_controller(0, b);
         nes.run_frame();
+        if nes.cpu.jammed {
+            println!("JAM no frame {f}: PC=${:04X} opcode=${:02X}", nes.cpu.pc, nes.cpu.opcode);
+            break;
+        }
     }
     let dt = t.elapsed().as_secs_f64();
     let hash = nes

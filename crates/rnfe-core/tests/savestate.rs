@@ -1,7 +1,7 @@
 //! Save states (feature `serde`): round-trip por mapper, idempotência, rejeições.
 #![cfg(feature = "serde")]
 
-use rnfe_core::testing::runner::{fnv1a64, load};
+use rnfe_core::testing::runner::{fnv1a64, load, load_or_skip};
 use rnfe_core::{Buttons, Nes, StateError};
 
 fn frame_hash(nes: &mut Nes) -> u64 {
@@ -10,13 +10,7 @@ fn frame_hash(nes: &mut Nes) -> u64 {
 
 /// Roda `a` frames, salva, roda `b` frames (hash A); restaura, roda `b` frames (hash B).
 fn round_trip(rel: &str, a: u32, b: u32) {
-    let mut nes = match load(rel) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("SKIP {rel}: {e}");
-            return;
-        }
-    };
+    let Some(mut nes) = load_or_skip(rel) else { return };
     nes.set_controller(0, Buttons::START);
     for _ in 0..a {
         nes.run_frame();
@@ -76,8 +70,9 @@ fn apu_round_trip() {
 
 #[test]
 fn rejects_wrong_rom_version_and_garbage() {
-    let (Ok(mut a), Ok(mut b)) = (load("other/nestest.nes"), load("other/BladeBuster.nes")) else {
-        eprintln!("SKIP: ROMs ausentes");
+    let (Some(mut a), Some(mut b)) =
+        (load_or_skip("other/nestest.nes"), load_or_skip("other/BladeBuster.nes"))
+    else {
         return;
     };
     a.run_frame();

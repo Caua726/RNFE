@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 18 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 24 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 
@@ -17,6 +17,10 @@ ou use o teclado. Saves e save states ficam no `localStorage` do navegador.
 O progresso é medido por ROMs de teste, não por sensação: [docs/STATUS.md](docs/STATUS.md) é
 gerado a cada marco e lista as 116 ROMs (blargg e outras) com o resultado atual — 115 passam —
 e o `nestest` é comparado instrução a instrução (8 991 linhas) com o log de referência.
+
+Numa varredura de 857 ROMs licenciadas dos EUA (600 frames cada, `examples/sweep`), 97 % carregam e
+mostram imagem; Castlevania III (MMC5), Akumajou Densetsu (VRC6), Gimmick! (5B), Splatterhouse (N163),
+Batman: Return of the Joker (FME-7) e Punch-Out!! (MMC2) chegam à fase 1 com HUD correto.
 
 O plano de trabalho, com o que vem a seguir, está em [PLAN.md](PLAN.md).
 
@@ -60,6 +64,7 @@ cargo run -p rnfe-core --release --features serde --example embed -- jogo.nes   
 cargo run -p rnfe-core --release --example run_rom -- -v nestest                  # veredito de uma ROM de teste
 cargo run -p rnfe-core --release --example ppu_dump -- jogo.nes 120 tela.png      # estado da PPU + captura
 cargo run -p rnfe-frontend --example menu_layout -- 1080 2340 settings            # menus de toque em ASCII
+cargo run -p rnfe-core --release --example sweep -- pasta/de/roms 600 4 > out.csv # varredura de compatibilidade
 ```
 
 ### Testes
@@ -109,14 +114,18 @@ de ROMs recentes (reabrem sem o seletor).
 | 7 | AxROM | Battletoads, Marble Madness |
 | 9 | MMC2 | Punch-Out!! |
 | 11 | Color Dreams | — |
+| 13 | CPROM | Videomation |
 | 19 | Namco 163 (+ áudio wavetable) | Rolling Thunder, Megami Tensei II |
 | 24 / 26 | VRC6 (+ áudio) | Akumajou Densetsu, Madara |
 | 34 | BNROM | Deadly Towers |
 | 66 | GxROM | Dragon Ball, Doraemon |
 | 69 | FME-7 / Sunsoft 5B (+ áudio) | Batman: Return of the Joker, Gimmick! |
 | 71 | Camerica | Micro Machines |
+| 79 / 113 | NINA-03/06 | Krazy Kreatures, Tiles of Fate |
+| 118 / 119 | TxSROM / TQROM (MMC3) | Armadillo, Pin Bot, High Speed |
 | 206 | DxROM / Namco 118 | Gauntlet, Karnov |
 | 227 | 1200-in-1 | multicarts |
+| 232 | Camerica Quattro | Quattro Adventure/Arcade/Sports |
 
 ## Estrutura
 

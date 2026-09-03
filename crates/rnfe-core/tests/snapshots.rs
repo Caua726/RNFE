@@ -5,7 +5,7 @@
 //! Numa divergência, o frame é gravado em `target/snapshots/<nome>.png` para inspeção.
 
 use rnfe_core::Buttons;
-use rnfe_core::testing::{fnv1a64, load, write_png};
+use rnfe_core::testing::{fnv1a64, load_or_skip, write_png};
 use std::path::Path;
 
 /// (nome, ROM relativa a test-roms/, frames, [(frame, botões)])
@@ -30,13 +30,7 @@ fn framebuffer_snapshots() {
     let dump_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/snapshots");
     let mut errors = Vec::new();
     for (name, rom, frames, inputs) in SNAPSHOTS {
-        let mut nes = match load(rom) {
-            Ok(n) => n,
-            Err(e) => {
-                eprintln!("SKIP {name}: {e}");
-                continue;
-            }
-        };
+        let Some(mut nes) = load_or_skip(rom) else { continue };
         for f in 0..*frames {
             if let Some((_, b)) = inputs.iter().find(|(at, _)| *at == f) {
                 nes.set_controller(0, Buttons(*b));

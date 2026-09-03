@@ -61,7 +61,7 @@ jobs:
           key: release-web
       - uses: jetli/trunk-action@v0.5.0
         with:
-          version: "latest"
+          version: "0.21.14"
       - run: trunk build --release
       - run: tar czf rnfe-web-dist.tar.gz -C dist .
       - uses: actions/upload-artifact@v4
@@ -80,9 +80,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-android
-      - run: cargo install cargo-ndk --locked
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: |
-          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME_PINNED:-${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}}"
           CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs build -p rnfe-android --release
       - uses: actions/setup-java@v4
         with:
@@ -95,6 +95,10 @@ jobs:
         env:
           KS_B64: ${{ secrets.RNFE_KEYSTORE_BASE64 }}
         run: |
+          if [ -z "$KS_B64" ]; then
+            echo "::error::secrets da keystore ausentes: uma Release não pode sair assinada com a chave de debug"
+            exit 1
+          fi
           if [ -n "$KS_B64" ]; then
             echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/rnfe-release.jks"
             echo "RNFE_KEYSTORE=$RUNNER_TEMP/rnfe-release.jks" >> "$GITHUB_ENV"

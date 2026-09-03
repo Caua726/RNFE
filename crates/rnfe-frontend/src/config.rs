@@ -156,7 +156,9 @@ pub fn push_recent(storage: &mut dyn Storage, hash: u64, name: &str, bytes: Opti
     } else if storage.read(&RecentRom::rom_key(hash)).is_none() {
         return list;
     }
-    list.insert(0, RecentRom { hash, name: name.to_string() });
+    let name: String =
+        name.chars().map(|c| if c == '\t' || c == '\n' || c == '\r' { ' ' } else { c }).collect();
+    list.insert(0, RecentRom { hash, name });
     list.truncate(RECENT_MAX);
     let text: String = list.iter().map(|r| format!("{:016x}\t{}\n", r.hash, r.name)).collect();
     if let Err(e) = storage.write(RECENT_KEY, text.as_bytes()) {

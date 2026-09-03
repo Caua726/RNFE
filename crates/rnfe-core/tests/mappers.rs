@@ -421,3 +421,47 @@ fn mmc5_vertical_split() {
     assert_eq!(cart.nt_read(0x2060, &ciram), 3 * 16, "coluna 0 da próxima linha");
     assert_eq!(cart.nt_read(0x2061, &ciram), 3 * 16 + 1);
 }
+
+#[test]
+fn nina_cprom_quattro_and_mmc3_variants() {
+    // NINA-03 (79): registrador em $4100 com A8 = 1
+    let mut cart = rom(79, 4, 0); // 64 KB = 2 bancos de 32 KB
+    assert_eq!(cart.cpu_read(0x8000), Some(0));
+    cart.cpu_write(0x4100, 0x08); // PRG 1, CHR 0
+    assert_eq!(cart.cpu_read(0x8000), Some(2), "banco de 32 KB 1 = 16 KB nº 2");
+    cart.cpu_write(0x4000, 0x00); // A8 = 0: ignorado
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    // Quattro (232): bloco 2, banco 1 → 16 KB nº 9; $C000 = último do bloco (11)
+    let mut cart = rom(232, 16, 0);
+    cart.cpu_write(0x8000, 0x10);
+    cart.cpu_write(0xC000, 0x01);
+    assert_eq!(cart.cpu_read(0x8000), Some(9));
+    assert_eq!(cart.cpu_read(0xC000), Some(11));
+    // CPROM (13): metade alta da CHR RAM comutável
+    let mut cart = rom(13, 2, 0);
+    cart.chr_write(0x1000, 0x11);
+    cart.cpu_write(0x8000, 3);
+    cart.chr_write(0x1000, 0x33);
+    assert_eq!(cart.chr_read(0x1000), 0x33);
+    cart.cpu_write(0x8000, 0);
+    assert_eq!(cart.chr_read(0x1000), 0x11);
+    // TxSROM (118): bit 7 do banco de CHR escolhe a nametable
+    let mut cart = rom(118, 4, 0);
+    let mut ciram = [[0u8; 1024]; 4];
+    ciram[0][3] = 0xA0;
+    ciram[1][3] = 0xB1;
+    cart.cpu_write(0x8000, 0); // R0
+    cart.cpu_write(0x8001, 0x80); // bit 7 → CIRAM 1 para $2000/$2400
+    cart.cpu_write(0x8000, 1); // R1
+    cart.cpu_write(0x8001, 0x00); // $2800/$2C00 → CIRAM 0
+    assert_eq!(cart.nt_read(0x2003, &ciram), 0xB1);
+    assert_eq!(cart.nt_read(0x2803, &ciram), 0xA0);
+    // TQROM (119): bit 6 do banco → CHR RAM
+    let mut cart = rom(119, 4, 0);
+    cart.cpu_write(0x8000, 2); // R2 → $1000-$13FF
+    cart.cpu_write(0x8001, 0x41); // RAM, banco 1
+    cart.chr_write(0x1005, 0x77);
+    assert_eq!(cart.chr_read(0x1005), 0x77);
+    cart.cpu_write(0x8001, 0x01); // ROM banco 1 (CHR RAM do header: zeros)
+    assert_eq!(cart.chr_read(0x1005), 0x00);
+}

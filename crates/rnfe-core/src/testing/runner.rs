@@ -30,6 +30,19 @@ pub fn load(rel_path: &str) -> Result<Nes, String> {
     load_with(rel_path, 0)
 }
 
+/// Carrega ou pula o teste (`None`) se a ROM não estiver disponível — a menos que
+/// `RNFE_REQUIRE_ROMS=1` (CI), quando a ausência é falha.
+pub fn load_or_skip(rel_path: &str) -> Option<Nes> {
+    match load(rel_path) {
+        Ok(n) => Some(n),
+        Err(e) if std::env::var_os("RNFE_REQUIRE_ROMS").is_some() => panic!("{e}"),
+        Err(e) => {
+            eprintln!("SKIP {rel_path}: {e}");
+            None
+        }
+    }
+}
+
 /// Carrega a ROM; com `submapper > 0` reescreve o header como NES 2.0 com esse submapper.
 pub fn load_with(rel_path: &str, submapper: u8) -> Result<Nes, String> {
     let full = roms_dir().join(rel_path);

@@ -51,7 +51,7 @@ impl Storage for FsStorage {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(err)?;
         }
-        let tmp = path.with_extension("tmp");
+        let tmp = std::path::PathBuf::from(format!("{}.tmp", path.display()));
         std::fs::write(&tmp, data).map_err(err)?;
         std::fs::rename(&tmp, &path).map_err(err)
     }
