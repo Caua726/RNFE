@@ -520,6 +520,20 @@ impl Ppu {
     /// Um dot de PPU.
     pub fn step(&mut self, cart: &mut Cartridge) {
         self.dots += 1;
+        #[cfg(feature = "profile-no-ppu")]
+        {
+            let _ = &cart;
+            self.cycle += 1;
+            if self.cycle >= 341 {
+                self.cycle = 0;
+                self.scanline += 1;
+                if self.scanline >= 261 {
+                    self.scanline = -1;
+                    self.frame_complete = true;
+                }
+            }
+            return;
+        }
         if self.render_delay > 0 {
             self.render_delay -= 1;
             if self.render_delay == 0 {
@@ -545,7 +559,7 @@ impl Ppu {
             if (self.cycle >= 2 && self.cycle < 258) || (self.cycle >= 321 && self.cycle < 338) {
                 self.update_shifters();
 
-                match (self.cycle - 1) % 8 {
+                match (self.cycle - 1) & 7 {
                     0 => {
                         self.load_background_shifters();
                         self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
@@ -637,7 +651,7 @@ impl Ppu {
             // Slots sem sprite buscam o tile $FF — isso é o que clocka o MMC3 em toda linha.
             if self.rendering && (257..=320).contains(&self.cycle) {
                 let slot = ((self.cycle - 257) / 8) as usize;
-                match (self.cycle - 257) % 8 {
+                match (self.cycle - 257) & 7 {
                     0 | 2 => self.bus_addr(0x2000 | (self.vram_addr & 0x0FFF)),
                     4 => {
                         self.sprite_fetch_addr = self.sprite_pattern_addr(slot);

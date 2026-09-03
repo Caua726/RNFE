@@ -334,6 +334,14 @@ impl Mapper for Mmc5 {
         }
     }
 
+    fn chr_dynamic(&self) -> bool {
+        true
+    }
+
+    fn nt_dynamic(&self) -> bool {
+        true
+    }
+
     fn manages_prg_ram(&self) -> bool {
         true
     }

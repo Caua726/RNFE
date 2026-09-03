@@ -141,6 +141,10 @@ impl Mapper for N163 {
         true
     }
 
+    fn chr_dynamic(&self) -> bool {
+        true
+    }
+
     fn manages_prg_ram(&self) -> bool {
         true
     }
