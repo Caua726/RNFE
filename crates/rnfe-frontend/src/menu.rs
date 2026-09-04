@@ -23,6 +23,8 @@ pub enum Screen {
 pub enum Setting {
     /// Zapper (pistola de luz) na porta 2.
     Zapper,
+    /// Filtro de vídeo (nítido, suave, scanlines).
+    VideoFilter,
     TouchScale,
     TouchOpacity,
     TouchAlways,
@@ -38,7 +40,7 @@ pub enum Setting {
 /// Seções da tela de ajustes (título + itens).
 pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Som", &[Setting::Volume]),
-    ("Vídeo", &[Setting::IntegerScale, Setting::Overscan]),
+    ("Vídeo", &[Setting::VideoFilter, Setting::IntegerScale, Setting::Overscan]),
     ("Controles", &[Setting::Zapper]),
     ("Toque", &[Setting::TouchScale, Setting::TouchOpacity, Setting::TouchAlways, Setting::Haptics]),
     ("Acessibilidade", &[Setting::TextScale, Setting::HighContrast]),
@@ -54,6 +56,7 @@ impl Setting {
             Setting::HighContrast => "Alto contraste",
             Setting::Haptics => "Vibrar ao tocar",
             Setting::Zapper => "Zapper (mira com o toque)",
+            Setting::VideoFilter => "Filtro de vídeo",
             Setting::IntegerScale => "Escala inteira (pixels quadrados)",
             Setting::Volume => "Volume",
             Setting::Overscan => "Cortar bordas (overscan)",
@@ -79,6 +82,7 @@ impl Setting {
             Setting::TouchOpacity => (0.2, 1.0, 0.05),
             Setting::TextScale => (0.8, 1.6, 0.1),
             Setting::Volume => (0.0, 1.0, 0.05),
+            Setting::VideoFilter => (0.0, 2.0, 1.0),
             _ => (0.0, 1.0, 1.0),
         }
     }
@@ -93,6 +97,7 @@ impl Setting {
             Setting::HighContrast => c.high_contrast as u8 as f32,
             Setting::Haptics => c.haptics as u8 as f32,
             Setting::Zapper => c.zapper as u8 as f32,
+            Setting::VideoFilter => c.video_filter,
             Setting::IntegerScale => c.integer_scale as u8 as f32,
             Setting::Overscan => c.overscan as u8 as f32,
         }
@@ -116,6 +121,11 @@ impl Setting {
             Setting::HighContrast => on(c.high_contrast),
             Setting::Haptics => on(c.haptics),
             Setting::Zapper => on(c.zapper),
+            Setting::VideoFilter => match c.video_filter as u8 {
+                1 => "Suave".into(),
+                2 => "Scanlines".into(),
+                _ => "Nítido".into(),
+            },
             Setting::IntegerScale => on(c.integer_scale),
             Setting::Volume => pct(c.volume),
             Setting::Overscan => on(c.overscan),
@@ -136,6 +146,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::HighContrast => c.high_contrast = v >= 0.5,
         Setting::Haptics => c.haptics = v >= 0.5,
         Setting::Zapper => c.zapper = v >= 0.5,
+        Setting::VideoFilter => c.video_filter = v.clamp(0.0, 2.0).round(),
         Setting::IntegerScale => c.integer_scale = v >= 0.5,
         Setting::Overscan => c.overscan = v >= 0.5,
     }

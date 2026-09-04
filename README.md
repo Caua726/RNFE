@@ -103,7 +103,7 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 Os controles de toque aparecem no primeiro toque; em retrato a imagem fica em cima e os botões
 embaixo, em paisagem ficam nas laterais. O botão **MENU** (ou Esc) abre o menu de pausa: salvar e
 carregar state (3 slots), voltar 5 s, turbo, reset (com confirmação), abrir outra ROM e
-**Ajustes** com sliders — tamanho e opacidade dos botões de toque, botões sempre visíveis, tamanho
+**Ajustes** com sliders — filtro de vídeo (nítido/suave/scanlines), Zapper, tamanho e opacidade dos botões de toque, botões sempre visíveis, tamanho
 do texto, alto contraste, vibração, escala inteira e volume. Tudo fica guardado, junto com a lista
 de ROMs recentes (reabrem sem o seletor).
 

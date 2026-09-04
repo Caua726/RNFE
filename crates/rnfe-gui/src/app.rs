@@ -422,7 +422,7 @@ impl App {
 
     fn apply_config(&mut self) {
         if let Some(g) = self.gpu.as_mut() {
-            g.set_video(self.config.integer_scale, self.config.overscan);
+            g.set_video(self.config.integer_scale, self.config.overscan, self.config.video_filter as u8);
         }
         self.refresh_touch_layout();
         self.invalidate_layout();
@@ -1658,7 +1658,11 @@ impl ApplicationHandler<UserEvent> for App {
         {
             match pollster::block_on(GpuState::new(window.clone())) {
                 Ok(mut g) => {
-                    g.set_video(self.config.integer_scale, self.config.overscan);
+                    g.set_video(
+                        self.config.integer_scale,
+                        self.config.overscan,
+                        self.config.video_filter as u8,
+                    );
                     self.gpu = Some(g);
                 }
                 Err(e) => {
@@ -1685,7 +1689,11 @@ impl ApplicationHandler<UserEvent> for App {
         match ev {
             UserEvent::GpuReady(r) => match *r {
                 Ok(mut g) => {
-                    g.set_video(self.config.integer_scale, self.config.overscan);
+                    g.set_video(
+                        self.config.integer_scale,
+                        self.config.overscan,
+                        self.config.video_filter as u8,
+                    );
                     self.gpu = Some(g);
                     if let Some(w) = &self.window {
                         let s = w.inner_size();

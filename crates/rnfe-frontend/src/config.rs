@@ -27,6 +27,8 @@ pub struct Config {
     pub overscan: bool,
     /// Zapper (pistola de luz) na porta 2: mira com o toque/mouse. Duck Hunt e afins.
     pub zapper: bool,
+    /// Filtro de vídeo: 0 nítido, 1 suave (sharp bilinear), 2 scanlines.
+    pub video_filter: f32,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             volume: 1.0,
             overscan: false,
             zapper: false,
+            video_filter: 0.0,
         }
     }
 }
@@ -74,6 +77,7 @@ integer_scale={}
 volume={}
 overscan={}
 zapper={}
+video_filter={}
 ",
             self.touch_scale,
             self.touch_opacity,
@@ -84,7 +88,8 @@ zapper={}
             self.integer_scale,
             self.volume,
             self.overscan,
-            self.zapper
+            self.zapper,
+            self.video_filter
         )
     }
 
@@ -113,6 +118,7 @@ zapper={}
                 "volume" => c.volume = f(c.volume, 0.0, 1.0),
                 "overscan" => c.overscan = b(c.overscan),
                 "zapper" => c.zapper = b(c.zapper),
+                "video_filter" => c.video_filter = f(c.video_filter, 0.0, 2.0).round(),
                 _ => {}
             }
         }
