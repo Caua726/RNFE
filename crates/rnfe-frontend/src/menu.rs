@@ -21,6 +21,8 @@ pub enum Screen {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
+    /// Zapper (pistola de luz) na porta 2.
+    Zapper,
     TouchScale,
     TouchOpacity,
     TouchAlways,
@@ -37,6 +39,7 @@ pub enum Setting {
 pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Som", &[Setting::Volume]),
     ("Vídeo", &[Setting::IntegerScale, Setting::Overscan]),
+    ("Controles", &[Setting::Zapper]),
     ("Toque", &[Setting::TouchScale, Setting::TouchOpacity, Setting::TouchAlways, Setting::Haptics]),
     ("Acessibilidade", &[Setting::TextScale, Setting::HighContrast]),
 ];
@@ -50,6 +53,7 @@ impl Setting {
             Setting::TextScale => "Tamanho do texto",
             Setting::HighContrast => "Alto contraste",
             Setting::Haptics => "Vibrar ao tocar",
+            Setting::Zapper => "Zapper (mira com o toque)",
             Setting::IntegerScale => "Escala inteira (pixels quadrados)",
             Setting::Volume => "Volume",
             Setting::Overscan => "Cortar bordas (overscan)",
@@ -62,6 +66,7 @@ impl Setting {
             Setting::TouchAlways
                 | Setting::HighContrast
                 | Setting::Haptics
+                | Setting::Zapper
                 | Setting::IntegerScale
                 | Setting::Overscan
         )
@@ -87,6 +92,7 @@ impl Setting {
             Setting::TouchAlways => c.touch_always as u8 as f32,
             Setting::HighContrast => c.high_contrast as u8 as f32,
             Setting::Haptics => c.haptics as u8 as f32,
+            Setting::Zapper => c.zapper as u8 as f32,
             Setting::IntegerScale => c.integer_scale as u8 as f32,
             Setting::Overscan => c.overscan as u8 as f32,
         }
@@ -109,6 +115,7 @@ impl Setting {
             Setting::TextScale => pct(c.text_scale),
             Setting::HighContrast => on(c.high_contrast),
             Setting::Haptics => on(c.haptics),
+            Setting::Zapper => on(c.zapper),
             Setting::IntegerScale => on(c.integer_scale),
             Setting::Volume => pct(c.volume),
             Setting::Overscan => on(c.overscan),
@@ -128,6 +135,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::TouchAlways => c.touch_always = v >= 0.5,
         Setting::HighContrast => c.high_contrast = v >= 0.5,
         Setting::Haptics => c.haptics = v >= 0.5,
+        Setting::Zapper => c.zapper = v >= 0.5,
         Setting::IntegerScale => c.integer_scale = v >= 0.5,
         Setting::Overscan => c.overscan = v >= 0.5,
     }

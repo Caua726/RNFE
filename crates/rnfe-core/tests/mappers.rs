@@ -601,3 +601,54 @@ fn unrom512_action53_vrc4() {
     cart.cpu_write(0xF006, 0);
     assert!(!cart.irq_pending());
 }
+
+/// Zapper: o bit do sensor só apaga quando a mira está num pixel claro e a varredura acabou de
+/// passar por ali; o bit do gatilho segue o que o frontend manda.
+#[test]
+fn zapper_le_luz_e_gatilho() {
+    // NROM com um programa que pinta a paleta de branco, liga o render e fica em laço
+    let mut v = b"NES\x1A".to_vec();
+    v.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    let mut prg = vec![0u8; 16384];
+    let code: &[u8] = &[
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, // LDA #$3F / STA $2006
+        0xA9, 0x00, 0x8D, 0x06, 0x20, // LDA #$00 / STA $2006
+        0xA9, 0x30, 0x8D, 0x07, 0x20, // LDA #$30 (branco) / STA $2007
+        0xA9, 0x1E, 0x8D, 0x01, 0x20, // LDA #$1E / STA $2001 (render ligado)
+        0x4C, 0x14, 0x80, // JMP $8014 (laço)
+    ];
+    prg[..code.len()].copy_from_slice(code);
+    prg[0x3FFC] = 0x00;
+    prg[0x3FFD] = 0x80;
+    v.extend_from_slice(&prg);
+    let cart = Cartridge::from_bytes(&v).unwrap();
+    let mut nes = rnfe_core::Nes::new(cart);
+    for _ in 0..3 {
+        nes.run_frame();
+    }
+
+    // sem Zapper, $4017 devolve o controle comum (bits 3-4 em zero)
+    nes.set_zapper(None);
+    assert_eq!(nes.peek(0x4017) & 0x18, 0x00);
+
+    // mirando no meio da tela (fundo branco), com o gatilho apertado
+    nes.set_zapper(Some((128, 120, true)));
+    let (mut viu_luz, mut gatilho) = (false, false);
+    for _ in 0..3 {
+        for _ in 0..2000 {
+            nes.step_instruction();
+            let v = nes.bus.read_raw(0x4017);
+            gatilho |= v & 0x10 != 0;
+            viu_luz |= v & 0x08 == 0;
+        }
+    }
+    assert!(gatilho, "gatilho apertado tem que aparecer no bit 4");
+    assert!(viu_luz, "tela branca tem que apagar o bit 3 em alguma linha");
+
+    // mirando fora da tela: nunca vê luz
+    nes.set_zapper(Some((300, 120, false)));
+    for _ in 0..2000 {
+        nes.step_instruction();
+        assert_ne!(nes.bus.read_raw(0x4017) & 0x08, 0, "fora da tela não pode ver luz");
+    }
+}

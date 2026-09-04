@@ -12,6 +12,14 @@ use crate::ppu::Ppu;
 /// Fixa o alinhamento CPU/PPU visível em leituras de `$2002` perto do VBL.
 const DOTS_BEFORE_ACCESS: u32 = 2;
 
+/// Estado do Zapper (pistola de luz): onde o cano aponta e se o gatilho está apertado.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Zapper {
+    pub x: u16,
+    pub y: u16,
+    pub trigger: bool,
+}
+
 pub struct Bus {
     pub ppu: Ppu,
     pub apu: Apu,
@@ -29,6 +37,8 @@ pub struct Bus {
     open_bus: u8,
     // Controles. Bits: A B Select Start Up Down Left Right
     pub controller: [u8; 2],
+    /// Zapper na porta 2 (`$4017`): posição de mira e gatilho.
+    pub zapper: Option<Zapper>,
     controller_state: [u8; 2],
     controller_strobe: bool,
 }
@@ -46,6 +56,7 @@ impl Bus {
             oam_dma_page: None,
             open_bus: 0,
             controller: [0; 2],
+            zapper: None,
             controller_state: [0; 2],
             controller_strobe: false,
         }
@@ -127,7 +138,7 @@ impl Bus {
             // bit 5 de $4015 e bits 5-7 dos controles vêm do open bus
             0x4015 => self.apu.read_status() | (self.open_bus & 0x20),
             0x4016 => self.read_controller(0) | (self.open_bus & 0xE0),
-            0x4017 => self.read_controller(1) | (self.open_bus & 0xE0),
+            0x4017 => self.read_port2() | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
             _ => self.cartridge.cpu_read_mut(addr).unwrap_or(self.open_bus),
         };
@@ -160,6 +171,38 @@ impl Bus {
                 self.cartridge.cpu_write(addr, data);
             }
         }
+    }
+
+    /// Porta 2: controle comum ou Zapper (bit 3 = gatilho, bit 4 = **ausência** de luz).
+    #[inline]
+    fn read_port2(&mut self) -> u8 {
+        let Some(z) = self.zapper else { return self.read_controller(1) };
+        // D3 = sensor de luz (0 = viu luz), D4 = gatilho (1 = apertado)
+        let mut v = 0x08;
+        if z.trigger {
+            v |= 0x10;
+        }
+        if self.sees_light(&z) {
+            v &= !0x08;
+        }
+        v
+    }
+
+    /// A fotocélula só enxerga o feixe recém-desenhado: pixel claro **e** a varredura passando
+    /// pelas linhas logo abaixo da mira.
+    fn sees_light(&self, z: &Zapper) -> bool {
+        if z.x >= crate::SCREEN_W as u16 || z.y >= crate::SCREEN_H as u16 {
+            return false;
+        }
+        let line = self.ppu.scanline;
+        if line < z.y as i16 || line > z.y as i16 + 12 {
+            return false;
+        }
+        let idx = self.ppu.screen[z.y as usize * crate::SCREEN_W + z.x as usize];
+        let c = crate::ppu::PALETTE_RGBA[(idx & 0x1FF) as usize];
+        // luminância aproximada; o Zapper responde a branco forte
+        let lum = c[0] as u32 * 54 + c[1] as u32 * 183 + c[2] as u32 * 19;
+        lum > 200 * 256
     }
 
     #[inline]

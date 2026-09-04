@@ -25,6 +25,8 @@ pub struct Config {
     pub volume: f32,
     /// Esconde 8 linhas em cima e embaixo (área que as TVs CRT não mostravam).
     pub overscan: bool,
+    /// Zapper (pistola de luz) na porta 2: mira com o toque/mouse. Duck Hunt e afins.
+    pub zapper: bool,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             integer_scale: false,
             volume: 1.0,
             overscan: false,
+            zapper: false,
         }
     }
 }
@@ -70,6 +73,7 @@ haptics={}
 integer_scale={}
 volume={}
 overscan={}
+zapper={}
 ",
             self.touch_scale,
             self.touch_opacity,
@@ -79,7 +83,8 @@ overscan={}
             self.haptics,
             self.integer_scale,
             self.volume,
-            self.overscan
+            self.overscan,
+            self.zapper
         )
     }
 
@@ -107,6 +112,7 @@ overscan={}
                 "integer_scale" => c.integer_scale = b(c.integer_scale),
                 "volume" => c.volume = f(c.volume, 0.0, 1.0),
                 "overscan" => c.overscan = b(c.overscan),
+                "zapper" => c.zapper = b(c.zapper),
                 _ => {}
             }
         }

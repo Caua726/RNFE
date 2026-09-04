@@ -92,6 +92,15 @@ impl Nes {
         self.bus.cpu_read_debug(addr)
     }
 
+    /// Liga (ou desliga) o Zapper na porta 2 e atualiza a mira, em pixels da tela do NES.
+    pub fn set_zapper(&mut self, aim: Option<(u16, u16, bool)>) {
+        self.bus.zapper = aim.map(|(x, y, trigger)| crate::bus::Zapper { x, y, trigger });
+    }
+
+    pub fn has_zapper(&self) -> bool {
+        self.bus.zapper.is_some()
+    }
+
     pub fn set_controller(&mut self, port: usize, buttons: Buttons) {
         if port < 2 {
             self.bus.controller[port] = buttons.0;

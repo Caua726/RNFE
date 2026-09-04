@@ -88,6 +88,8 @@ struct OverlayKey {
     selected: Option<usize>,
     /// Selo no canto: turbo ou rebobinando.
     badge: Option<&'static str>,
+    /// Mira do Zapper (posição e gatilho) quando o acessório está ligado.
+    zapper: Option<(Option<(u16, u16)>, bool)>,
 }
 
 pub struct App {
@@ -155,6 +157,9 @@ pub struct App {
     confirm_esc: bool,
     /// O áudio estava mudo no frame anterior (rewind, turbo ou volume 0).
     was_muted: bool,
+    /// Mira do Zapper em pixels do NES e frames restantes de gatilho apertado.
+    zapper_aim: Option<(u16, u16)>,
+    zapper_hold: u8,
     /// Faixas do overlay desenhadas no último frame de jogo (limpas no próximo).
     overlay_spans: Vec<(f32, f32)>,
     /// O último overlay desenhado foi um menu (tela inteira pintada).
@@ -245,6 +250,8 @@ impl App {
             save_error_shown: false,
             confirm_esc: false,
             was_muted: false,
+            zapper_aim: None,
+            zapper_hold: 0,
             overlay_spans: Vec::new(),
             overlay_menu: true,
             drag: Drag::Undecided,
@@ -420,6 +427,27 @@ impl App {
         self.refresh_touch_layout();
         self.invalidate_layout();
         self.config_dirty = true;
+    }
+
+    /// Converte um ponto da janela em pixel da tela do NES (`None` fora da imagem).
+    fn nes_pixel(&self, x: f32, y: f32) -> Option<(u16, u16)> {
+        let (vx, vy, vw, vh) = self.gpu.as_ref()?.viewport;
+        if vw <= 0.0 || vh <= 0.0 || x < vx || y < vy || x >= vx + vw || y >= vy + vh {
+            return None;
+        }
+        let lines = if self.config.overscan { 224.0 } else { 240.0 };
+        let top = if self.config.overscan { 8.0 } else { 0.0 };
+        let px = ((x - vx) / vw * rnfe_core::SCREEN_W as f32) as u16;
+        let py = (top + (y - vy) / vh * lines) as u16;
+        Some((px.min(255), py.min(239)))
+    }
+
+    /// Mira do Zapper: um toque/clique aponta e puxa o gatilho por alguns frames.
+    fn zapper_shot(&mut self, x: f32, y: f32) {
+        if let Some(p) = self.nes_pixel(x, y) {
+            self.zapper_aim = Some(p);
+            self.zapper_hold = 5;
+        }
     }
 
     fn buzz(&self) {
@@ -903,6 +931,13 @@ impl App {
             return;
         }
         let Some(nes) = self.nes.as_mut() else { return };
+        if self.config.zapper {
+            let aim = self.zapper_aim.unwrap_or((0, 0));
+            nes.set_zapper(Some((aim.0, aim.1, self.zapper_hold > 0)));
+            self.zapper_hold = self.zapper_hold.saturating_sub(1);
+        } else if nes.has_zapper() {
+            nes.set_zapper(None);
+        }
         nes.set_controller(0, buttons);
         nes.set_controller(1, buttons2);
         let mut save_err: Option<String> = None;
@@ -1106,6 +1141,7 @@ impl App {
             scroll: self.scroll as i32,
             selected: self.selected,
             badge: self.status_badge(),
+            zapper: self.config.zapper.then_some((self.zapper_aim, self.zapper_hold > 0)),
         };
         let dirty = self.overlay_key.as_ref() != Some(&key) || self.overlay_size != (w, h);
         let has_overlay = self.screen != Screen::Playing
@@ -1113,7 +1149,8 @@ impl App {
             || touch_visible
             || self.debug_overlay
             || show_toast
-            || self.status_badge().is_some();
+            || self.status_badge().is_some()
+            || (self.config.zapper && self.zapper_aim.is_some());
         if !dirty {
             let Some(gpu) = self.gpu.as_mut() else { return };
             let fb = self.nes.as_mut().map(|n| n.framebuffer());
@@ -1141,6 +1178,15 @@ impl App {
             if self.status_badge().is_some() {
                 let vy = self.gpu.as_ref().map_or(0.0, |g| g.viewport.1);
                 spans.push((vy, vy + 40.0 * s));
+            }
+            if self.config.zapper {
+                if let (Some((_, zy)), Some(g)) = (self.zapper_aim, self.gpu.as_ref()) {
+                    let (_, vy, _, vh) = g.viewport;
+                    let lines = if self.config.overscan { 224.0 } else { 240.0 };
+                    let top = if self.config.overscan { 8.0 } else { 0.0 };
+                    let cy = vy + (zy as f32 - top + 0.5) / lines * vh;
+                    spans.push((cy - 16.0 * s, cy + 16.0 * s));
+                }
             }
             if show_toast {
                 spans.push((h as f32 - 90.0 * s, h as f32));
@@ -1171,6 +1217,39 @@ impl App {
                 let (op, hc) = (self.config.touch_opacity, self.config.high_contrast);
                 let layout = self.touch_layout.clone();
                 self.ui.draw_touch_controls(&mut self.overlay, w, h, &layout, pressed, op, &theme, hc);
+            }
+            // Mira do Zapper no último ponto apontado
+            if self.config.zapper {
+                if let (Some((zx, zy)), Some(g)) = (self.zapper_aim, self.gpu.as_ref()) {
+                    let (vx, vy, vw, vh) = g.viewport;
+                    let lines = if self.config.overscan { 224.0 } else { 240.0 };
+                    let top = if self.config.overscan { 8.0 } else { 0.0 };
+                    let cx = vx + (zx as f32 + 0.5) / rnfe_core::SCREEN_W as f32 * vw;
+                    let cy = vy + (zy as f32 - top + 0.5) / lines * vh;
+                    let r = 14.0 * s;
+                    let hot = self.zapper_hold > 0;
+                    let col = if hot { [255, 90, 60, 255] } else { [255, 255, 255, 190] };
+                    ui::fill_rect(
+                        &mut self.overlay,
+                        w,
+                        h,
+                        (cx - r) as i32,
+                        cy as i32,
+                        (2.0 * r) as i32,
+                        2,
+                        col,
+                    );
+                    ui::fill_rect(
+                        &mut self.overlay,
+                        w,
+                        h,
+                        cx as i32,
+                        (cy - r) as i32,
+                        2,
+                        (2.0 * r) as i32,
+                        col,
+                    );
+                }
             }
             if let Some(text) = self.status_badge() {
                 // canto superior direito da imagem, para não cobrir o HUD do jogo
@@ -1735,6 +1814,8 @@ impl ApplicationHandler<UserEvent> for App {
                     self.ensure_audio();
                     if !self.playing() {
                         self.menu_press(MOUSE_ID, x, y, el);
+                    } else if self.config.zapper {
+                        self.zapper_shot(x, y);
                     }
                 } else if !self.playing() {
                     self.menu_release(MOUSE_ID, x, y, el);
@@ -1751,6 +1832,9 @@ impl ApplicationHandler<UserEvent> for App {
                                 self.buzz();
                                 self.set_screen(Screen::Paused);
                             } else {
+                                if self.config.zapper && self.nes_pixel(x, y).is_some() {
+                                    self.zapper_shot(x, y); // mira dentro da imagem
+                                }
                                 let first = !self.touch.seen;
                                 let b = self.touch.down(&self.touch_layout, t.id, x, y);
                                 if first {

@@ -91,6 +91,7 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 | Reset | R | menu → Reset | — | R |
 | Pausa / menu | Esc | MENU (ou START+SELECT) | Mode/Guide ou Start+Select | — |
 | Jogador 2 | I J K L · O / U · . / , | — | 2º gamepad | — |
+| Zapper (Duck Hunt) | clique na imagem | toque na imagem | — | — |
 | Abrir ROM | O ou clique | toque em Open ROM | — | — |
 | Save / load state | F5 / F7 (slot 1) | menu → Salvar / Carregar (3 slots) | — | 1 / 2 |
 | Captura de tela | F12 ou menu (PNG em `shots/`) | — | — | — |
