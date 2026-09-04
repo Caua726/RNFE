@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 40 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, NTSC e PAL, 40 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 

@@ -18,7 +18,7 @@ pub struct Nes {
 }
 
 impl Nes {
-    /// Cria o console com o cartucho inserido e já resetado.
+    /// Cria o console com o cartucho inserido e já resetado (na região do header).
     pub fn new(cartridge: Cartridge) -> Nes {
         let mut nes = Nes {
             cpu: Cpu6502::new(),
@@ -27,8 +27,19 @@ impl Nes {
             rgba: vec![[0u8; 4]; crate::SCREEN_W * crate::SCREEN_H].into_boxed_slice().try_into().unwrap(),
             rgba_dirty: true,
         };
+        let region = nes.bus.cartridge.region();
+        nes.set_region(region);
         nes.reset();
         nes
+    }
+
+    /// Temporização do console. Trocar reinicia os contadores de PPU/APU, não o jogo.
+    pub fn set_region(&mut self, region: crate::Region) {
+        self.bus.set_region(region);
+    }
+
+    pub fn region(&self) -> crate::Region {
+        self.bus.region()
     }
 
     pub fn cartridge(&self) -> &Cartridge {

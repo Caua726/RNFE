@@ -652,3 +652,31 @@ fn zapper_le_luz_e_gatilho() {
         assert_ne!(nes.bus.read_raw(0x4017) & 0x08, 0, "fora da tela não pode ver luz");
     }
 }
+
+/// PAL: 312 linhas de 341 dots a 3,2 dots por ciclo dão ~33 248 ciclos de CPU por frame
+/// (o NTSC tem 262 linhas a 3 dots = ~29 781). O relógio do frame é o que muda a velocidade
+/// do jogo inteiro, então vale travar por teste.
+#[test]
+fn pal_tem_frame_mais_longo() {
+    fn ciclos_por_frame(region: rnfe_core::Region) -> u64 {
+        let mut v = b"NES\x1A".to_vec();
+        v.extend_from_slice(&[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut prg = vec![0xEAu8; 16384]; // NOP infinito
+        prg[0x3FFC] = 0x00;
+        prg[0x3FFD] = 0x80;
+        v.extend_from_slice(&prg);
+        v.extend_from_slice(&[0u8; 8192]);
+        let mut nes = rnfe_core::Nes::new(Cartridge::from_bytes(&v).unwrap());
+        nes.set_region(region);
+        nes.run_frame(); // descarta o primeiro (começa no meio do vblank)
+        let antes = nes.cpu_cycles();
+        for _ in 0..10 {
+            nes.run_frame();
+        }
+        (nes.cpu_cycles() - antes) / 10
+    }
+    let ntsc = ciclos_por_frame(rnfe_core::Region::Ntsc);
+    let pal = ciclos_por_frame(rnfe_core::Region::Pal);
+    assert!((29_770..=29_790).contains(&ntsc), "NTSC deu {ntsc} ciclos por frame");
+    assert!((33_230..=33_270).contains(&pal), "PAL deu {pal} ciclos por frame");
+}

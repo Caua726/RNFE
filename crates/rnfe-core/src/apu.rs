@@ -25,17 +25,32 @@ const TRIANGLE_TABLE: [u8; 32] = [
 /// Clock da CPU NTSC (Hz).
 const CPU_HZ: f64 = 1_789_773.0;
 
+/// Clock da CPU PAL (Hz).
+const CPU_HZ_PAL: f64 = 1_662_607.0;
+
 /// Períodos do ruído em ciclos de CPU (NTSC).
 const NOISE_PERIOD_TABLE: [u16; 16] =
     [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
+
+/// Períodos do ruído no PAL.
+const NOISE_PERIOD_TABLE_PAL: [u16; 16] =
+    [4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778];
 
 /// Períodos do DMC em ciclos de CPU (NTSC).
 const DMC_RATE_TABLE: [u16; 16] =
     [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
 
+/// Períodos do DMC no PAL.
+const DMC_RATE_TABLE_PAL: [u16; 16] =
+    [398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50];
+
 /// Ciclos (de CPU) em que cada passo do sequenciador dispara, por modo.
 const FRAME_STEPS: [[u32; 6]; 2] =
     [[7457, 14913, 22371, 29828, 29829, 29830], [7457, 14913, 22371, 29829, 37281, 37282]];
+
+/// Mesmos passos no PAL (o divisor do frame counter é outro).
+const FRAME_STEPS_PAL: [[u32; 6]; 2] =
+    [[8313, 16627, 24939, 33252, 33253, 33254], [8313, 16627, 24939, 33253, 41565, 41566]];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FrameTick {
@@ -533,6 +548,10 @@ pub struct Apu {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub sample_buffer: Vec<f32>,
     pub sample_rate: f32,
+    /// Temporização do console: muda o relógio e as tabelas de ruído/DMC/frame counter.
+    /// Fora do save state, como na PPU.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    region: crate::Region,
     /// Amostras por ciclo de CPU (`sample_rate / CPU_HZ`), pré-calculado.
     sample_step: f64,
     sample_clock: f64,
@@ -580,6 +599,7 @@ impl Apu {
             length_pending: 0,
             sample_buffer: Vec::with_capacity(1024),
             sample_rate: 44100.0,
+            region: crate::Region::Ntsc,
             sample_step: 44100.0 / CPU_HZ,
             sample_clock: 0.0,
             acc: 0.0,
@@ -633,9 +653,22 @@ impl Apu {
         self.hp2_prev_out = 0.0;
     }
 
+    /// Troca a temporização; os períodos já carregados são reconvertidos na próxima escrita.
+    pub fn set_region(&mut self, region: crate::Region) {
+        self.region = region;
+        self.set_sample_rate(self.sample_rate);
+    }
+
+    fn cpu_hz(&self) -> f64 {
+        match self.region {
+            crate::Region::Ntsc => CPU_HZ,
+            crate::Region::Pal => CPU_HZ_PAL,
+        }
+    }
+
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.sample_rate = rate;
-        self.sample_step = rate as f64 / CPU_HZ;
+        self.sample_step = rate as f64 / self.cpu_hz();
         self.hp1_alpha = hp_alpha(90.0, rate as f64);
         self.hp2_alpha = hp_alpha(440.0, rate as f64);
         self.lp_alpha = lp_alpha(14_000.0, rate as f64);
@@ -714,7 +747,11 @@ impl Apu {
             }
             0x400E => {
                 self.noise.mode = data & 0x80 != 0;
-                self.noise.period = NOISE_PERIOD_TABLE[(data & 0x0F) as usize] - 1;
+                let table = match self.region {
+                    crate::Region::Ntsc => &NOISE_PERIOD_TABLE,
+                    crate::Region::Pal => &NOISE_PERIOD_TABLE_PAL,
+                };
+                self.noise.period = table[(data & 0x0F) as usize] - 1;
             }
             0x400F => {
                 self.noise.length.load(data >> 3);
@@ -727,7 +764,11 @@ impl Apu {
                     self.dmc.irq_flag = false;
                 }
                 self.dmc.loop_flag = data & 0x40 != 0;
-                self.dmc.period = DMC_RATE_TABLE[(data & 0x0F) as usize] - 1;
+                let table = match self.region {
+                    crate::Region::Ntsc => &DMC_RATE_TABLE,
+                    crate::Region::Pal => &DMC_RATE_TABLE_PAL,
+                };
+                self.dmc.period = table[(data & 0x0F) as usize] - 1;
             }
             0x4011 => self.dmc.output_level = data & 0x7F,
             0x4012 => self.dmc.sample_addr = 0xC000 | ((data as u16) << 6),
@@ -826,7 +867,11 @@ impl Apu {
         // --- frame counter
         self.frame_cycle += 1;
         let mode = self.frame_mode as usize;
-        if self.frame_cycle >= FRAME_STEPS[mode][self.frame_step] {
+        let steps = match self.region {
+            crate::Region::Ntsc => &FRAME_STEPS,
+            crate::Region::Pal => &FRAME_STEPS_PAL,
+        };
+        if self.frame_cycle >= steps[mode][self.frame_step] {
             if mode == 0 && self.frame_step >= 3 && !self.frame_irq_inhibit {
                 self.frame_irq = true;
             }

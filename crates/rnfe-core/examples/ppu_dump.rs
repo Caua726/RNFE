@@ -9,6 +9,10 @@ fn main() {
     let frames: u32 = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(60);
     let cart = rnfe_core::Cartridge::from_bytes(&bytes).expect("ROM inválida");
     let mut nes = rnfe_core::Nes::new(cart);
+    // RNFE_REGION=pal força a temporização europeia nas ferramentas
+    if std::env::var("RNFE_REGION").is_ok_and(|v| v.eq_ignore_ascii_case("pal")) {
+        nes.set_region(rnfe_core::Region::Pal);
+    }
     for f in 0..frames {
         let start = std::env::args().nth(4).is_some_and(|a| a == "start");
         let b = if start && f % 120 < 10 && f > 60 {

@@ -45,6 +45,10 @@ fn main() {
     let bytes = std::fs::read(&rom).expect("ler ROM");
     let cart = rnfe_core::Cartridge::from_bytes(&bytes).expect("ROM inválida");
     let mut nes = rnfe_core::Nes::new(cart);
+    // RNFE_REGION=pal força a temporização europeia nas ferramentas
+    if std::env::var("RNFE_REGION").is_ok_and(|v| v.eq_ignore_ascii_case("pal")) {
+        nes.set_region(rnfe_core::Region::Pal);
+    }
     let mut audio = Vec::with_capacity(4096);
 
     // aquecimento: tira o custo de página/alloc da medição

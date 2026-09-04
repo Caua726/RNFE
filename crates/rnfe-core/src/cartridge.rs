@@ -89,6 +89,8 @@ pub struct RomHeader {
     pub chr_ram_len: usize,
     pub battery: bool,
     pub four_screen: bool,
+    /// Região declarada no header (byte 9 do iNES 1, byte 12 do NES 2.0).
+    pub region: crate::Region,
     pub trainer: bool,
     pub mirror: Mirror,
 }
@@ -152,6 +154,18 @@ impl RomHeader {
                 };
             }
         }
+        // Região: NES 2.0 põe no byte 12 (bits 0-1); o iNES 1 tem o bit 0 do byte 9, que quase
+        // ninguém preenche — o nome do arquivo é mais confiável, então isto é só o padrão.
+        let region = if nes2 {
+            match h[12] & 0x03 {
+                1 => crate::Region::Pal,
+                _ => crate::Region::Ntsc,
+            }
+        } else if h[9] & 0x01 != 0 {
+            crate::Region::Pal
+        } else {
+            crate::Region::Ntsc
+        };
         if prg_len == 0 {
             return Err(RomError::BadHeader("ROM sem PRG"));
         }
@@ -168,6 +182,7 @@ impl RomHeader {
             chr_ram_len,
             battery,
             four_screen,
+            region,
             trainer,
             mirror,
         })
@@ -201,6 +216,7 @@ pub struct Cartridge {
     read_hook: bool,
     /// Base física de cada banco de 1 KB de CHR (recalculada após cada escrita da CPU).
     chr_cache: [usize; 8],
+    region: crate::Region,
     /// Base na PRG de cada janela de 8 KB de `$8000-$FFFF` (caminho rápido de leitura).
     prg_cache: [usize; 4],
     /// O mapper sabe dizer o banco sem efeito colateral e não tem gancho de leitura.
@@ -282,6 +298,7 @@ impl Cartridge {
             has_audio,
             prg_ram_fallback,
             chr_cache: [0; 8],
+            region: hdr.region,
             prg_cache: [0; 4],
             prg_cached: false,
             nt_cache: [NtSource::Ciram(0); 4],
@@ -534,6 +551,11 @@ impl Cartridge {
     #[inline]
     pub fn irq_pending(&self) -> bool {
         self.irq
+    }
+
+    /// Região declarada no header da ROM.
+    pub fn region(&self) -> crate::Region {
+        self.region
     }
 
     /// O cartucho tem canal de áudio próprio.

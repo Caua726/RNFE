@@ -18,6 +18,11 @@ impl FramePacer {
     }
 
     /// Multiplicador de velocidade (1.0 = tempo real, 2.0 = turbo).
+    /// Troca a taxa base (60,0988 no NTSC, 50,007 no PAL).
+    pub fn set_fps(&mut self, fps: f64) {
+        self.period = Duration::from_secs_f64(1.0 / fps.max(1.0));
+    }
+
     pub fn set_speed(&mut self, speed: f64) {
         self.speed = speed.max(0.01);
     }

@@ -35,6 +35,10 @@ fn run_one(path: &PathBuf, frames: u32) -> String {
     let mapper = cart.mapper_id();
     let r = std::panic::catch_unwind(move || {
         let mut nes = Nes::new(cart);
+        // RNFE_REGION=pal força a temporização europeia nas ferramentas
+        if std::env::var("RNFE_REGION").is_ok_and(|v| v.eq_ignore_ascii_case("pal")) {
+            nes.set_region(rnfe_core::Region::Pal);
+        }
         let t = Instant::now();
         let mut colors = BTreeSet::new();
         for f in 0..frames {

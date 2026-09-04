@@ -13,6 +13,10 @@ fn main() {
     let cart = Cartridge::from_bytes(&bytes).expect("ROM iNES/NES 2.0 válida");
     println!("{} — hash {:016x}, bateria: {}", cart.describe(), cart.rom_hash(), cart.has_battery());
     let mut nes = Nes::new(cart);
+    // RNFE_REGION=pal força a temporização europeia nas ferramentas
+    if std::env::var("RNFE_REGION").is_ok_and(|v| v.eq_ignore_ascii_case("pal")) {
+        nes.set_region(rnfe_core::Region::Pal);
+    }
     nes.set_sample_rate(48_000);
 
     // 2 segundos com START apertado no 1º segundo

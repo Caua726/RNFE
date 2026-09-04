@@ -421,6 +421,20 @@ impl App {
     }
 
     fn apply_config(&mut self) {
+        // região manual muda na hora (o "Automática" só vale ao abrir a ROM)
+        if let Some(nes) = self.nes.as_mut() {
+            let region = match self.config.region as u8 {
+                1 => Some(rnfe_core::Region::Ntsc),
+                2 => Some(rnfe_core::Region::Pal),
+                _ => None,
+            };
+            if let Some(r) = region {
+                if nes.region() != r {
+                    nes.set_region(r);
+                    self.pacer.set_fps(r.fps());
+                }
+            }
+        }
         if let Some(g) = self.gpu.as_mut() {
             g.set_video(self.config.integer_scale, self.config.overscan, self.config.video_filter as u8);
         }
@@ -492,8 +506,30 @@ impl App {
         }
     }
 
+    /// Região a usar: o ajuste manual manda; em "Automática" vale o header e, como a maioria
+    /// das ROMs europeias não marca nada, o nome do arquivo ((E), (Europe), PAL).
+    fn pick_region(&self, nes: &Nes, name: &str) -> rnfe_core::Region {
+        match self.config.region as u8 {
+            1 => rnfe_core::Region::Ntsc,
+            2 => rnfe_core::Region::Pal,
+            _ => {
+                if nes.region() == rnfe_core::Region::Pal {
+                    return rnfe_core::Region::Pal;
+                }
+                let n = name.to_ascii_uppercase();
+                let pal = ["(E)", "(EUROPE)", "(PAL)", "(EU)", "(A)", "(SW)", "(F)", "(G)", "(I)", "(S)"]
+                    .iter()
+                    .any(|m| n.contains(m));
+                if pal { rnfe_core::Region::Pal } else { rnfe_core::Region::Ntsc }
+            }
+        }
+    }
+
     fn install_nes(&mut self, mut nes: Box<Nes>, name: String) {
         self.flush_save();
+        let region = self.pick_region(&nes, &name);
+        nes.set_region(region);
+        self.pacer.set_fps(region.fps());
         if let Some(a) = &self.audio {
             nes.set_sample_rate(a.sample_rate);
         }

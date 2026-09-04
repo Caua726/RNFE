@@ -29,6 +29,8 @@ pub struct Config {
     pub zapper: bool,
     /// Filtro de vídeo: 0 nítido, 1 suave (sharp bilinear), 2 scanlines.
     pub video_filter: f32,
+    /// Região: 0 automática (header + nome do arquivo), 1 NTSC, 2 PAL.
+    pub region: f32,
 }
 
 impl Default for Config {
@@ -46,6 +48,7 @@ impl Default for Config {
             overscan: false,
             zapper: false,
             video_filter: 0.0,
+            region: 0.0,
         }
     }
 }
@@ -78,6 +81,7 @@ volume={}
 overscan={}
 zapper={}
 video_filter={}
+region={}
 ",
             self.touch_scale,
             self.touch_opacity,
@@ -89,7 +93,8 @@ video_filter={}
             self.volume,
             self.overscan,
             self.zapper,
-            self.video_filter
+            self.video_filter,
+            self.region
         )
     }
 
@@ -119,6 +124,7 @@ video_filter={}
                 "overscan" => c.overscan = b(c.overscan),
                 "zapper" => c.zapper = b(c.zapper),
                 "video_filter" => c.video_filter = f(c.video_filter, 0.0, 2.0).round(),
+                "region" => c.region = f(c.region, 0.0, 2.0).round(),
                 _ => {}
             }
         }

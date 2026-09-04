@@ -336,7 +336,8 @@ fn main() {
     let mut renderer = Renderer::new(rows, cols);
     let keys = spawn_input();
     let mut input = InputState::new();
-    let mut pacer = FramePacer::new(NTSC_FPS);
+    // a região vem do header da ROM (PAL roda a 50 Hz)
+    let mut pacer = FramePacer::new(nes.region().fps());
     let start = Instant::now();
     let now = || start.elapsed();
 

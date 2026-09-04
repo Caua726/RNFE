@@ -177,13 +177,15 @@ impl Nes {
         self.bus.cartridge.restore(st.cart)?;
         // O state não guarda a imagem: mantém o último frame em vez de uma tela cinza
         std::mem::swap(&mut st.ppu.screen, &mut self.bus.ppu.screen);
-        // …nem a taxa de amostragem do frontend
+        // …nem a taxa de amostragem do frontend, nem a região (são ajustes do console)
         let rate = self.bus.apu.sample_rate;
+        let region = self.bus.region();
         self.cpu = st.cpu;
         self.bus.ppu = st.ppu;
         self.bus.apu = st.apu;
         self.bus.apu.set_sample_rate(rate);
         self.bus.restore(st.bus);
+        self.bus.set_region(region);
         self.bus.cartridge.data.ppu_sprites_16 = self.bus.ppu.control & 0x20 != 0;
         Ok(())
     }

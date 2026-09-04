@@ -31,6 +31,12 @@ pub struct Bus {
     mapper_clock: bool,
     /// O cartucho tem áudio próprio (some na média por ciclo em vez de amostrar por ponto).
     cart_audio: bool,
+    /// Temporização do console (NTSC = 3 dots por ciclo; PAL = 3,2).
+    region: crate::Region,
+    /// Numerador acumulado dos dots que faltam dar (fração da região).
+    dot_acc: u32,
+    /// Dots que faltam dar depois do acesso deste ciclo.
+    pending_dots: u32,
     /// Página pedida por `$4014`; a CPU consome no próximo ciclo de leitura.
     oam_dma_page: Option<u8>,
     /// Último valor no barramento de dados (lido em endereços não mapeados).
@@ -48,6 +54,9 @@ impl Bus {
         Bus {
             mapper_clock: cartridge.wants_cpu_clock(),
             cart_audio: cartridge.has_audio(),
+            region: crate::Region::Ntsc,
+            dot_acc: 0,
+            pending_dots: 1,
             ppu: Ppu::new(),
             apu: Apu::new(),
             cartridge,
@@ -64,6 +73,31 @@ impl Bus {
 
     // ------------------------------------------------------------------ relógio
 
+    /// Troca a temporização (NTSC/PAL). Zera o acumulador de dots.
+    pub fn set_region(&mut self, region: crate::Region) {
+        self.region = region;
+        self.dot_acc = 0;
+        self.ppu.set_region(region);
+        self.apu.set_region(region);
+    }
+
+    pub fn region(&self) -> crate::Region {
+        self.region
+    }
+
+    /// Quantos dots este ciclo de CPU vale (3 no NTSC; 3 ou 4 alternando no PAL, 16 a cada 5).
+    #[inline]
+    fn dots_this_cycle(&mut self) -> u32 {
+        let (num, den) = self.region.dots_per_cycle();
+        if den == 1 {
+            return num;
+        }
+        self.dot_acc += num;
+        let dots = self.dot_acc / den;
+        self.dot_acc %= den;
+        dots
+    }
+
     /// Começo de um ciclo de CPU: os dots de PPU que antecedem o acesso.
     #[inline]
     pub fn tick_pre(&mut self) {
@@ -73,6 +107,8 @@ impl Bus {
         // da amostra (1 em ~37 ciclos) enchia de aliasing os canais do VRC6/N163/MMC5/5B.
         let exp = if self.cart_audio { self.cartridge.audio_output() } else { 0.0 };
         self.apu.clock(exp);
+        // No PAL o ciclo vale 3 ou 4 dots; os 2 primeiros continuam antes do acesso.
+        self.pending_dots = self.dots_this_cycle().saturating_sub(DOTS_BEFORE_ACCESS);
         for _ in 0..DOTS_BEFORE_ACCESS {
             self.ppu.step(&mut self.cartridge);
         }
@@ -81,7 +117,7 @@ impl Bus {
     /// Fim de um ciclo de CPU: dots restantes e mapper.
     #[inline]
     pub fn tick_post(&mut self) {
-        for _ in DOTS_BEFORE_ACCESS..3 {
+        for _ in 0..self.pending_dots {
             self.ppu.step(&mut self.cartridge);
         }
         if self.ppu.a12_rise {

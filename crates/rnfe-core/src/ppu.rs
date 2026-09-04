@@ -173,6 +173,10 @@ pub struct Ppu {
 
     // Frame par/ímpar
     odd_frame: bool,
+    /// Temporização: muda a última linha, a linha do vblank e o dot pulado. Fora do save
+    /// state — é ajuste do console, reaplicado ao carregar.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    region: crate::Region,
     /// `$2002` lido um dot antes do VBL: a flag não é setada neste frame (e não há NMI).
     prevent_vbl: bool,
     /// Open bus da PPU ("decay register"): cada bit guarda o último valor que passou pelo
@@ -236,7 +240,7 @@ impl Ppu {
             next_sprite_count: 0,
             next_sprite_zero: false,
             screen: blank_screen(),
-            scanline: 241, // NES powerup: PPU começa em vblank
+            scanline: 241, // NES powerup: PPU começa em vblank (ajustado em set_region)
             cycle: 0,
             frame_complete: false,
             a12_rise: false,
@@ -245,6 +249,7 @@ impl Ppu {
             sprite_fetch_addr: 0,
             sprite_fetch_lo: 0,
             odd_frame: false,
+            region: crate::Region::Ntsc,
             prevent_vbl: false,
             io_bus: 0,
             io_decay: [0; 8],
@@ -303,6 +308,14 @@ impl Ppu {
         }
     }
 
+    /// Troca a temporização (NTSC/PAL): muda a última linha e a linha do vblank.
+    pub fn set_region(&mut self, region: crate::Region) {
+        self.region = region;
+        if self.scanline > region.last_scanline() {
+            self.scanline = region.vblank_scanline();
+        }
+    }
+
     pub fn cpu_read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
         match addr {
             0x0002 => {
@@ -311,7 +324,7 @@ impl Ppu {
                 self.status &= 0x7F;
                 self.address_latch = 0;
                 // Lido um dot antes de (241,1): lê 0 e o VBL deste frame é suprimido
-                if self.scanline == 241 && self.cycle == 1 {
+                if self.scanline == self.region.vblank_scanline() && self.cycle == 1 {
                     self.prevent_vbl = true;
                 }
                 data
@@ -573,7 +586,7 @@ impl Ppu {
             if self.cycle >= 341 {
                 self.cycle = 0;
                 self.scanline += 1;
-                if self.scanline >= 261 {
+                if self.scanline >= self.region.last_scanline() {
                     self.scanline = -1;
                     self.frame_complete = true;
                 }
@@ -587,7 +600,12 @@ impl Ppu {
             }
         }
         // Frame ímpar com render ligado: (261,339) salta direto para (0,0).
-        let skip_dot = self.scanline == -1 && self.cycle == 339 && self.odd_frame && self.rendering;
+        // O PAL não pula o dot em frame ímpar
+        let skip_dot = self.scanline == -1
+            && self.cycle == 339
+            && self.odd_frame
+            && self.rendering
+            && self.region == crate::Region::Ntsc;
 
         // Background rendering logic
         if self.scanline >= -1 && self.scanline < 240 {
@@ -679,7 +697,7 @@ impl Ppu {
             }
         }
 
-        if self.scanline == 241 && self.cycle == 1 {
+        if self.scanline == self.region.vblank_scanline() && self.cycle == 1 {
             if !self.prevent_vbl {
                 self.status |= 0x80;
             }
@@ -699,7 +717,7 @@ impl Ppu {
         if self.cycle >= 341 {
             self.cycle = 0;
             self.scanline += 1;
-            if self.scanline >= 261 {
+            if self.scanline >= self.region.last_scanline() {
                 self.scanline = -1;
                 self.frame_complete = true;
                 self.odd_frame = !self.odd_frame;

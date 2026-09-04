@@ -12,6 +12,10 @@ fn main() {
     let cart = rnfe_core::Cartridge::from_bytes(&bytes).expect("ROM inválida");
     println!("{}", cart.describe());
     let mut nes = rnfe_core::Nes::new(cart);
+    // RNFE_REGION=pal força a temporização europeia nas ferramentas
+    if std::env::var("RNFE_REGION").is_ok_and(|v| v.eq_ignore_ascii_case("pal")) {
+        nes.set_region(rnfe_core::Region::Pal);
+    }
     let t = std::time::Instant::now();
     for f in 0..frames {
         // START a cada 2 s (sai de títulos); JAM interrompe e mostra onde
