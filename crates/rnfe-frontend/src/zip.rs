@@ -8,21 +8,45 @@
 /// Assinatura de um arquivo zip (cabeçalho local do primeiro membro).
 pub const MAGIC: &[u8; 4] = b"PK\x03\x04";
 
+/// Teto do que aceitamos descomprimir. Nenhuma ROM de NES chega perto disso, e sem teto um zip
+/// de 1 MB pode virar 1 GB de RAM (zip bomb).
+const MAX_OUT: usize = 32 << 20;
+
 /// Nome e conteúdo do primeiro `.nes` de dentro do zip.
 pub fn extract_nes(bytes: &[u8]) -> Option<(String, Vec<u8>)> {
-    for (name, data) in entries(bytes) {
+    for (name, body, method, raw) in entries(bytes) {
         let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".nes") {
-            let out = data?;
-            return Some((name, out));
+        if !lower.ends_with(".nes") {
+            continue;
+        }
+        // lixo do macOS: um "._Jogo.nes" de 4 KB acompanha todo zip feito lá
+        if lower.contains("__macosx/") || safe_name(&name).starts_with("._") {
+            continue;
+        }
+        // um membro ilegível não invalida o zip: segue procurando outro .nes
+        let out = match method {
+            0 => Some(body.to_vec()),
+            8 => inflate(body, raw),
+            _ => None,
+        };
+        if let Some(out) = out {
+            return Some((safe_name(&name), out));
         }
     }
     None
 }
 
-/// Itera os membros pelo cabeçalho local. O conteúdo é `None` quando o método de compressão não
-/// é suportado ou os dados estão truncados.
-fn entries(bytes: &[u8]) -> impl Iterator<Item = (String, Option<Vec<u8>>)> + '_ {
+/// Nome de arquivo seguro: sem diretórios, sem caracteres de controle e curto o bastante para
+/// caber num toast (o nome vem de dentro do zip e pode ter 64 KB).
+fn safe_name(raw: &str) -> String {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or(raw);
+    base.chars().filter(|c| !c.is_control()).take(120).collect()
+}
+
+/// Percorre os membros pelos cabeçalhos locais **sem descomprimir**: nome, dados crus, método e
+/// tamanho declarado. Toda a aritmética é em `u64` porque `usize` tem 32 bits no wasm e os
+/// campos do zip são `u32` que podem vir mentindo.
+fn entries(bytes: &[u8]) -> impl Iterator<Item = (String, &[u8], u16, usize)> + '_ {
     let mut pos = 0usize;
     std::iter::from_fn(move || {
         loop {
@@ -31,8 +55,6 @@ fn entries(bytes: &[u8]) -> impl Iterator<Item = (String, Option<Vec<u8>>)> + '_
             }
             let flags = u16le(bytes, pos + 6);
             let method = u16le(bytes, pos + 8);
-            let mut comp = u32le(bytes, pos + 18) as usize;
-            let mut raw = u32le(bytes, pos + 22) as usize;
             let name_len = u16le(bytes, pos + 26) as usize;
             let extra_len = u16le(bytes, pos + 28) as usize;
             let name_at = pos + 30;
@@ -40,27 +62,22 @@ fn entries(bytes: &[u8]) -> impl Iterator<Item = (String, Option<Vec<u8>>)> + '_
             if data_at > bytes.len() {
                 return None;
             }
+            // Bit 3: os tamanhos só existem no descritor depois dos dados; sem o índice central
+            // não dá para saber onde o membro termina, então paramos (antes isto voltava sem
+            // avançar `pos` e o iterador girava para sempre).
+            if flags & 0x08 != 0 && u32le(bytes, pos + 18) == 0 {
+                return None;
+            }
+            let avail = (bytes.len() - data_at) as u64;
+            let comp = (u32le(bytes, pos + 18) as u64).min(avail) as usize;
+            let raw = (u32le(bytes, pos + 22) as u64).min(MAX_OUT as u64) as usize;
             let name = String::from_utf8_lossy(&bytes[name_at..name_at + name_len]).into_owned();
-            // Bit 3: tamanhos só existem no descritor depois dos dados — sem índice central não
-            // dá para saber onde o membro acaba, então paramos aqui.
-            if flags & 0x08 != 0 && comp == 0 {
-                return Some((name, None));
-            }
-            if data_at + comp > bytes.len() {
-                comp = bytes.len() - data_at;
-                raw = raw.min(comp * 1024);
-            }
             let body = &bytes[data_at..data_at + comp];
-            let out = match method {
-                0 => Some(body.to_vec()),
-                8 => inflate(body, raw),
-                _ => None,
-            };
             pos = data_at + comp;
             if name.ends_with('/') {
                 continue; // diretório
             }
-            return Some((name, out));
+            return Some((name, body, method, raw));
         }
     })
 }
@@ -186,6 +203,9 @@ pub fn inflate(data: &[u8], hint: usize) -> Option<Vec<u8>> {
                 if len != !nlen & 0xFFFF {
                     return None;
                 }
+                if out.len() + len > MAX_OUT {
+                    return None;
+                }
                 for _ in 0..len {
                     out.push(bits.take(8)? as u8);
                 }
@@ -255,7 +275,12 @@ fn block(bits: &mut Bits, out: &mut Vec<u8>, lit: &Huffman, dist: &Huffman) -> O
     loop {
         let sym = lit.decode(bits)?;
         match sym {
-            0..=255 => out.push(sym as u8),
+            0..=255 => {
+                if out.len() >= MAX_OUT {
+                    return None;
+                }
+                out.push(sym as u8)
+            }
             256 => return Some(()),
             257..=285 => {
                 let i = sym as usize - 257;
@@ -266,6 +291,9 @@ fn block(bits: &mut Bits, out: &mut Vec<u8>, lit: &Huffman, dist: &Huffman) -> O
                 }
                 let distance = DIST_BASE[d] as usize + bits.take(DIST_EXTRA[d] as u32)? as usize;
                 if distance > out.len() {
+                    return None;
+                }
+                if out.len() + len > MAX_OUT {
                     return None;
                 }
                 let start = out.len() - distance;

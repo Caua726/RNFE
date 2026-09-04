@@ -19,7 +19,7 @@ use crate::cartridge::Mirror;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FfeKind {
-    /// Mapper 6: PRG 16 KB em `$8000` (bits 2-5), CHR 8 KB (bits 0-1).
+    /// Mapper 6: PRG 16 KB em `$8000` (bits 2-7), CHR 8 KB (bits 0-1).
     F4,
     /// Mapper 8: PRG 16 KB em `$8000` (bits 3-7), CHR 8 KB (bits 0-2).
     F3,

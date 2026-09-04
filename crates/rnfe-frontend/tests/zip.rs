@@ -26,3 +26,43 @@ fn lixo_nao_vira_rom() {
     assert!(zip::extract_nes(b"PK\x03\x04 truncado").is_none());
     assert!(zip::extract_nes(b"NES\x1a nem e zip").is_none());
 }
+
+/// Zip escrito em fluxo (bit 3 do flag, tamanhos só no descritor) não pode travar o leitor:
+/// antes o iterador voltava sem avançar e girava para sempre.
+#[test]
+fn zip_em_fluxo_nao_trava() {
+    let mut z = zip::MAGIC.to_vec();
+    z.extend_from_slice(&20u16.to_le_bytes()); // versão
+    z.extend_from_slice(&0x08u16.to_le_bytes()); // flags: data descriptor
+    z.extend_from_slice(&0u16.to_le_bytes()); // método: stored
+    z.extend_from_slice(&[0; 8]); // hora/data/crc
+    z.extend_from_slice(&0u32.to_le_bytes()); // tamanho comprimido: desconhecido
+    z.extend_from_slice(&0u32.to_le_bytes()); // tamanho original: desconhecido
+    z.extend_from_slice(&(9u16).to_le_bytes()); // nome
+    z.extend_from_slice(&0u16.to_le_bytes()); // extra
+    z.extend_from_slice(b"leiame.txt".get(..9).unwrap());
+    z.extend_from_slice(b"conteudo");
+    assert!(zip::extract_nes(&z).is_none());
+}
+
+/// Um `.nes` com nome enorme ou com diretório vira um nome curto e sem caminho.
+#[test]
+fn nome_de_dentro_do_zip_e_higienizado() {
+    let long: String = "a".repeat(400);
+    let name = format!("../../etc/{long}.nes");
+    let payload = b"NES\x1a rom";
+    let mut z = zip::MAGIC.to_vec();
+    z.extend_from_slice(&20u16.to_le_bytes());
+    z.extend_from_slice(&0u16.to_le_bytes());
+    z.extend_from_slice(&0u16.to_le_bytes());
+    z.extend_from_slice(&[0; 8]);
+    z.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    z.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    z.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    z.extend_from_slice(&0u16.to_le_bytes());
+    z.extend_from_slice(name.as_bytes());
+    z.extend_from_slice(payload);
+    let (n, d) = zip::extract_nes(&z).expect("achar a ROM");
+    assert!(!n.contains('/') && n.len() <= 120, "nome não higienizado: {}", n.len());
+    assert_eq!(d, payload);
+}

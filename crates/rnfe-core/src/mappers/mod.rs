@@ -228,6 +228,12 @@ pub trait Mapper {
     fn nt_source(&mut self, _addr: u16, _data: &CartData) -> Option<NtSource> {
         None
     }
+    /// O mapper tem registradores de banco dentro de `$6000-$7FFF` (só o NINA-001, em
+    /// `$7FFD-$7FFF`). Sem isto, o cartucho não recalcula os caches nessa faixa — ela é PRG RAM
+    /// em todos os outros — e a CPU continua lendo o banco antigo.
+    fn regs_in_prg_ram(&self) -> bool {
+        false
+    }
     /// Deslocamento na PRG para uma leitura em `$8000-$FFFF`, **sem efeitos colaterais**.
     /// Quem implementa isto entra no caminho rápido do cartucho (uma tabela de 4 bancos de 8 KB
     /// recalculada só quando o mapper troca de banco), sem despacho por leitura da CPU — que é
@@ -483,6 +489,11 @@ impl Mapper for MapperKind {
     fn nt_source(&mut self, addr: u16, data: &CartData) -> Option<NtSource> {
         dispatch!(self, m => m.nt_source(addr, data))
     }
+    #[inline]
+    fn regs_in_prg_ram(&self) -> bool {
+        dispatch!(self, m => m.regs_in_prg_ram())
+    }
+
     #[inline]
     fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
         dispatch!(self, m => m.prg_offset(addr, data))

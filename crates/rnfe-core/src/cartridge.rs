@@ -221,6 +221,8 @@ pub struct Cartridge {
     prg_cache: [usize; 4],
     /// O mapper sabe dizer o banco sem efeito colateral e não tem gancho de leitura.
     prg_cached: bool,
+    /// O mapper comuta bancos escrevendo em `$6000-$7FFF` (NINA-001).
+    regs_in_prg_ram: bool,
     chr_dynamic: bool,
     nt_cache: [NtSource; 4],
     nt_dynamic: bool,
@@ -287,6 +289,7 @@ impl Cartridge {
         let has_audio = mapper.has_audio();
         let prg_ram_fallback = !mapper.manages_prg_ram();
         let read_hook = mapper.has_read_hook();
+        let regs_in_prg_ram = mapper.regs_in_prg_ram();
         let mut cart = Cartridge {
             read_hook,
             chr_dynamic: mapper.chr_dynamic(),
@@ -301,6 +304,7 @@ impl Cartridge {
             region: hdr.region,
             prg_cache: [0; 4],
             prg_cached: false,
+            regs_in_prg_ram,
             nt_cache: [NtSource::Ciram(0); 4],
             irq: false,
         };
@@ -421,7 +425,7 @@ impl Cartridge {
     #[inline]
     pub fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         if self.mapper.cpu_write(addr, data, &mut self.data) {
-            if !(0x6000..0x8000).contains(&addr) {
+            if !(0x6000..0x8000).contains(&addr) || self.regs_in_prg_ram {
                 self.refresh_caches();
                 self.irq = self.mapper.irq_pending();
             }

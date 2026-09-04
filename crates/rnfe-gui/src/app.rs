@@ -550,7 +550,8 @@ impl App {
         self.turbo = false;
         self.pacer.set_speed(1.0);
         if let Some(w) = &self.window {
-            w.set_title(&format!("RNFE — {}", self.rom_name));
+            let title: String = self.rom_name.chars().filter(|c| !c.is_control()).take(120).collect();
+            w.set_title(&format!("RNFE — {title}"));
         }
         self.set_screen(Screen::Playing);
         if resumed {
@@ -647,7 +648,10 @@ impl App {
         let data = self.nes.as_ref().map(|n| n.save_state()).unwrap_or_default();
         match self.storage.write(&key, &data) {
             Ok(()) => self.toast(format!("State salvo no slot {slot}")),
-            Err(e) => self.toast_error(format!("Não consegui salvar o state: {e}")),
+            Err(e) => {
+                self.toast_error(format!("Não consegui salvar o state: {e}"));
+                return; // sem state gravado, a miniatura mentiria sobre o slot
+            }
         }
         // Miniatura ao lado do slot: a tela reduzida 4x, em índices de paleta (7,5 KB)
         if let Some(nes) = self.nes.as_ref() {
@@ -970,7 +974,8 @@ impl App {
         if self.config.zapper {
             let aim = self.zapper_aim.unwrap_or((0, 0));
             nes.set_zapper(Some((aim.0, aim.1, self.zapper_hold > 0)));
-            self.zapper_hold = self.zapper_hold.saturating_sub(1);
+            // um decremento por frame emulado (com turbo, `due` é maior que 1)
+            self.zapper_hold = self.zapper_hold.saturating_sub(due.min(255) as u8);
         } else if nes.has_zapper() {
             nes.set_zapper(None);
         }
@@ -1095,7 +1100,10 @@ impl App {
             // Miniatura do slot à direita da linha (só na tela de states, slots preenchidos)
             if self.screen == Screen::States {
                 if let ItemKind::Slot { filled: true } = it.kind {
-                    let slot = (i as u8) + 1;
+                    let slot = match it.action {
+                        Action::SaveSlot(n) | Action::LoadSlot(n) => n,
+                        _ => continue,
+                    };
                     if let Some(rgba) = self.slot_thumb(slot) {
                         let th = it.rect.h * 0.78;
                         let tw = th * THUMB_W as f32 / THUMB_H as f32;
@@ -1179,7 +1187,8 @@ impl App {
             badge: self.status_badge(),
             zapper: self.config.zapper.then_some((self.zapper_aim, self.zapper_hold > 0)),
         };
-        let dirty = self.overlay_key.as_ref() != Some(&key) || self.overlay_size != (w, h);
+        let resized = self.overlay_size != (w, h);
+        let dirty = self.overlay_key.as_ref() != Some(&key) || resized;
         let has_overlay = self.screen != Screen::Playing
             || self.nes.is_none()
             || touch_visible
@@ -1225,6 +1234,9 @@ impl App {
                 }
             }
             if show_toast {
+                // o toast jogando sai logo abaixo do botão MENU, não no rodapé
+                let y = self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s;
+                spans.push((y - 24.0 * s, y + 80.0 * s));
                 spans.push((h as f32 - 90.0 * s, h as f32));
             }
             if self.debug_overlay {
@@ -1233,7 +1245,9 @@ impl App {
             // Também limpa o que foi desenhado no frame anterior (toast que sumiu, controles que
             // mudaram de lugar); vindo de um menu, a tela inteira estava pintada.
             let mut to_clear = spans.clone();
-            if self.overlay_menu {
+            if self.overlay_menu || resized {
+                // vindo de um menu (tela toda pintada) ou depois de girar/redimensionar (o
+                // buffer redimensionado guarda o conteúdo antigo com o passo de linha errado)
                 to_clear.push((0.0, h as f32));
                 self.overlay_menu = false;
             } else {

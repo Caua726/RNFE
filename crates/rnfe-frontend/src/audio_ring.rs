@@ -87,7 +87,10 @@ impl AudioRing {
     /// Enche com silêncio até `n` amostras: partida/retomada absorvem o jitter do laço sem
     /// underrun (a latência-alvo vira piso, não só teto).
     pub fn prime(&self, n: usize) {
-        let len = self.len();
+        // Se há um `clear()` pendente, o consumidor vai pular tudo que veio antes: o que conta
+        // é o que existe **depois** do ponto do descarte, senão o prime não empurra nada e a
+        // fila zera no próximo `pop`.
+        let len = self.len_after_flush();
         if len < n {
             let zeros = vec![0.0f32; n - len];
             self.push(&zeros);
@@ -98,13 +101,14 @@ impl AudioRing {
     /// Preenche `out`; em underrun decai a última amostra até o silêncio (sem DC preso nem
     /// degrau na volta) e conta.
     pub fn pop(&self, out: &mut [f32]) {
-        let tail = self.tail.load(Ordering::Acquire);
         let mut head = self.head.load(Ordering::Relaxed);
-        // pedidos do produtor, aplicados aqui (só esta ponta escreve `head`)
+        // pedidos do produtor, aplicados aqui (só esta ponta escreve `head`). `tail` é lido por
+        // último: lê-lo antes perdia um `clear()` que chegasse no meio.
         let flush = self.flush.load(Ordering::Acquire);
+        let at = self.flush_at.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
         if flush != self.flush_ack.load(Ordering::Relaxed) {
             self.flush_ack.store(flush, Ordering::Relaxed);
-            let at = self.flush_at.load(Ordering::Acquire);
             // só o que existia quando o descarte foi pedido: o silêncio primado logo depois
             // (prime_audio) precisa sobreviver, senão a fila volta a zero e estala
             if tail.wrapping_sub(at) <= tail.wrapping_sub(head) {
@@ -130,6 +134,10 @@ impl AudioRing {
             self.underruns.fetch_add(1, Ordering::Relaxed);
             for o in &mut out[n..] {
                 last *= 0.98; // ~5 ms até o silêncio
+                // multiplicar subnormal para sempre custa caro; `is_finite` também mata NaN
+                if !last.is_finite() || last.abs() <= 1e-8 {
+                    last = 0.0;
+                }
                 *o = last;
             }
             self.last.store(last.to_bits(), Ordering::Relaxed);
@@ -145,6 +153,15 @@ impl AudioRing {
     /// Teto de latência: o consumidor pula as amostras antigas acima de `keep`.
     pub fn trim_to(&self, keep: usize) {
         self.trim.store(keep, Ordering::Relaxed);
+    }
+
+    /// Amostras que vão sobrar depois de o consumidor aplicar um descarte pendente.
+    fn len_after_flush(&self) -> usize {
+        let tail = self.tail.load(Ordering::Acquire);
+        if self.flush.load(Ordering::Acquire) != self.flush_ack.load(Ordering::Acquire) {
+            return tail.wrapping_sub(self.flush_at.load(Ordering::Acquire));
+        }
+        tail.wrapping_sub(self.head.load(Ordering::Acquire))
     }
 
     pub fn underruns(&self) -> usize {
@@ -228,5 +245,30 @@ mod tests {
             assert_eq!(out[0], expect);
             expect += 1.0;
         }
+    }
+
+    /// `clear()` seguido de `prime()` precisa deixar a fila cheia de silêncio: antes o `prime`
+    /// olhava o tamanho atual (que ainda contava o áudio a ser descartado) e não empurrava nada.
+    #[test]
+    fn clear_e_prime_deixam_a_fila_no_alvo() {
+        let r = AudioRing::new(64);
+        r.push(&[0.5; 40]);
+        r.clear();
+        r.prime(20);
+        let mut out = [9.0; 20];
+        r.pop(&mut out);
+        assert_eq!(out, [0.0; 20], "só silêncio novo");
+        assert_eq!(r.underruns(), 0, "não pode faltar amostra");
+    }
+
+    /// O decaimento de underrun tem que chegar a zero (senão o callback fica multiplicando
+    /// subnormais para sempre).
+    #[test]
+    fn decaimento_chega_a_zero() {
+        let r = AudioRing::new(8);
+        r.push(&[0.5]);
+        let mut out = [0.0; 2000];
+        r.pop(&mut out);
+        assert_eq!(out[1999], 0.0, "chegou em {}", out[1999]);
     }
 }

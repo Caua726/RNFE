@@ -36,7 +36,7 @@ impl AudioOut {
         };
         let sample_rate = config.sample_rate();
         let channels = config.channels().max(1) as usize;
-        let ring = AudioRing::new(sample_rate as usize / 4); // 250 ms de capacidade
+        let ring = AudioRing::new((sample_rate as usize / 4).max(AudioOut::TARGET_QUEUE * 4)); // 250 ms de capacidade
         let dead = Arc::new(AtomicBool::new(false));
         let format = config.sample_format();
         let stream_config: cpal::StreamConfig = config.into();

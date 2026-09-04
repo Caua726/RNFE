@@ -480,6 +480,11 @@ fn lp_alpha(fc: f64, fs: f64) -> f32 {
     (dt / (rc + dt)) as f32
 }
 
+#[cfg(feature = "serde")]
+fn default_lp_alpha() -> f32 {
+    lp_alpha(14_000.0, 44100.0)
+}
+
 fn hp_alpha(fc: f64, fs: f64) -> f32 {
     let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
     let dt = 1.0 / fs.max(1.0);
@@ -564,7 +569,9 @@ pub struct Apu {
     hp1_alpha: f32,
     hp2_alpha: f32,
     /// Passa-baixa de 14 kHz da saída do console (estado transitório: fora do save state).
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// Com `default` explícito: zero silenciaria a saída para sempre se alguém carregasse um
+    /// state sem passar pelo `set_sample_rate`.
+    #[cfg_attr(feature = "serde", serde(skip, default = "default_lp_alpha"))]
     lp_alpha: f32,
     #[cfg_attr(feature = "serde", serde(skip))]
     lp_prev: f32,
@@ -942,7 +949,10 @@ impl Apu {
             self.lp_prev += self.lp_alpha * (hp2 - self.lp_prev);
             // Ganho: o pico real de um jogo fica em torno de −12 dBFS com 0,8; 2,0 aproxima o
             // nível dos outros emuladores sem estourar (o clamp protege picos raros).
-            self.sample_buffer.push((self.lp_prev * 2.0).clamp(-1.0, 1.0));
+            // Compressão suave no lugar do corte duro: com áudio de expansão o pico passa de
+            // 1,0 (MMC5 chega a 1,67) e o `clamp` distorcia justamente esses jogos.
+            let v = self.lp_prev * 2.0;
+            self.sample_buffer.push(v / (1.0 + 0.35 * v.abs()));
         }
     }
 

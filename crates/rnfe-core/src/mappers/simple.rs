@@ -187,9 +187,9 @@ impl Mapper for Nina001 {
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
         match addr {
-            0x7FFD => self.prg = val & 0x01,
-            0x7FFE => self.chr[0] = val & 0x0F,
-            0x7FFF => self.chr[1] = val & 0x0F,
+            0x7FFD => self.prg = val,
+            0x7FFE => self.chr[0] = val,
+            0x7FFF => self.chr[1] = val,
             _ => return false,
         }
         // os registradores também ficam na RAM (o jogo lê de volta)
@@ -205,6 +205,10 @@ impl Mapper for Nina001 {
 
     fn manages_prg_ram(&self) -> bool {
         false
+    }
+
+    fn regs_in_prg_ram(&self) -> bool {
+        true
     }
 
     fn reset(&mut self, _data: &mut CartData) {

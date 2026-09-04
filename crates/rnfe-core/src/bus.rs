@@ -209,7 +209,7 @@ impl Bus {
         }
     }
 
-    /// Porta 2: controle comum ou Zapper (bit 3 = gatilho, bit 4 = **ausência** de luz).
+    /// Porta 2: controle comum ou Zapper (bit 3 = **ausência** de luz, bit 4 = gatilho).
     #[inline]
     fn read_port2(&mut self) -> u8 {
         let Some(z) = self.zapper else { return self.read_controller(1) };
