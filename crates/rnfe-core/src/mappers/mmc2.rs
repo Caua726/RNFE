@@ -24,6 +24,19 @@ impl Default for Mmc2 {
 
 impl Mapper for Mmc2 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let bank = match addr {
+            0x8000..=0x9FFF => self.prg_bank as usize,
+            0xA000..=0xBFFF => data.prg_8k().saturating_sub(3),
+            0xC000..=0xDFFF => data.prg_8k().saturating_sub(2),
+            _ => data.prg_8k().saturating_sub(1),
+        };
+        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return None;

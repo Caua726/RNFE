@@ -96,6 +96,17 @@ impl Default for Fme7 {
 
 impl Mapper for Fme7 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        let bank = match addr {
+            0x8000..=0x9FFF => (self.prg_banks[1] & 0x3F) as usize,
+            0xA000..=0xBFFF => (self.prg_banks[2] & 0x3F) as usize,
+            0xC000..=0xDFFF => (self.prg_banks[3] & 0x3F) as usize,
+            0xE000..=0xFFFF => data.prg_8k() - 1,
+            _ => return None,
+        };
+        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         let bank = match addr {
             0x6000..=0x7FFF => {

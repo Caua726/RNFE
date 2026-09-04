@@ -200,6 +200,10 @@ pub struct Cartridge {
     read_hook: bool,
     /// Base física de cada banco de 1 KB de CHR (recalculada após cada escrita da CPU).
     chr_cache: [usize; 8],
+    /// Base na PRG de cada janela de 8 KB de `$8000-$FFFF` (caminho rápido de leitura).
+    prg_cache: [usize; 4],
+    /// O mapper sabe dizer o banco sem efeito colateral e não tem gancho de leitura.
+    prg_cached: bool,
     chr_dynamic: bool,
     nt_cache: [NtSource; 4],
     nt_dynamic: bool,
@@ -277,6 +281,8 @@ impl Cartridge {
             has_audio,
             prg_ram_fallback,
             chr_cache: [0; 8],
+            prg_cache: [0; 4],
+            prg_cached: false,
             nt_cache: [NtSource::Ciram(0); 4],
             irq: false,
         };
@@ -343,6 +349,21 @@ impl Cartridge {
     /// Recalcula os caches de CHR e nametable (o mapeamento só muda por escrita da CPU,
     /// exceto nos mappers `*_dynamic`, que são consultados a cada acesso).
     fn refresh_caches(&mut self) {
+        // Tabela de bancos de PRG: evita o despacho do mapper em toda busca de instrução.
+        // Os ganchos de leitura (MMC5 $5204, N163 $4800) só olham endereços abaixo de $8000,
+        // então o caminho rápido pode ignorá-los.
+        self.prg_cached = true;
+        {
+            for (i, base) in self.prg_cache.iter_mut().enumerate() {
+                match self.mapper.prg_offset(0x8000 + (i as u16) * 0x2000, &self.data) {
+                    Some(off) => *base = off,
+                    None => {
+                        self.prg_cached = false;
+                        break;
+                    }
+                }
+            }
+        }
         if !self.chr_dynamic {
             for (i, base) in self.chr_cache.iter_mut().enumerate() {
                 *base = self.mapper.chr_offset((i * 0x400) as u16);
@@ -365,6 +386,12 @@ impl Cartridge {
     /// Leitura pela CPU com efeitos colaterais (o bus usa esta; o debugger usa `cpu_read`).
     #[inline]
     pub fn cpu_read_mut(&mut self, addr: u16) -> Option<u8> {
+        if self.prg_cached && addr >= 0x8000 {
+            let base = self.prg_cache[((addr >> 13) & 3) as usize];
+            let v = self.data.prg_at(base + (addr & 0x1FFF) as usize);
+            debug_assert_eq!(Some(v), self.cpu_read(addr), "cache de PRG divergiu em ${addr:04X}");
+            return Some(v);
+        }
         let v = self.cpu_read(addr);
         if self.read_hook {
             self.mapper.on_cpu_read(addr);
@@ -401,6 +428,11 @@ impl Cartridge {
                 NtSource::Value(v) => v,
             };
         }
+        self.nt_read_dynamic(addr, ciram)
+    }
+
+    #[inline(never)]
+    fn nt_read_dynamic(&mut self, addr: u16, ciram: &[[u8; 1024]; 4]) -> u8 {
         let src = self.mapper.nt_source(addr, &self.data);
         self.irq = self.mapper.irq_pending(); // MMC5 detecta scanlines (e dispara IRQ) aqui
         match src {
@@ -443,17 +475,24 @@ impl Cartridge {
     #[inline]
     pub fn chr_read(&mut self, addr: u16) -> u8 {
         if self.chr_dynamic {
-            self.mapper.ppu_read(addr, &self.data)
+            self.chr_read_dynamic(addr)
         } else {
             self.data.chr_at(self.chr_cache[(addr >> 10) as usize & 7] + (addr & 0x3FF) as usize)
         }
+    }
+
+    /// Fora de linha de propósito: aqui o despacho dos 28 mappers é inlinado, e deixá-lo no
+    /// corpo de `chr_read` (37 mil chamadas por frame) inchava a função e derrubava o I-cache.
+    #[inline(never)]
+    fn chr_read_dynamic(&mut self, addr: u16) -> u8 {
+        self.mapper.ppu_read(addr, &self.data)
     }
 
     /// Escrita em CHR (só tem efeito em CHR RAM).
     #[inline]
     pub fn chr_write(&mut self, addr: u16, data: u8) {
         if self.chr_dynamic {
-            self.mapper.ppu_write(addr, data, &mut self.data);
+            self.chr_write_dynamic(addr, data);
         } else {
             let off = self.chr_cache[(addr >> 10) as usize & 7] + (addr & 0x3FF) as usize;
             self.data.chr_set(off, data);
@@ -465,8 +504,14 @@ impl Cartridge {
         if self.data.four_screen { Mirror::FourScreen } else { self.data.mirror }
     }
 
-    /// Borda de subida de A12 na PPU (contador de scanline do MMC3).
-    #[inline]
+    #[inline(never)]
+    fn chr_write_dynamic(&mut self, addr: u16, data: u8) {
+        self.mapper.ppu_write(addr, data, &mut self.data);
+    }
+
+    /// Borda de subida de A12 na PPU (contador de scanline do MMC3). Fora de linha: aqui mora o
+    /// despacho dos mappers, e inlinar isso em `Bus::tick_post` (todo ciclo) só incha o laço.
+    #[inline(never)]
     pub fn a12_rise(&mut self) {
         self.mapper.a12_rise();
         self.irq = self.mapper.irq_pending();
@@ -477,7 +522,7 @@ impl Cartridge {
         self.wants_cpu_clock
     }
 
-    #[inline]
+    #[inline(never)]
     pub fn cpu_clock(&mut self) {
         self.mapper.cpu_clock();
         self.irq = self.mapper.irq_pending();

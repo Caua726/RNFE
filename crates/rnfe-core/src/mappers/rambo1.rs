@@ -56,6 +56,21 @@ impl Rambo1 {
 
 impl Mapper for Rambo1 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let p = self.select & 0x40 != 0;
+        let last = data.prg_8k().saturating_sub(1);
+        let bank = match (addr >> 13) & 3 {
+            0 => (if p { self.regs[15] } else { self.regs[6] }) as usize,
+            1 => (if p { self.regs[6] } else { self.regs[7] }) as usize,
+            2 => (if p { self.regs[7] } else { self.regs[15] }) as usize,
+            _ => last,
+        };
+        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return None;

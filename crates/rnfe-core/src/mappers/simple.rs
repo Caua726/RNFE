@@ -22,6 +22,10 @@ impl Nina {
 
 impl Mapper for Nina {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        (addr >= 0x8000).then_some(self.prg as usize * 0x8000 + (addr & 0x7FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 {
             Some(data.prg_at(self.prg as usize * 0x8000 + (addr & 0x7FFF) as usize))
@@ -72,6 +76,10 @@ impl Cprom {
 
 impl Mapper for Cprom {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        (addr >= 0x8000).then_some((addr & 0x7FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 { Some(data.prg_at((addr & 0x7FFF) as usize)) } else { None }
     }
@@ -112,6 +120,15 @@ impl Quattro {
 
 impl Mapper for Quattro {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        let base = self.block as usize * 4;
+        match addr {
+            0x8000..=0xBFFF => Some((base + self.bank as usize) * 0x4000 + (addr & 0x3FFF) as usize),
+            0xC000..=0xFFFF => Some((base + 3) * 0x4000 + (addr & 0x3FFF) as usize),
+            _ => None,
+        }
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         let base = self.block as usize * 4;
         match addr {
@@ -156,6 +173,10 @@ impl Nina001 {
 
 impl Mapper for Nina001 {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        (addr >= 0x8000).then_some(self.prg as usize * 0x8000 + (addr & 0x7FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 {
             Some(data.prg_at(self.prg as usize * 0x8000 + (addr & 0x7FFF) as usize))

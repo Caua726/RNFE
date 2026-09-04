@@ -226,6 +226,13 @@ pub trait Mapper {
     fn nt_source(&mut self, _addr: u16, _data: &CartData) -> Option<NtSource> {
         None
     }
+    /// Deslocamento na PRG para uma leitura em `$8000-$FFFF`, **sem efeitos colaterais**.
+    /// Quem implementa isto entra no caminho rápido do cartucho (uma tabela de 4 bancos de 8 KB
+    /// recalculada só quando o mapper troca de banco), sem despacho por leitura da CPU — que é
+    /// a busca de cada instrução. `None` = usar `cpu_read`.
+    fn prg_offset(&self, _addr: u16, _data: &CartData) -> Option<usize> {
+        None
+    }
     /// Para onde vai uma **escrita** em nametable que `nt_write` não absorveu. Separado de
     /// `nt_source` porque aquele pode ter efeito colateral (o MMC5 conta leituras da PPU para
     /// achar a scanline, e escrita da CPU não é leitura).
@@ -463,6 +470,11 @@ impl Mapper for MapperKind {
     fn nt_source(&mut self, addr: u16, data: &CartData) -> Option<NtSource> {
         dispatch!(self, m => m.nt_source(addr, data))
     }
+    #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        dispatch!(self, m => m.prg_offset(addr, data))
+    }
+
     #[inline]
     fn nt_dest(&self, addr: u16, data: &CartData) -> Option<NtSource> {
         dispatch!(self, m => m.nt_dest(addr, data))

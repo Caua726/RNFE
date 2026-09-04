@@ -7,6 +7,10 @@ pub struct Nrom;
 
 impl Mapper for Nrom {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        (addr >= 0x8000).then_some((addr - 0x8000) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr >= 0x8000 { Some(data.prg_at((addr - 0x8000) as usize)) } else { None }
     }

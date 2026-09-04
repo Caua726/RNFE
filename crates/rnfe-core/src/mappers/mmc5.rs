@@ -275,6 +275,15 @@ impl Mmc5 {
 
 impl Mapper for Mmc5 {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let (rom, bank) = self.prg_bank(addr);
+        // janela mapeada em PRG RAM fica de fora do caminho rápido
+        rom.then_some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         match addr {
             0x5015 => Some((self.pulse1.length > 0) as u8 | ((self.pulse2.length > 0) as u8) << 1),

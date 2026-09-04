@@ -56,6 +56,33 @@ impl Mmc3 {
 
 impl Mapper for Mmc3 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let swap = self.bank_select & 0x40 != 0;
+        let last = data.prg_8k() - 1;
+        let bank = match (addr >> 13) & 3 {
+            0 => {
+                if swap {
+                    last.saturating_sub(1)
+                } else {
+                    self.regs[6] as usize
+                }
+            }
+            1 => self.regs[7] as usize,
+            2 => {
+                if swap {
+                    self.regs[6] as usize
+                } else {
+                    last.saturating_sub(1)
+                }
+            }
+            _ => last,
+        };
+        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return if addr >= 0x6000 && self.ram_ctrl & 0x80 != 0 {

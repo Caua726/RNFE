@@ -21,6 +21,14 @@ impl Unrom512 {
 
 impl Mapper for Unrom512 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        match addr {
+            0x8000..=0xBFFF => Some(self.prg as usize * 0x4000 + (addr & 0x3FFF) as usize),
+            0xC000..=0xFFFF => Some((data.prg_16k() - 1) * 0x4000 + (addr & 0x3FFF) as usize),
+            _ => None,
+        }
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         match addr {
             0x8000..=0xBFFF => Some(data.prg_at(self.prg as usize * 0x4000 + (addr & 0x3FFF) as usize)),
@@ -107,6 +115,13 @@ impl Action53 {
 
 impl Mapper for Action53 {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        Some(self.prg_16k(addr >= 0xC000) * 0x4000 + (addr & 0x3FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return None;

@@ -38,7 +38,7 @@ impl Nwc {
         }
     }
 
-    fn prg_offset(&self, addr: u16, data: &CartData) -> usize {
+    fn prg_bank_offset(&self, addr: u16, data: &CartData) -> usize {
         let off = (addr & 0x7FFF) as usize;
         if self.init < 2 {
             return off; // 32 KB iniciais
@@ -73,10 +73,14 @@ impl Nwc {
 
 impl Mapper for Nwc {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        (addr >= 0x8000).then(|| self.prg_bank_offset(addr, data))
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(data.prg_ram_at((addr & 0x1FFF) as usize)),
-            0x8000..=0xFFFF => Some(data.prg_at(self.prg_offset(addr, data))),
+            0x8000..=0xFFFF => Some(data.prg_at(self.prg_bank_offset(addr, data))),
             _ => None,
         }
     }

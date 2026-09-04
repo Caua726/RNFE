@@ -54,6 +54,33 @@ impl Mmc1 {
 
 impl Mapper for Mmc1 {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let mut offset = match (self.control >> 2) & 0x03 {
+            0 | 1 => (self.prg_bank & 0x0E) as usize * 0x4000 + (addr & 0x7FFF) as usize,
+            2 => {
+                if addr < 0xC000 {
+                    (addr & 0x3FFF) as usize
+                } else {
+                    (self.prg_bank & 0x0F) as usize * 0x4000 + (addr & 0x3FFF) as usize
+                }
+            }
+            _ => {
+                if addr < 0xC000 {
+                    (self.prg_bank & 0x0F) as usize * 0x4000 + (addr & 0x3FFF) as usize
+                } else {
+                    0x0F * 0x4000 + (addr & 0x3FFF) as usize
+                }
+            }
+        };
+        if self.big_prg {
+            offset = (offset & 0x3FFFF) | ((self.chr_bank0 as usize & 0x10) << 14);
+        }
+        Some(offset)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return if addr >= 0x6000 && self.prg_ram_enabled() {

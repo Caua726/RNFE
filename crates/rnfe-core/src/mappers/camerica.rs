@@ -17,6 +17,14 @@ impl Camerica {
 
 impl Mapper for Camerica {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        match addr {
+            0xC000..=0xFFFF => Some((data.prg_16k() - 1) * 0x4000 + (addr & 0x3FFF) as usize),
+            0x8000..=0xBFFF => Some(self.prg_bank as usize * 0x4000 + (addr & 0x3FFF) as usize),
+            _ => None,
+        }
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         match addr {
             0xC000..=0xFFFF => Some(data.prg_at((data.prg_16k() - 1) * 0x4000 + (addr & 0x3FFF) as usize)),

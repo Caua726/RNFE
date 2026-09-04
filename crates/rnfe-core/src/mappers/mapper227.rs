@@ -17,6 +17,24 @@ impl Mapper227 {
 
 impl Mapper for Mapper227 {
     #[inline]
+    fn prg_offset(&self, addr: u16, _data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let reg = self.reg;
+        let p = (((reg >> 2) & 0x1F) | ((reg & 0x100) >> 3)) as usize;
+        let mode_32k = (reg >> 7) & 1 != 0;
+        let l = (reg >> 9) & 1 != 0;
+        Some(if mode_32k {
+            (p & 0x3E) * 0x4000 + (addr & 0x7FFF) as usize
+        } else if addr >= 0xC000 {
+            let fixed = if l { p } else { (p & 0x38) | 7 };
+            fixed * 0x4000 + (addr & 0x3FFF) as usize
+        } else {
+            p * 0x4000 + (addr & 0x3FFF) as usize
+        })
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return None;

@@ -82,6 +82,32 @@ impl Vrc4 {
 
 impl Mapper for Vrc4 {
     #[inline]
+    fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
+        if addr < 0x8000 {
+            return None;
+        }
+        let last = data.prg_8k().saturating_sub(1);
+        let bank = match (addr >> 13) & 3 {
+            0 => {
+                if self.swap {
+                    last.saturating_sub(1)
+                } else {
+                    self.prg[0] as usize
+                }
+            }
+            1 => self.prg[1] as usize,
+            2 => {
+                if self.swap {
+                    self.prg[0] as usize
+                } else {
+                    last.saturating_sub(1)
+                }
+            }
+            _ => last,
+        };
+        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+    }
+
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
         if addr < 0x8000 {
             return None;
