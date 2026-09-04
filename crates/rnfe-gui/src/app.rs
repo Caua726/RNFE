@@ -60,6 +60,15 @@ const REWIND_FRAMES: u32 = 300;
 /// Identificador do mouse nos menus (dedos usam o id do toque).
 const MOUSE_ID: u64 = u64::MAX;
 
+/// Um arrasto num menu é rolagem **ou** slider, decidido pelo eixo do primeiro movimento:
+/// antes disso tocar num slider não muda valor nenhum.
+#[derive(Clone, Copy, PartialEq)]
+enum Drag {
+    Undecided,
+    Slider,
+    Scroll,
+}
+
 /// O que muda a aparência do overlay (menus, toque, debug, toast).
 #[derive(Clone, PartialEq)]
 struct OverlayKey {
@@ -138,6 +147,8 @@ pub struct App {
     save_error_shown: bool,
     /// Esc na tela inicial aguardando o 2º Esc (desktop).
     confirm_esc: bool,
+    /// Para onde o arrasto atual está travado (decidido no primeiro movimento).
+    drag: Drag,
     /// Navegação de menu pedida pelo gamepad, consumida em `about_to_wait`.
     nav_queue: Vec<i32>,
     last_touch_buttons: Buttons,
@@ -221,6 +232,7 @@ impl App {
             input2: InputState::new(),
             save_error_shown: false,
             confirm_esc: false,
+            drag: Drag::Undecided,
             nav_queue: Vec::new(),
             last_touch_buttons: Buttons::NONE,
             cursor: (0.0, 0.0),
@@ -889,11 +901,11 @@ impl App {
         let s = layout.ui_scale;
         let scroll = self.scroll;
         let (mx, my) = (self.cursor.0 as f32, self.cursor.1 as f32 + scroll);
-        let title_size = if self.screen == Screen::Start { 64.0 * s } else { 30.0 * s };
-        let title_y =
-            if self.screen == Screen::Start { (h as f32 * 0.17) as i32 } else { (h as f32 * 0.05) as i32 };
-        let mut subtitle_y = title_y + title_size as i32 + (8.0 * s) as i32;
-        if self.screen == Screen::Start {
+        let title_size = layout.title_size;
+        let title_y = layout.title_y as i32;
+        let mut subtitle_y = layout.subtitle_y as i32;
+        let cartridge = self.screen == Screen::Start;
+        if cartridge {
             // marca: um cartucho estilizado atrás do título, do tamanho do texto
             let tw = self.ui.text_width(&layout.title, title_size) as f32;
             let cw = tw + 40.0 * s;
@@ -911,9 +923,10 @@ impl App {
             ui::fill_round_rect(&mut fb, w, h, &Rect { x: cx, y: cy, w: cw, h: ch }, 10.0 * s, theme.accent);
             subtitle_y = (cy + ch + 10.0 * s) as i32;
         }
+        let sub_size = layout.subtitle_size;
         let title_color = if self.screen == Screen::Start { theme.on_accent } else { theme.text };
         self.ui.draw_text_centered(&mut fb, w, h, &layout.title, title_size, title_y, title_color);
-        self.ui.draw_text_centered(&mut fb, w, h, &layout.subtitle, 14.0 * s, subtitle_y, theme.dim);
+        self.ui.draw_text_centered(&mut fb, w, h, &layout.subtitle, sub_size, subtitle_y, theme.dim);
         if let Some(e) = &self.gpu_error {
             let msg = e.clone();
             self.ui.draw_text_centered(
@@ -921,9 +934,9 @@ impl App {
                 w,
                 h,
                 &msg,
-                12.0 * s,
+                (13.0 * s).max(12.0),
                 subtitle_y + (22.0 * s) as i32,
-                theme.accent,
+                theme.accent_hot,
             );
         }
         let pressed_idx = self.pressed.map(|p| p.0);
@@ -938,12 +951,31 @@ impl App {
             }
             self.ui.draw_item(&mut fb, w, h, &it, &layout, hot, &theme);
         }
+        if scroll > 0.0 {
+            // conteúdo rolado passa por baixo do cabeçalho: faixa opaca + título de novo
+            let base = if self.screen == Screen::Paused { theme.bg } else { theme.panel };
+            let band = [base[0], base[1], base[2], 255];
+            ui::fill_rect(&mut fb, w, h, 0, 0, w as i32, layout.header_h as i32, band);
+            let tc = if cartridge { theme.on_accent } else { theme.text };
+            self.ui.draw_text_centered(&mut fb, w, h, &layout.title, title_size, title_y, tc);
+            self.ui.draw_text_centered(&mut fb, w, h, &layout.subtitle, sub_size, subtitle_y, theme.dim);
+        }
+        if layout.content_h > h as f32 {
+            // barra de rolagem fina à direita, proporcional ao conteúdo
+            let track_h = h as f32 - layout.header_h;
+            let bar_h = (track_h * track_h / layout.content_h).max(24.0 * s);
+            let max_scroll = (layout.content_h - h as f32).max(1.0);
+            let by = layout.header_h + (track_h - bar_h) * (scroll / max_scroll).clamp(0.0, 1.0);
+            let bx = w as f32 - 6.0 * s;
+            let bar = Rect { x: bx, y: by, w: 4.0 * s, h: bar_h };
+            ui::fill_round_rect(&mut fb, w, h, &bar, 2.0 * s, theme.border);
+        }
         if self.screen == Screen::Recents && layout.items.len() == 1 {
             let msg = "Abra uma ROM: ela aparece aqui";
-            self.ui.draw_text_centered(&mut fb, w, h, msg, 14.0 * s, (h as f32 * 0.5) as i32, theme.dim);
+            self.ui.draw_text_centered(&mut fb, w, h, msg, sub_size, (h as f32 * 0.5) as i32, theme.dim);
         }
         if self.screen == Screen::Start {
-            let hint = if cfg!(any(target_os = "android", target_arch = "wasm32")) || self.picker.is_some() {
+            let hint = if self.touch.seen || cfg!(target_os = "android") {
                 "toque em Abrir ROM"
             } else {
                 "O abre uma ROM · arraste um .nes na janela · setas e Enter navegam"
@@ -953,7 +985,7 @@ impl App {
                 w,
                 h,
                 hint,
-                12.0 * s,
+                (13.0 * s).max(12.0),
                 h as i32 - (40.0 * s) as i32,
                 theme.dim,
             );
@@ -1252,48 +1284,54 @@ impl App {
 
     /// Começo de um toque/clique num menu: marca o item pressionado (a ação vale ao soltar);
     /// sliders reagem já no toque.
-    fn menu_press(&mut self, id: u64, x: f32, y: f32, el: &ActiveEventLoop) {
+    fn menu_press(&mut self, id: u64, x: f32, y: f32, _el: &ActiveEventLoop) {
         if self.pressed.is_some() {
             return; // já há um dedo num item: o segundo é ignorado
         }
         self.selected = None;
         let layout = self.layout();
         let y = y + self.scroll;
-        self.pressed = menu::index_at(&layout, x, y).map(|i| (i, id, x, y));
-        if self.pressed.is_none() {
-            // dedo fora de item: pode virar rolagem
-            self.pressed = Some((usize::MAX, id, x, y));
-        }
-        if let Some((i, ..)) = self.pressed.filter(|(i, ..)| *i != usize::MAX) {
-            if matches!(layout.items[i].kind, ItemKind::Slider { .. }) {
-                if let Some(a) = menu::hit(&layout, x, y) {
-                    self.act(a, el);
-                }
-            }
-        }
+        // `usize::MAX` = dedo fora de qualquer item: só pode virar rolagem
+        self.pressed = Some(menu::index_at(&layout, x, y).map_or((usize::MAX, id, x, y), |i| (i, id, x, y)));
+        self.drag = Drag::Undecided;
     }
 
-    /// Arrasto com o dedo/mouse pressionado: sliders acompanham.
+    /// Arrasto com o dedo/mouse pressionado: o eixo do primeiro movimento decide entre mexer no
+    /// slider (horizontal) e rolar a lista (vertical).
     fn menu_drag(&mut self, id: u64, x: f32, y: f32, el: &ActiveEventLoop) {
         let Some((i, pid, x0, y0)) = self.pressed else { return };
         if pid != id {
             return;
         }
         let layout = self.layout();
-        if i != usize::MAX {
-            if let Some(a) = menu::slide(&layout, i, x) {
-                self.act(a, el);
-                return;
+        let (_, h) = self.size();
+        let scrollable = layout.content_h > h as f32;
+        let on_slider = layout.items.get(i).is_some_and(|it| matches!(it.kind, ItemKind::Slider { .. }));
+        let (dx, dy) = (x - x0, (y + self.scroll) - y0);
+        let threshold = 12.0 * layout.ui_scale;
+        if self.drag == Drag::Undecided {
+            if on_slider && dx.abs() > threshold && dx.abs() >= dy.abs() {
+                self.drag = Drag::Slider;
+            } else if dy.abs() > threshold && (scrollable || !on_slider) {
+                self.drag = Drag::Scroll;
+                if scrollable {
+                    self.pressed = Some((usize::MAX, id, x0, y0));
+                }
             }
         }
-        // Arrasto vertical sobre a lista: rola (e cancela o toque no item)
-        let dy = (y + self.scroll) - y0;
-        let (_, h) = self.size();
-        if layout.content_h > h as f32 && (dy.abs() > 12.0 * layout.ui_scale || i == usize::MAX) {
-            self.scroll -= y + self.scroll - y0;
-            self.clamp_scroll();
-            self.pressed = Some((usize::MAX, id, x0, y0 - dy + (y + self.scroll - y0)));
-            self.redraw();
+        match self.drag {
+            Drag::Slider => {
+                if let Some(a) = menu::slide(&layout, i, x) {
+                    self.act(a, el);
+                }
+            }
+            Drag::Scroll if scrollable => {
+                // o ponto do conteúdo sob o dedo continua sob o dedo
+                self.scroll = y0 - y;
+                self.clamp_scroll();
+                self.redraw();
+            }
+            _ => {}
         }
     }
 
@@ -1309,9 +1347,20 @@ impl App {
         }
         let y = y + self.scroll;
         let layout = self.layout();
+        let drag = std::mem::replace(&mut self.drag, Drag::Undecided);
         if matches!(layout.items.get(i).map(|it| &it.kind), Some(ItemKind::Slider { .. })) {
+            // toque sem arrasto: só vale se caiu na trilha (menu::hit devolve None fora dela)
+            if drag == Drag::Undecided {
+                if let Some(a) = menu::hit(&layout, x, y) {
+                    self.act(a, el);
+                }
+            }
             self.invalidate_layout();
             self.save_config();
+            self.redraw();
+            return;
+        }
+        if drag == Drag::Scroll {
             self.redraw();
             return;
         }
@@ -1333,7 +1382,7 @@ impl ApplicationHandler<UserEvent> for App {
         #[allow(unused_mut)]
         let mut attrs = WindowAttributes::default()
             .with_title(title)
-            .with_inner_size(winit::dpi::PhysicalSize::new(768, 720));
+            .with_inner_size(winit::dpi::PhysicalSize::new(878, 720));
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast;

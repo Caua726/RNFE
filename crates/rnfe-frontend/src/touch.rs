@@ -70,13 +70,24 @@ impl TouchLayout {
         let portrait = h > w;
         let unit = if portrait { w } else { h }; // lado menor
         let scale = scale.clamp(0.5, 2.0);
+        let m = unit * 0.05; // margem
+        // Faixa de gesto do sistema na borda inferior (Android): nada de botão ali
+        let inset = (unit * 0.06).max(24.0);
+        // Telas "quadradas" (tablets 4:3) deixam pouca altura sob a imagem: encolhe tudo junto
+        // em vez de deixar o d-pad passar por cima do START/SELECT ou sair da tela.
+        let mut fit = 1.0f32;
+        if portrait {
+            let zone = h - img_bottom.clamp(0.0, h) - inset - m * 2.0;
+            let want = unit * 0.17 * scale * 2.0 + unit * 0.06 * scale * 2.0 + m * 2.0;
+            if zone > 0.0 && zone < want {
+                fit = (zone / want).clamp(0.45, 1.0);
+            }
+        }
+        let scale = scale * fit;
         let dpad_r = unit * 0.17 * scale;
         let ab_r = unit * 0.085 * scale;
         let pill_w = unit * 0.16 * scale;
         let pill_h = unit * 0.06 * scale;
-        let m = unit * 0.05; // margem
-        // Faixa de gesto do sistema na borda inferior (Android): nada de botão ali
-        let inset = (unit * 0.06).max(24.0);
         let (dpad, a, b, start, select, menu);
         if portrait {
             // Zona de controle: abaixo da imagem. MENU no topo da zona (fora do HUD do jogo),
@@ -312,5 +323,15 @@ mod tests {
         t.up(1);
         assert_eq!(t.buttons(), Buttons::NONE);
         assert!(t.seen);
+    }
+
+    /// Tela 4:3 em retrato (tablet): sobra pouca altura sob a imagem — os controles encolhem
+    /// juntos em vez de o d-pad cobrir START/SELECT ou sair da tela.
+    #[test]
+    fn cramped_portrait_shrinks_controls() {
+        let l = TouchLayout::for_viewport(1536.0, 2048.0, 1332.0, 1.0);
+        assert!(l.dpad.cy + l.dpad.r < l.start.y, "d-pad sobre o START: {:?} {:?}", l.dpad, l.start);
+        assert!(l.start.y + l.start.h <= 2048.0, "START fora da tela: {:?}", l.start);
+        assert!(l.a.cx + l.a.r <= 1536.0 && l.b.cx - l.b.r >= 0.0);
     }
 }

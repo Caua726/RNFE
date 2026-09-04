@@ -219,6 +219,14 @@ pub struct Layout {
     /// Fator de escala da interface (fonte, alturas), já com `Config::text_scale`.
     pub ui_scale: f32,
     pub font: f32,
+    /// Geometria do cabeçalho (px): onde o título e o subtítulo são desenhados e onde o
+    /// conteúdo pode começar. Fica aqui para o desenho e o layout nunca discordarem.
+    pub title_y: f32,
+    pub title_size: f32,
+    pub subtitle_y: f32,
+    pub subtitle_size: f32,
+    /// Primeira linha livre abaixo do cabeçalho.
+    pub header_h: f32,
     /// Raio dos cantos e margem interna, em px.
     pub radius: f32,
     /// Altura total do conteúdo (px): se maior que a janela, a tela rola.
@@ -322,6 +330,17 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
     let mut items = Vec::new();
     let title: String;
     let subtitle: String;
+    // Cabeçalho: na tela inicial o título mora dentro de um cartucho; nas outras é uma linha.
+    let home = matches!(screen, Screen::Start | Screen::Playing);
+    let title_size = if home { 64.0 * s } else { 30.0 * s };
+    let title_y = if home { h * 0.17 } else { h * 0.05 };
+    let subtitle_size = (15.0 * s).max(13.0);
+    let subtitle_y = if home {
+        title_y - title_size * 0.12 + title_size * 1.35 + 10.0 * s
+    } else {
+        title_y + title_size + 8.0 * s
+    };
+    let header_h = subtitle_y + subtitle_size * 1.4 + gap;
     let mut col = Column { x, w: bw, y: 0.0, gap, row_h };
     match screen {
         Screen::Start | Screen::Playing => {
@@ -331,7 +350,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             } else {
                 format!("Famicom / NES · v{}", st.version)
             };
-            col.y = h * 0.40;
+            col.y = (h * 0.40).max(header_h);
             // Quem já jogou algo volta direto ao último jogo (o auto-state retoma de onde parou)
             let resume = if st.loading { None } else { st.recent.first() };
             let rows = 2.0
@@ -371,7 +390,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             let mins = st.play_seconds / 60;
             let name = display_name(&st.rom_name);
             subtitle = if mins > 0 { format!("{name} · {mins} min") } else { name.to_string() };
-            col.y = (h * 0.15).max(row_h);
+            col.y = header_h.max(h * 0.10);
             let rows = 6.0 + st.can_quit as u8 as f32 + st.can_screenshot as u8 as f32;
             col.fit(rows, h, min_row);
             col.push(&mut items, "Continuar", Action::Resume, ItemKind::Primary);
@@ -413,20 +432,20 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
         Screen::Settings => {
             title = "Ajustes".into();
             subtitle = "arraste os controles deslizantes".into();
-            col.y = (h * 0.13).max(row_h);
-            col.row_h = 62.0 * s;
-            let header_h = 30.0 * s;
+            col.y = header_h;
+            col.row_h = 54.0 * s;
+            let sec_h = 30.0 * s;
             for (name, settings) in SECTIONS {
                 if *name == "Toque" && !st.touch_platform {
                     continue;
                 }
                 items.push(item(
-                    Rect { x, y: col.y, w: bw, h: header_h },
+                    Rect { x, y: col.y, w: bw, h: sec_h },
                     *name,
                     Action::None,
                     ItemKind::Header,
                 ));
-                col.y += header_h + gap * 0.5;
+                col.y += sec_h + gap * 0.5;
                 for &set in *settings {
                     if set == Setting::Haptics && !st.has_haptics {
                         continue;
@@ -460,7 +479,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             } else {
                 "toque para abrir · × remove".into()
             };
-            col.y = (h * 0.13).max(row_h);
+            col.y = header_h;
             col.fit(st.recent.len() as f32 + 1.0, h, min_row);
             let side = col.row_h;
             for r in &st.recent {
@@ -488,7 +507,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
         Screen::States => {
             title = if st.states_load { "Carregar state" } else { "Salvar state" }.into();
             subtitle = st.rom_name.clone();
-            col.y = (h * 0.13).max(row_h);
+            col.y = header_h;
             col.fit(4.0, h, min_row);
             for (i, filled) in st.slots.iter().enumerate() {
                 let n = i as u8 + 1;
@@ -503,7 +522,20 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
         }
     }
     let content_h = items.iter().map(|i| i.rect.y + i.rect.h).fold(0.0, f32::max) + gap;
-    Layout { title, subtitle, items, ui_scale: s, font, radius: 12.0 * s, content_h }
+    Layout {
+        title,
+        subtitle,
+        items,
+        ui_scale: s,
+        font,
+        title_y,
+        title_size,
+        subtitle_y,
+        subtitle_size,
+        header_h,
+        radius: 12.0 * s,
+        content_h,
+    }
 }
 
 /// Itens que podem ser selecionados por teclado/gamepad (têm ação).
@@ -556,6 +588,12 @@ pub fn hit(layout: &Layout, x: f32, y: f32) -> Option<Action> {
     let it = layout.items.iter().find(|i| i.rect.contains(x, y))?;
     Some(match (&it.kind, &it.action) {
         (ItemKind::Slider { .. }, Action::Slide(s, _)) => {
+            // só a trilha (com a folga do knob) muda o valor; o resto da linha é área de rolagem
+            let t = slider_track(&it.rect, layout);
+            let grab = Rect { x: t.x - t.h, y: t.y - t.h * 1.6, w: t.w + t.h * 2.0, h: t.h * 4.2 };
+            if !grab.contains(x, y) {
+                return Some(Action::None);
+            }
             Action::Slide(*s, slider_fraction(&it.rect, x, layout))
         }
         (ItemKind::Header, _) => Action::None,
@@ -644,6 +682,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// O cabeçalho (título + subtítulo) não pode ser coberto pela primeira linha, em nenhum
+    /// tamanho de tela nem com o texto ampliado.
+    #[test]
+    fn header_never_overlaps_items() {
+        for scale in [0.8f32, 1.0, 1.6] {
+            let c = Config { text_scale: scale, ..Config::default() };
+            for (w, h, dpi) in [
+                (1080.0, 2340.0, 2.6),
+                (2340.0, 1080.0, 2.6),
+                (768.0, 720.0, 1.0),
+                (480.0, 320.0, 1.0),
+                (1440.0, 3120.0, 3.5),
+            ] {
+                for sc in [Screen::Start, Screen::Paused, Screen::Settings, Screen::Recents, Screen::States] {
+                    let l = layout(sc, w, h, &c, dpi, &state());
+                    let top = l.items.iter().map(|i| i.rect.y).fold(f32::MAX, f32::min);
+                    assert!(
+                        top >= l.header_h - 0.5,
+                        "{sc:?} {w}x{h} texto {scale}: item em {top} sob o cabeçalho ({})",
+                        l.header_h
+                    );
+                }
+            }
+        }
+    }
+
+    /// Tocar no rótulo de um slider não muda o valor: só a trilha responde (o resto rola).
+    #[test]
+    fn slider_only_reacts_on_its_track() {
+        let c = Config::default();
+        let l = layout(Screen::Settings, 1080.0, 2340.0, &c, 2.6, &state());
+        let (i, item) = l
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, it)| matches!(it.kind, ItemKind::Slider { .. }))
+            .expect("um slider");
+        let t = slider_track(&item.rect, &l);
+        assert_eq!(hit(&l, t.x + t.w * 0.5, t.y + t.h * 0.5).is_some(), true);
+        assert!(matches!(hit(&l, item.rect.x + 4.0, item.rect.y + 4.0), Some(Action::None)));
+        // arrastar continua funcionando pelo índice do item
+        assert!(matches!(slide(&l, i, t.x + t.w), Some(Action::Slide(..))));
     }
 
     #[test]
