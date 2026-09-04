@@ -72,6 +72,40 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Onde cada recurso do shader entra. O `xform` (binding 2) é lido pelo **vértice** (posição do
+/// quad) e também pelo **fragmento** (filtro, tamanho da textura): sem `VERTEX_FRAGMENT` o wgpu
+/// recusa o pipeline inteiro ("Visibility flags don't include the shader stage"), o `set_pipeline`
+/// invalida o render pass e nem o `Clear` chega à tela — o app fica preto e o motivo só aparece no
+/// log. O teste `visibilidade_bate_com_o_shader` confere esta tabela contra o WGSL.
+const BIND_GROUP_LAYOUT: [wgpu::BindGroupLayoutEntry; 3] = [
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    },
+    wgpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    },
+];
+
 struct Layer {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
@@ -107,18 +141,19 @@ pub struct GpuState {
 }
 
 impl GpuState {
-    /// Cria o contexto. `backends` restringe a API (no Android o driver Vulkan de alguns
-    /// aparelhos apresenta em preto; o GLES é o caminho mais compatível).
+    /// Cria o contexto. Primeiro com todas as APIs (o wgpu prefere Vulkan/Metal/D3D e só cai no
+    /// GLES/WebGL se não houver outra) e, se isso falhar, uma segunda tentativa só com GLES.
+    ///
+    /// A ordem importa no Android: `Instance::create_surface` do backend GLES chama
+    /// `ANativeWindow_setBuffersGeometry` na janela de verdade já na criação da superfície, e o
+    /// efeito fica na janela mesmo quando a tentativa é jogada fora. Tentar GLES primeiro,
+    /// portanto, mexe no formato/escala da janela antes de o Vulkan montar a swapchain — por isso
+    /// o GLES só entra depois de o caminho normal ter falhado.
     pub async fn new(window: Arc<Window>) -> Result<GpuState, String> {
-        // Android: tenta GLES primeiro; se falhar, o padrão (Vulkan). Nos outros, o padrão.
-        #[cfg(target_os = "android")]
-        {
-            match Self::with_backends(window.clone(), wgpu::Backends::GL).await {
-                Ok(g) => return Ok(g),
-                Err(e) => log::warn!("GLES indisponível ({e}); tentando Vulkan"),
-            }
-        }
-        Self::with_backends(window, wgpu::Backends::all()).await
+        let first = Self::with_backends(window.clone(), wgpu::Backends::all()).await;
+        let Err(e) = first else { return first };
+        log::warn!("vídeo no padrão falhou ({e}); tentando OpenGL ES");
+        Self::with_backends(window, wgpu::Backends::GL).await.map_err(|gl| format!("{e}; GLES: {gl}"))
     }
 
     /// Nome e API do adaptador em uso (para o aviso de diagnóstico).
@@ -193,35 +228,13 @@ impl GpuState {
         });
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &BIND_GROUP_LAYOUT,
         });
+        // Um erro de validação aqui (shader que não bate com o layout, limite estourado) devolve
+        // um pipeline inválido em vez de panic: o `set_pipeline` invalida o render pass inteiro,
+        // nem o `Clear` chega à tela e o motivo só apareceria no log. O escopo de erro transforma
+        // isso num `Err` — que o app mostra num Toast/diálogo.
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -260,6 +273,9 @@ impl GpuState {
         };
         let pipeline = make_pipeline(None);
         let overlay_pipeline = make_pipeline(Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
+        if let Some(e) = device.pop_error_scope().await {
+            return Err(format!("pipeline: {e}"));
+        }
 
         let scale = Self::calc_xform(config.width, config.height, false, false, 0);
         let nes = Self::make_layer(
@@ -493,9 +509,10 @@ impl GpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        // Não é preto de propósito: com o fundo visível dá para saber se o
-                        // render pass rodou quando o resto não aparece.
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.02, g: 0.06, b: 0.10, a: 1.0 }),
+                        // Preto: é a moldura em volta da imagem do NES. (Para saber se o passe
+                        // rodou quando nada aparece, troque por uma cor visível — mas o caminho
+                        // normal para isso agora é o `Err` do escopo de validação em `new`.)
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -521,12 +538,58 @@ impl GpuState {
 
 #[cfg(test)]
 mod tests {
+    use super::{BIND_GROUP_LAYOUT, SHADER};
+    use wgpu::naga;
+
+    fn modulo() -> (naga::Module, naga::valid::ModuleInfo) {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = naga::front::wgsl::parse_str(SHADER).expect("WGSL inválido");
+        let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
+            .validate(&module)
+            .expect("validação");
+        (module, info)
+    }
+
     /// O shader não roda numa GPU no CI, mas passa pelo mesmo parser e validador do naga que o
     /// wgpu usa em `create_shader_module` (roda no job desktop: `cargo test -p rnfe-gui --lib`).
     #[test]
     fn shader_wgsl_valido() {
-        use wgpu::naga::valid::{Capabilities, ValidationFlags, Validator};
-        let module = wgpu::naga::front::wgsl::parse_str(super::SHADER).expect("WGSL inválido");
-        Validator::new(ValidationFlags::all(), Capabilities::empty()).validate(&module).expect("validação");
+        modulo();
+    }
+
+    /// Todo recurso lido por um estágio precisa estar visível para ele em `BIND_GROUP_LAYOUT`.
+    /// Quando não está, o wgpu recusa o pipeline ("Visibility flags don't include the shader
+    /// stage"), o render pass inteiro é descartado e a tela fica preta sem nenhum aviso — foi o
+    /// que aconteceu quando o filtro de vídeo passou a ler o uniform `xform` no fragmento.
+    #[test]
+    fn visibilidade_bate_com_o_shader() {
+        let (module, info) = modulo();
+        for (i, ep) in module.entry_points.iter().enumerate() {
+            let stage = match ep.stage {
+                naga::ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
+                naga::ShaderStage::Fragment => wgpu::ShaderStages::FRAGMENT,
+                naga::ShaderStage::Compute => wgpu::ShaderStages::COMPUTE,
+            };
+            let usos = info.get_entry_point(i);
+            for (handle, var) in module.global_variables.iter() {
+                let Some(bind) = &var.binding else { continue };
+                if usos[handle].is_empty() {
+                    continue;
+                }
+                let nome = var.name.as_deref().unwrap_or("?");
+                assert_eq!(bind.group, 0, "{nome}: só existe o grupo 0");
+                let entry = BIND_GROUP_LAYOUT
+                    .iter()
+                    .find(|e| e.binding == bind.binding)
+                    .unwrap_or_else(|| panic!("binding {} ({nome}) não está no layout", bind.binding));
+                assert!(
+                    entry.visibility.contains(stage),
+                    "{} lê `{nome}` (binding {}), mas o layout só o expõe a {:?}",
+                    ep.name,
+                    bind.binding,
+                    entry.visibility,
+                );
+            }
+        }
     }
 }
