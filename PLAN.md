@@ -9,9 +9,9 @@ Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
 sed -n '/^## Onde parei
-Tarefa: aplicados os relatórios dos agentes (UX, UI, Android, código, áudio, problemas reais, compatibilidade, performance) + funcionalidades novas
-Estado: main verde a cada lote; 40 mappers, PAL, Zapper, .zip, filtros de vídeo, miniaturas nos slots, 2º jogador, auto-state, captura de tela
-Próximo: relatórios em curso (revisão do código novo e nova medição de compatibilidade); backlog: VS System (34 ROMs), mappers 15/90/45/225, Four Score, paleta selecionável, run-ahead, remapeamento, cheats, PWA offline, exportar saves por SAF, overlay em meia resolução
+Tarefa: tela preta no Android resolvida (uniform sem visibilidade no fragmento; erro de validação virava pipeline inválido em silêncio) + rodada grande de funcionalidades
+Estado: main verde; usuário confirmou que o app voltou a desenhar. 40 mappers, PAL, Zapper, .zip, filtros de vídeo, paletas, limite de sprites, miniaturas, 2º jogador, auto-state, captura de tela
+Próximo: usuário testar filtros/paleta/PAL/zip/Zapper no g56; backlog: VS System (57 ROMs em 10,5 %), mappers 228/47/41/234, Four Score, run-ahead, remapeamento, cheats, PWA offline, exportar saves por SAF, overlay em meia resolução
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
