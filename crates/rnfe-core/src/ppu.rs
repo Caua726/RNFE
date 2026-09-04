@@ -79,6 +79,34 @@ const IO_DECAY_FRAMES: u8 = 36;
 /// no framebuffer. A ênfase escurece os canais NÃO enfatizados em ~16 % por bit ligado.
 pub static PALETTE_RGBA: [[u8; 4]; 512] = build_palette();
 
+/// Paleta base (64 cores) que o console usa hoje: o padrão, ou uma escolhida pelo usuário.
+/// A tabela de 512 entradas (com ênfase) é derivada dela.
+pub fn palette_from_base(base: &[[u8; 3]; 64]) -> [[u8; 4]; 512] {
+    let mut out = [[0u8; 4]; 512];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let b = base[i & 0x3F];
+        let emph = (i >> 6) & 7;
+        let mut c = [b[0] as u32, b[1] as u32, b[2] as u32];
+        for (ch, v) in c.iter_mut().enumerate() {
+            if emph & !(1 << ch) & 7 != 0 {
+                *v = *v * 191 / 256;
+            }
+        }
+        *slot = [c[0] as u8, c[1] as u8, c[2] as u8, 255];
+    }
+    out
+}
+
+/// As 64 cores do padrão, para quem quiser partir delas.
+pub fn default_base() -> [[u8; 3]; 64] {
+    let mut out = [[0u8; 3]; 64];
+    for (i, c) in out.iter_mut().enumerate() {
+        let p = NES_PALETTE[i];
+        *c = [p[0], p[1], p[2]];
+    }
+    out
+}
+
 const fn build_palette() -> [[u8; 4]; 512] {
     let mut out = [[0u8; 4]; 512];
     let mut i = 0;

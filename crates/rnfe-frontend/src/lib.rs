@@ -9,6 +9,7 @@ pub mod fs_storage;
 pub mod input;
 pub mod menu;
 pub mod pacer;
+pub mod palettes;
 #[cfg(feature = "state")]
 pub mod rewind;
 pub mod save_manager;

@@ -420,7 +420,19 @@ impl App {
         }
     }
 
+    /// Aplica a paleta escolhida ao console (0 = a do núcleo).
+    fn apply_palette(&mut self) {
+        let idx = self.config.palette as usize;
+        if let Some(nes) = self.nes.as_mut() {
+            match rnfe_frontend::palettes::base(idx) {
+                Some(p) => nes.set_palette(&p),
+                None => nes.set_palette(&rnfe_core::ppu::default_base()),
+            }
+        }
+    }
+
     fn apply_config(&mut self) {
+        self.apply_palette();
         // região manual muda na hora (o "Automática" só vale ao abrir a ROM)
         if let Some(nes) = self.nes.as_mut() {
             let region = match self.config.region as u8 {
@@ -553,6 +565,7 @@ impl App {
             let title: String = self.rom_name.chars().filter(|c| !c.is_control()).take(120).collect();
             w.set_title(&format!("RNFE — {title}"));
         }
+        self.apply_palette();
         self.set_screen(Screen::Playing);
         if resumed {
             self.toast(format!("{} · continuando de onde parou", menu::display_name(&self.rom_name)));
@@ -677,7 +690,8 @@ impl App {
         let mut rgba = Vec::with_capacity(THUMB_W * THUMB_H * 4);
         for px in raw.chunks_exact(2) {
             let idx = u16::from_le_bytes([px[0], px[1]]) as usize;
-            rgba.extend_from_slice(&rnfe_core::ppu::PALETTE_RGBA[idx & 0x1FF]);
+            let pal = self.nes.as_ref().map_or(&rnfe_core::ppu::PALETTE_RGBA, |n| n.palette());
+            rgba.extend_from_slice(&pal[idx & 0x1FF]);
         }
         Some(rgba)
     }

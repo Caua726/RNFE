@@ -15,6 +15,8 @@ pub struct Nes {
     /// Cache RGBA do frame (convertido do framebuffer por índice só quando alguém pede).
     rgba: Box<[[u8; 4]; crate::SCREEN_W * crate::SCREEN_H]>,
     rgba_dirty: bool,
+    /// Paleta em uso (512 entradas com ênfase), derivada das 64 cores escolhidas.
+    palette: Box<[[u8; 4]; 512]>,
 }
 
 impl Nes {
@@ -26,6 +28,7 @@ impl Nes {
             debugger: Debugger::new(),
             rgba: vec![[0u8; 4]; crate::SCREEN_W * crate::SCREEN_H].into_boxed_slice().try_into().unwrap(),
             rgba_dirty: true,
+            palette: Box::new(crate::ppu::PALETTE_RGBA),
         };
         let region = nes.bus.cartridge.region();
         nes.set_region(region);
@@ -85,7 +88,7 @@ impl Nes {
     pub fn framebuffer(&mut self) -> &[u8] {
         if self.rgba_dirty {
             for (dst, &idx) in self.rgba.iter_mut().zip(self.bus.ppu.screen.iter()) {
-                *dst = crate::ppu::PALETTE_RGBA[idx as usize];
+                *dst = self.palette[idx as usize];
             }
             self.rgba_dirty = false;
         }
@@ -116,6 +119,17 @@ impl Nes {
         if port < 2 {
             self.bus.controller[port] = buttons.0;
         }
+    }
+
+    /// Troca as 64 cores base (a tabela com ênfase é derivada aqui).
+    pub fn set_palette(&mut self, base: &[[u8; 3]; 64]) {
+        *self.palette = crate::ppu::palette_from_base(base);
+        self.rgba_dirty = true;
+    }
+
+    /// Paleta em uso, já com ênfase (para frontends que desenham a partir dos índices).
+    pub fn palette(&self) -> &[[u8; 4]; 512] {
+        &self.palette
     }
 
     pub fn set_sample_rate(&mut self, hz: u32) {
