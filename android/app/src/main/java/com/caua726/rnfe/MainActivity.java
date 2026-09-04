@@ -12,6 +12,7 @@ import android.provider.OpenableColumns;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
+import android.widget.Toast;
 import android.view.WindowManager;
 import java.util.ArrayList;
 import java.util.List;
@@ -107,6 +108,18 @@ public class MainActivity extends NativeActivity {
         mainHandler.post(() -> {
             if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
+    }
+
+    /** Aviso na tela quando não dá para desenhar nada (falha de GPU): senão o app fica preto
+     *  e calado, e só o logcat sabe o motivo. Chamada pelo Rust via JNI. */
+    public void toast(String msg) {
+        if (msg == null || msg.isEmpty()) return;
+        mainHandler.post(() -> {
+            try {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+            } catch (Throwable ignored) {
+            }
         });
     }
 

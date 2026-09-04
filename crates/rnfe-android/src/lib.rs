@@ -50,6 +50,23 @@ fn call_activity_bool(app: &AndroidApp, method: &str, on: bool) -> Result<(), St
     Ok(())
 }
 
+/// Chama um método `void(String)` da `MainActivity`.
+fn call_activity_str(app: &AndroidApp, method: &str, arg: &str) -> Result<(), String> {
+    // SAFETY: idem `call_activity`.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
+        .map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let s = env.new_string(arg).map_err(|e| e.to_string())?;
+    let val = jni::objects::JValue::Object(&s);
+    if let Err(e) = env.call_method(&activity, method, "(Ljava/lang/String;)V", &[val]) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 fn call_pick_rom(app: &AndroidApp) -> Result<(), String> {
     call_activity(app, "pickRom")
 }
@@ -154,6 +171,12 @@ fn android_main(app: AndroidApp) {
     launch.gesture_exclusion = Some(Box::new(move |rects| {
         if let Err(e) = call_gesture_exclusion(&gesture_app, rects) {
             log::debug!("gesture exclusion: {e}");
+        }
+    }));
+    let notify_app = app.clone();
+    launch.notify = Some(Box::new(move |msg: &str| {
+        if let Err(e) = call_activity_str(&notify_app, "toast", msg) {
+            log::debug!("toast: {e}");
         }
     }));
     let kso_app = app.clone();

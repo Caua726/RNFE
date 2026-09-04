@@ -22,6 +22,8 @@ pub type RomPicker = Box<dyn Fn(EventLoopProxy<UserEvent>) + Send + Sync>;
 pub type Haptic = Box<dyn Fn() + Send + Sync>;
 /// Mantém a tela ligada (`true` enquanto joga; Android).
 pub type KeepScreenOn = Box<dyn Fn(bool) + Send + Sync>;
+/// Aviso fora da janela do jogo (Toast no Android): usado quando nem dá para desenhar.
+pub type Notify = Box<dyn Fn(&str) + Send + Sync>;
 /// Retângulos (l, t, r, b em px) onde o sistema não deve capturar gestos de borda (Android).
 pub type GestureExclusion = Box<dyn Fn([[i32; 4]; 2]) + Send + Sync>;
 
@@ -37,6 +39,7 @@ pub struct Launch {
     pub haptic: Option<Haptic>,
     pub gesture_exclusion: Option<GestureExclusion>,
     pub keep_screen_on: Option<KeepScreenOn>,
+    pub notify: Option<Notify>,
 }
 
 impl Launch {
@@ -48,6 +51,7 @@ impl Launch {
             picker: None,
             haptic: None,
             keep_screen_on: None,
+            notify: None,
             gesture_exclusion: None,
         }
     }

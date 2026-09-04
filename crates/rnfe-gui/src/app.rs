@@ -103,6 +103,7 @@ pub struct App {
     picker: Option<RomPicker>,
     haptic: Option<Haptic>,
     keep_screen_on: Option<crate::KeepScreenOn>,
+    notify: Option<crate::Notify>,
     config: Config,
     recent: Vec<RecentRom>,
     screen: Screen,
@@ -186,8 +187,16 @@ pub struct App {
 
 impl App {
     pub fn new(launch: Launch, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let Launch { mut nes, rom_name, mut storage, picker, haptic, gesture_exclusion, keep_screen_on } =
-            launch;
+        let Launch {
+            mut nes,
+            rom_name,
+            mut storage,
+            picker,
+            haptic,
+            gesture_exclusion,
+            keep_screen_on,
+            notify,
+        } = launch;
         let config = Config::load(storage.as_ref());
         let recent = config::load_recent(storage.as_ref());
         let mut save = match &nes {
@@ -212,6 +221,7 @@ impl App {
             picker,
             haptic,
             keep_screen_on,
+            notify,
             touch_layout: TouchLayout::for_size_scaled(768.0, 720.0, config.touch_scale),
             config,
             recent,
@@ -477,6 +487,21 @@ impl App {
             self.zapper_aim = Some(p);
             self.zapper_hold = 5;
         }
+    }
+
+    /// Sem GPU não há como desenhar nem a mensagem de erro: avisa por fora (Toast no Android,
+    /// diálogo no desktop) para o app não ficar preto e calado.
+    fn fail_gpu(&mut self, msg: String) {
+        let text = format!("RNFE não conseguiu iniciar o vídeo: {msg}");
+        eprintln!("{text}");
+        if let Some(n) = &self.notify {
+            n(&text);
+        }
+        #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+        {
+            rfd::MessageDialog::new().set_title("RNFE").set_description(&text).show();
+        }
+        self.gpu_error = Some(msg);
     }
 
     fn buzz(&self) {
@@ -1737,7 +1762,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 Err(e) => {
                     log::error!("GPU: {e}");
-                    self.gpu_error = Some(e);
+                    self.fail_gpu(e);
                 }
             }
             self.refresh_touch_layout();
@@ -1778,7 +1803,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 Err(e) => {
                     log::error!("GPU: {e}");
-                    self.gpu_error = Some(e);
+                    self.fail_gpu(e);
                 }
             },
             UserEvent::RomLoaded { name, bytes } => {
