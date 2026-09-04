@@ -340,7 +340,7 @@ impl MapperKind {
             10 => MapperKind::Mmc2(mmc2::Mmc2::new_mmc4()),
             11 => MapperKind::ColorDreams(colordreams::ColorDreams::new()),
             // 34 é ambíguo: com CHR ROM é NINA-001, com CHR RAM é BNROM
-            34 if !data.chr_is_ram && data.chr.len() > 8192 => MapperKind::Nina001(simple::Nina001::new()),
+            34 if !data.chr_is_ram => MapperKind::Nina001(simple::Nina001::new()),
             34 => MapperKind::Bnrom(bnrom::Bnrom::new()),
             66 => MapperKind::Gxrom(gxrom::Gxrom::new()),
             69 => MapperKind::Fme7(fme7::Fme7::new()),

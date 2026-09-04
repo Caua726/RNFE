@@ -142,10 +142,13 @@ impl Mapper for Vrc4 {
         match addr & 0xF000 {
             0x8000 => self.prg[0] = val & 0x1F,
             0x9000 => {
-                if r == 2 && !self.vrc2 {
+                // $9002/$9003 são o mesmo registrador (controle de PRG); no VRC2 não existe
+                if r >= 2 && !self.vrc2 {
                     self.swap = val & 0x02 != 0;
                 } else if r < 2 || self.vrc2 {
-                    data.mirror = match val & 0x03 {
+                    // o VRC2 só tem um bit de espelhamento; o VRC4 tem dois
+                    let bits = if self.vrc2 { val & 0x01 } else { val & 0x03 };
+                    data.mirror = match bits {
                         0 => Mirror::Vertical,
                         1 => Mirror::Horizontal,
                         2 => Mirror::OneScreenLo,

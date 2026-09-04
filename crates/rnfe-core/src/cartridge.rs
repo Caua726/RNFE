@@ -75,7 +75,7 @@ const MAX_ROM: usize = 64 << 20;
 /// Quanto pode faltar no fim de um dump antes de recusar a ROM: um punhado de bytes (bit de
 /// trainer setado por engano, corte no fim do arquivo) é comum nos packs; falta grande é ROM
 /// errada.
-const MAX_MISSING: usize = 4096;
+const MAX_MISSING: usize = 64 << 10;
 
 /// O que o header diz, já decodificado (iNES 1 ou NES 2.0).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,13 +95,33 @@ pub struct RomHeader {
     pub mirror: Mirror,
 }
 
+/// Headers que mentem: `(hash FNV-1a do arquivo inteiro, mapper certo, motivo)`.
+/// Vale para dumps conhecidos em que o campo do header aponta uma placa impossível — sem isso o
+/// jogo não abre ou abre em preto.
+const HEADER_FIX: &[(u64, u16, &str)] = &[
+    (0x4700_477f_dca1_009f, 34, "Mermaids of Atlantis (U): header diz FFE F3, a placa é NINA-001"),
+    (0x031e_a7db_0647_ade7, 1, "Adventures in the Magic Kingdom (U) [a1]: escreve protocolo de MMC1"),
+    (0xdf1a_ba35_afd2_a1f1, 71, "Fire Hawk (U) [a1]: header diz 15, a placa é Camerica"),
+];
+
 impl RomHeader {
     /// Decodifica os 16 bytes do header.
     pub fn parse(h: &[u8]) -> Result<RomHeader, RomError> {
         if h.len() < 16 || &h[0..4] != b"NES\x1A" {
             return Err(RomError::BadMagic);
         }
-        let nes2 = h[7] & 0x0C == 0x08;
+        // Headers de dumps antigos têm lixo no byte 7 e passam por NES 2.0, o que produz
+        // tamanhos absurdos (dezenas de MB) e faz a ROM ser recusada. Só aceitamos NES 2.0
+        // quando o tamanho declarado cabe no arquivo.
+        let mut nes2 = h[7] & 0x0C == 0x08;
+        if nes2 && h.len() > 16 {
+            let prg = nes2_rom_size(h[4], h[9] & 0x0F, 16384);
+            let chr = nes2_rom_size(h[5], h[9] >> 4, 8192);
+            match (prg, chr) {
+                (Ok(p), Ok(c)) if 16 + p + c <= h.len() + (4 << 20) => {}
+                _ => nes2 = false,
+            }
+        }
         let battery = h[6] & 0x02 != 0;
         let trainer = h[6] & 0x04 != 0;
         let four_screen = h[6] & 0x08 != 0;
@@ -233,14 +253,32 @@ pub struct Cartridge {
 impl Cartridge {
     /// Interpreta uma ROM iNES / NES 2.0 a partir dos bytes do arquivo.
     pub fn from_bytes(buffer: &[u8]) -> Result<Self, RomError> {
-        let hdr = RomHeader::parse(buffer)?;
+        let mut hdr = RomHeader::parse(buffer)?;
+        // Correções de header conhecidas (por hash do arquivo) e o caso genérico do "mapper 0"
+        // com tamanhos que a placa NROM não endereça — comum em dumps antigos.
+        let file_hash = fnv1a(buffer, FNV_OFFSET);
+        if let Some((_, mapper, why)) = HEADER_FIX.iter().find(|(h, ..)| *h == file_hash) {
+            log::info!("header corrigido: {why}");
+            hdr.mapper = *mapper;
+            hdr.submapper = 0;
+        } else if hdr.mapper == 0 && !hdr.nes2 {
+            if hdr.prg_len > 32 * 1024 {
+                log::info!("mapper 0 com {} KB de PRG: tratando como UxROM", hdr.prg_len / 1024);
+                hdr.mapper = 2;
+            } else if hdr.chr_len > 8 * 1024 {
+                log::info!("mapper 0 com {} KB de CHR: tratando como CNROM", hdr.chr_len / 1024);
+                hdr.mapper = 3;
+            }
+        }
         if MapperKind::create(hdr.mapper, &CartData::probe(&hdr)).is_none() {
             return Err(RomError::UnsupportedMapper(hdr.mapper));
         }
         let mut offset = 16 + if hdr.trainer { 512 } else { 0 };
         let expected = offset + hdr.prg_len + hdr.chr_len;
         let missing = expected.saturating_sub(buffer.len());
-        if missing > MAX_MISSING || missing * 8 > expected {
+        // até 64 KB (ou 25 % do total) de cauda faltando: a maioria dos dumps ruins do pack só
+        // perdeu o fim da CHR e roda com alguns tiles corrompidos, como nos outros emuladores
+        if missing > MAX_MISSING || missing * 4 > expected {
             return Err(RomError::Truncated { expected, got: buffer.len() });
         }
         // Dumps a que faltam alguns bytes (ou com o bit de trainer setado por engano) são comuns
