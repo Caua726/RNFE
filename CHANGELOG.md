@@ -2,6 +2,12 @@
 
 Uma linha por tarefa fechada. IDs referem-se ao [PLAN.md](PLAN.md).
 
+## Não publicado — Mappers, limpeza do núcleo e correções
+
+- Mappers novos: 21/22/23/25 (VRC2/VRC4, permutação das linhas de endereço por mapper/submapper), 28 (Action 53), 30 (UNROM 512, CHR RAM de 32 KB), 64 (RAMBO-1, IRQ por A12 ou por ciclos), 65 (Irem H3001), 68 (Sunsoft-4, nametables em CHR ROM), 105 (NES-EVENT, contador de 30 bits) — 34 no total. Nametables cacheadas por quadrante (`NtSource`), gancho de leitura da CPU só para mappers que precisam (MMC5/N163).
+- Núcleo: mix da APU por tabelas (`PULSE_TABLE`/`TND_TABLE`) com média de todos os ciclos entre amostras (anti-aliasing dos pulsos agudos e do ruído); MMC5 reaproveita as tabelas e o mix da APU; `read_status` via `peek_status`; `FRAME_TICKS` sem o modo duplicado; sequência de interrupção única para BRK/IRQ/NMI (nestest idêntico); mux de pixel da PPU por `match`; `Debugger` com nomes vindos da `LOOKUP` da CPU, `VecDeque` no trace e sem breakpoints/watches mortos; `Nes::take_audio` (frontends não tocam mais no buffer da APU).
+- GPU: vertex shader sem arrays locais — no moto g56 (Mali) o 2º triângulo do quad sumia e metade da tela ficava preta na diagonal.
+
 ## Não publicado — F8 APK polido
 
 - Revisão por 9 agentes (03/09): 3 focados no Android e 6 abertos (bugs, código mal feito, melhorias, UI, UX, riscos). Aplicado: leitura da ROM do SAF fora da thread principal com limite de 8 MB; processo encerrado ao sair (o winit não recria o laço: o app "não abria" de novo); `configChanges` completo (recriar a Activity travava a UI thread); panic no logcat; layout de toque refeito (MENU fora do HUD, START/SELECT fora da imagem e do gesto de borda, exclusão de gesto no d-pad/A/B, rótulos escuros, visíveis por padrão); eixos de gamepad Bluetooth (`dispatchGenericMotionEvent`) e botões; "Abrir com" `.nes`; menus com rolagem, navegação por teclado/gamepad, seções nos Ajustes, "Abrindo…", erros legíveis por 6 s, R e remoção de recente com confirmação, cartucho do título proporcional; overlay só reenviado à GPU quando muda (era 10 MB/frame); superfície sem sRGB (botões translúcidos escureciam); overscan opcional; áudio pré-carregado, decaimento em underrun, controle fino de taxa, I16/U16; toasts que somem nos menus; multi-toque nos menus; `Config` gravado só ao soltar; recentes sem regravar a ROM e sem lotar o localStorage; backup na nuvem sem ROMs; web instalável (manifest, `100dvh`).

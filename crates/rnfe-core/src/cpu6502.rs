@@ -518,10 +518,18 @@ impl Cpu6502 {
     fn interrupt(&mut self, bus: &mut Bus) {
         self.read(bus, self.pc);
         self.read(bus, self.pc);
+        self.interrupt_sequence(bus, false);
+    }
+
+    /// Ciclos 3–7 de BRK/IRQ/NMI: empilha PC e P (bit B só no BRK), seta I e busca o vetor.
+    /// Um NMI pendente "sequestra" a sequência (vetor NMI no lugar do IRQ/BRK).
+    /// Sem polling no fim: a 1ª instrução do handler sempre roda.
+    fn interrupt_sequence(&mut self, bus: &mut Bus, brk: bool) {
         self.push(bus, (self.pc >> 8) as u8);
         self.push(bus, self.pc as u8);
         let nmi = self.nmi_pending;
-        self.push(bus, (self.status & !B) | U);
+        let p = if brk { self.status | B } else { self.status & !B };
+        self.push(bus, p | U);
         self.status |= I;
         let vec = if nmi {
             self.nmi_pending = false;
@@ -532,7 +540,6 @@ impl Cpu6502 {
         let lo = self.read(bus, vec) as u16;
         let hi = self.read(bus, vec + 1) as u16;
         self.pc = (hi << 8) | lo;
-        // A sequência de interrupção não faz polling no fim: a 1ª instrução do handler sempre roda
         self.nmi_pending_prev = false;
         self.irq_run_prev = false;
     }
@@ -796,23 +803,7 @@ impl Cpu6502 {
             }
             Brk => {
                 self.read(bus, addr); // byte de padding
-                self.push(bus, (self.pc >> 8) as u8);
-                self.push(bus, self.pc as u8);
-                let nmi = self.nmi_pending;
-                self.push(bus, self.status | B | U);
-                self.status |= I;
-                let vec = if nmi {
-                    self.nmi_pending = false;
-                    NMI_VECTOR
-                } else {
-                    IRQ_VECTOR
-                };
-                let lo = self.read(bus, vec) as u16;
-                let hi = self.read(bus, vec + 1) as u16;
-                self.pc = (hi << 8) | lo;
-                // Como na sequência de IRQ/NMI: sem polling no fim do BRK
-                self.nmi_pending_prev = false;
-                self.irq_run_prev = false;
+                self.interrupt_sequence(bus, true);
             }
             Nop => {
                 if mode != Mode::Imp {

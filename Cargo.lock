@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-android"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "android_logger",
  "jni 0.21.1",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "postcard",
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "env_logger",
  "log",
@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-frontend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "rnfe-core",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-tty"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rnfe-core",
  "rnfe-frontend",
@@ -2033,7 +2033,7 @@ dependencies = [
 
 [[package]]
 name = "rnfe-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rnfe-gui",
 ]

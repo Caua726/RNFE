@@ -9,12 +9,12 @@
 //! ignorado se o contador foi clockado nesse meio tempo; o DMC pede o próximo byte por DMA
 //! (`dmc_dma_pending`) e a CPU para 3–4 ciclos para buscá-lo.
 
-const LENGTH_TABLE: [u8; 32] = [
+pub(crate) const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24,
     72, 26, 16, 28, 32, 30,
 ];
 
-const DUTY_TABLE: [[u8; 8]; 4] =
+pub(crate) const DUTY_TABLE: [[u8; 8]; 4] =
     [[0, 1, 0, 0, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0, 0], [0, 1, 1, 1, 1, 0, 0, 0], [1, 0, 0, 1, 1, 1, 1, 1]];
 
 const TRIANGLE_TABLE: [u8; 32] = [
@@ -44,23 +44,14 @@ enum FrameTick {
     Half,
 }
 
-const FRAME_TICKS: [[FrameTick; 6]; 2] = [
-    [
-        FrameTick::Quarter,
-        FrameTick::Half,
-        FrameTick::Quarter,
-        FrameTick::None,
-        FrameTick::Half,
-        FrameTick::None,
-    ],
-    [
-        FrameTick::Quarter,
-        FrameTick::Half,
-        FrameTick::Quarter,
-        FrameTick::None,
-        FrameTick::Half,
-        FrameTick::None,
-    ],
+/// O que cada passo do sequenciador clocka (igual nos dois modos; só os instantes mudam).
+const FRAME_TICKS: [FrameTick; 6] = [
+    FrameTick::Quarter,
+    FrameTick::Half,
+    FrameTick::Quarter,
+    FrameTick::None,
+    FrameTick::Half,
+    FrameTick::None,
 ];
 
 // ------------------------------------------------------------------ peças comuns
@@ -470,6 +461,37 @@ fn hp_alpha(fc: f64, fs: f64) -> f32 {
     (rc / (rc + dt)) as f32
 }
 
+/// `95.88 / (8128 / n + 100)` para n = 0..=30 (soma dos dois pulsos).
+pub(crate) const PULSE_TABLE: [f32; 31] = build_pulse_table();
+/// `159.79 / (1 / (n / 22638) + 100)` para n = 3·tri + 2·noise + dmc (0..=202).
+pub(crate) const TND_TABLE: [f32; 203] = build_tnd_table();
+
+const fn build_pulse_table() -> [f32; 31] {
+    let mut t = [0.0f32; 31];
+    let mut n = 1;
+    while n < 31 {
+        t[n] = 95.88 / (8128.0 / n as f32 + 100.0);
+        n += 1;
+    }
+    t
+}
+
+const fn build_tnd_table() -> [f32; 203] {
+    let mut t = [0.0f32; 203];
+    let mut n = 1;
+    while n < 203 {
+        t[n] = 159.79 / (1.0 / (n as f32 / 22638.0) + 100.0);
+        n += 1;
+    }
+    t
+}
+
+/// Mix não linear dos dois pulsos (usado também pelo MMC5).
+#[inline]
+pub(crate) fn pulse_mix(sum: u8) -> f32 {
+    PULSE_TABLE[(sum as usize).min(30)]
+}
+
 // ------------------------------------------------------------------ APU
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -504,6 +526,10 @@ pub struct Apu {
     /// Amostras por ciclo de CPU (`sample_rate / CPU_HZ`), pré-calculado.
     sample_step: f64,
     sample_clock: f64,
+    /// Soma das saídas de cada ciclo desde a última amostra (média = filtro caixa: tira o
+    /// aliasing dos pulsos agudos e do ruído).
+    acc: f32,
+    acc_n: u32,
 
     // Filtros high-pass (NES tem dois: 90 Hz e 440 Hz); coeficientes dependem da taxa
     hp1_alpha: f32,
@@ -541,6 +567,8 @@ impl Apu {
             sample_rate: 44100.0,
             sample_step: 44100.0 / CPU_HZ,
             sample_clock: 0.0,
+            acc: 0.0,
+            acc_n: 0,
             hp1_alpha: hp_alpha(90.0, 44100.0),
             hp2_alpha: hp_alpha(440.0, 44100.0),
             hp1_prev_in: 0.0,
@@ -555,7 +583,7 @@ impl Apu {
     /// Reset: canais desligados, frame counter como se `$4017` fosse escrito com `$00`
     /// (ou com o modo anterior, num reset por botão) poucos ciclos antes da primeira instrução.
     pub fn reset(&mut self, soft: bool) {
-        let mode = if soft { self.frame_mode << 7 } else { 0 };
+        let keep_mode = if soft { self.frame_mode } else { 0 };
         self.pulse1 = Pulse::new(true);
         self.pulse2 = Pulse::new(false);
         // No reset por botão o length counter do triângulo não é tocado
@@ -575,10 +603,12 @@ impl Apu {
         // Como se $4017 tivesse sido escrito ~10 ciclos antes da 1ª instrução: o efeito
         // (3 ciclos depois) já vale no começo dos 7 ciclos do reset da CPU.
         self.frame_write = None;
-        self.frame_mode = mode >> 7;
+        self.frame_mode = keep_mode;
         self.frame_block = 0;
         self.sample_buffer.clear();
         self.sample_clock = 0.0;
+        self.acc = 0.0;
+        self.acc_n = 0;
         self.hp1_prev_in = 0.0;
         self.hp1_prev_out = 0.0;
         self.hp2_prev_in = 0.0;
@@ -716,14 +746,7 @@ impl Apu {
 
     /// Leitura de `$4015`: status dos canais e flags de IRQ; limpa a flag do frame counter.
     pub fn read_status(&mut self) -> u8 {
-        let mut s = 0u8;
-        s |= self.pulse1.length.active() as u8;
-        s |= (self.pulse2.length.active() as u8) << 1;
-        s |= (self.triangle.length.active() as u8) << 2;
-        s |= (self.noise.length.active() as u8) << 3;
-        s |= ((self.dmc.bytes_remaining > 0) as u8) << 4;
-        s |= (self.frame_irq as u8) << 6;
-        s |= (self.dmc.irq_flag as u8) << 7;
+        let s = self.peek_status();
         self.frame_irq = false;
         s
     }
@@ -788,7 +811,7 @@ impl Apu {
             if mode == 0 && self.frame_step >= 3 && !self.frame_irq_inhibit {
                 self.frame_irq = true;
             }
-            let tick = FRAME_TICKS[mode][self.frame_step];
+            let tick = FRAME_TICKS[self.frame_step];
             self.frame_tick(tick);
             self.frame_step += 1;
             if self.frame_step == 6 {
@@ -833,11 +856,15 @@ impl Apu {
         self.noise.clock_timer();
         self.dmc.clock_timer();
 
-        // --- amostragem
+        // --- amostragem: média das saídas de todos os ciclos desde a última amostra
+        self.acc += self.mix();
+        self.acc_n += 1;
         self.sample_clock += self.sample_step;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
-            let raw = self.mix() + expansion();
+            let raw = self.acc / self.acc_n as f32 + expansion();
+            self.acc = 0.0;
+            self.acc_n = 0;
             // High-pass 1 (90 Hz)
             let hp1 = self.hp1_alpha * (self.hp1_prev_out + raw - self.hp1_prev_in);
             self.hp1_prev_in = raw;
@@ -850,16 +877,13 @@ impl Apu {
         }
     }
 
+    /// Saída instantânea da 2A03 (mix não linear por tabelas).
+    #[inline]
     fn mix(&self) -> f32 {
-        let p1 = self.pulse1.output() as f32;
-        let p2 = self.pulse2.output() as f32;
-        let tri = self.triangle.output() as f32;
-        let noise = self.noise.output() as f32;
-        let dmc = self.dmc.output_level as f32;
-
-        let pulse_out = if p1 + p2 > 0.0 { 95.88 / (8128.0 / (p1 + p2) + 100.0) } else { 0.0 };
-        let tnd_sum = tri / 8227.0 + noise / 12241.0 + dmc / 22638.0;
-        let tnd_out = if tnd_sum > 0.0 { 159.79 / (1.0 / tnd_sum + 100.0) } else { 0.0 };
-        pulse_out + tnd_out
+        let p = (self.pulse1.output() + self.pulse2.output()) as usize;
+        let t = self.triangle.output() as usize * 3
+            + self.noise.output() as usize * 2
+            + self.dmc.output_level as usize;
+        PULSE_TABLE[p] + TND_TABLE[t]
     }
 }

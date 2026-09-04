@@ -21,6 +21,8 @@ pub mod colordreams;
 pub mod dxrom;
 pub mod fme7;
 pub mod gxrom;
+pub mod h3001;
+pub mod homebrew;
 pub mod mapper227;
 pub mod mmc1;
 pub mod mmc2;
@@ -28,8 +30,12 @@ pub mod mmc3;
 pub mod mmc5;
 pub mod n163;
 pub mod nrom;
+pub mod nwc;
+pub mod rambo1;
 pub mod simple;
+pub mod sunsoft4;
 pub mod uxrom;
+pub mod vrc4;
 pub mod vrc6;
 
 use crate::cartridge::{Mirror, NtSource, RomHeader};
@@ -178,8 +184,12 @@ pub trait Mapper {
     /// Leitura pela CPU (`$4020-$FFFF`). `None` = não mapeado (PRG RAM padrão ou open bus).
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8>;
     /// Efeito colateral de uma leitura da CPU (registradores que limpam flags ao ler,
-    /// como `$5204` do MMC5). Chamado só pelo bus, nunca pelo debugger.
+    /// como `$5204` do MMC5). Chamado só pelo bus, nunca pelo debugger — e só se
+    /// `has_read_hook()` (o cartucho pula o despacho no caminho quente).
     fn on_cpu_read(&mut self, _addr: u16) {}
+    fn has_read_hook(&self) -> bool {
+        false
+    }
     /// Escrita pela CPU. `false` = não tratada (cai na PRG RAM padrão em `$6000-$7FFF`).
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool;
     /// Offset físico em CHR para um endereço `$0000-$1FFF` da PPU.
@@ -264,10 +274,19 @@ pub enum MapperKind {
     Nina(simple::Nina),
     Cprom(simple::Cprom),
     Quattro(simple::Quattro),
+    Rambo1(rambo1::Rambo1),
+    H3001(h3001::H3001),
+    Sunsoft4(sunsoft4::Sunsoft4),
+    Nwc(nwc::Nwc),
+    Unrom512(homebrew::Unrom512),
+    Action53(homebrew::Action53),
+    Vrc4(vrc4::Vrc4),
 }
 
-pub const SUPPORTED_MAPPERS: &[u16] =
-    &[0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 19, 24, 26, 34, 66, 69, 71, 79, 113, 118, 119, 206, 227, 232];
+pub const SUPPORTED_MAPPERS: &[u16] = &[
+    0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69, 71, 79, 105,
+    113, 118, 119, 206, 227, 232,
+];
 
 impl MapperKind {
     /// Cria o mapper para o `id`; `None` se não suportado.
@@ -294,6 +313,13 @@ impl MapperKind {
             13 => MapperKind::Cprom(simple::Cprom::new()),
             232 => MapperKind::Quattro(simple::Quattro::new()),
             118 | 119 => MapperKind::Mmc3(mmc3::Mmc3::new(data)),
+            64 => MapperKind::Rambo1(rambo1::Rambo1::new(data)),
+            65 => MapperKind::H3001(h3001::H3001::new(data)),
+            68 => MapperKind::Sunsoft4(sunsoft4::Sunsoft4::new(data)),
+            105 => MapperKind::Nwc(nwc::Nwc::new(data)),
+            30 => MapperKind::Unrom512(homebrew::Unrom512::new(data)),
+            28 => MapperKind::Action53(homebrew::Action53::new()),
+            21 | 22 | 23 | 25 => MapperKind::Vrc4(vrc4::Vrc4::new(data)),
             _ => return None,
         })
     }
@@ -326,6 +352,19 @@ impl MapperKind {
             MapperKind::Nina(_) => "NINA-03/06",
             MapperKind::Cprom(_) => "CPROM",
             MapperKind::Quattro(_) => "Camerica Quattro",
+            MapperKind::Rambo1(_) => "Tengen RAMBO-1",
+            MapperKind::H3001(_) => "Irem H3001",
+            MapperKind::Sunsoft4(_) => "Sunsoft-4",
+            MapperKind::Nwc(_) => "NES-EVENT",
+            MapperKind::Unrom512(_) => "UNROM 512",
+            MapperKind::Action53(_) => "Action 53",
+            MapperKind::Vrc4(v) => {
+                if v.is_vrc2() {
+                    "VRC2"
+                } else {
+                    "VRC4"
+                }
+            }
         }
     }
 }
@@ -353,6 +392,13 @@ macro_rules! dispatch {
             MapperKind::Nina($m) => $e,
             MapperKind::Cprom($m) => $e,
             MapperKind::Quattro($m) => $e,
+            MapperKind::Rambo1($m) => $e,
+            MapperKind::H3001($m) => $e,
+            MapperKind::Sunsoft4($m) => $e,
+            MapperKind::Nwc($m) => $e,
+            MapperKind::Unrom512($m) => $e,
+            MapperKind::Action53($m) => $e,
+            MapperKind::Vrc4($m) => $e,
         }
     };
 }
@@ -365,6 +411,9 @@ impl Mapper for MapperKind {
     #[inline]
     fn on_cpu_read(&mut self, addr: u16) {
         dispatch!(self, m => m.on_cpu_read(addr))
+    }
+    fn has_read_hook(&self) -> bool {
+        dispatch!(self, m => m.has_read_hook())
     }
     #[inline]
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {

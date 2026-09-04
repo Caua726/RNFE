@@ -55,10 +55,12 @@ impl Nes {
         }
         self.bus.ppu.frame_complete = false;
         self.rgba_dirty = true;
-        // Headless: ninguém drenou o áudio — não deixar crescer sem limite
+        // Quem não consome o áudio (testes, varreduras) não pode deixar o buffer crescer sem
+        // limite: acima de ~0,25 s descarta o mais velho. Frontends chamam `take_audio` a cada
+        // frame e nunca chegam aqui.
         let buf = &mut self.bus.apu.sample_buffer;
-        if buf.len() > 8192 {
-            let excess = buf.len() - 8192;
+        if buf.len() > 16384 {
+            let excess = buf.len() - 16384;
             buf.drain(..excess);
         }
     }
@@ -103,6 +105,12 @@ impl Nes {
     /// Move as amostras de áudio geradas desde a última chamada para `out`.
     pub fn drain_audio(&mut self, out: &mut Vec<f32>) {
         out.extend_from_slice(&self.bus.apu.sample_buffer);
+        self.bus.apu.sample_buffer.clear();
+    }
+
+    /// Entrega as amostras geradas desde a última chamada a `f` (sem cópia) e esvazia o buffer.
+    pub fn take_audio(&mut self, f: impl FnOnce(&mut [f32])) {
+        f(&mut self.bus.apu.sample_buffer);
         self.bus.apu.sample_buffer.clear();
     }
 

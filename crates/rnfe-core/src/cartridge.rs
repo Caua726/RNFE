@@ -126,7 +126,8 @@ impl RomHeader {
             prg_len = h[4] as usize * 16384;
             chr_len = h[5] as usize * 8192;
             prg_ram_len = if h[8] == 0 { 8192 } else { h[8] as usize * 8192 };
-            chr_ram_len = if chr_len == 0 { 8192 } else { 0 };
+            // UNROM 512 (30) tem 32 KB de CHR RAM; o resto, 8 KB
+            chr_ram_len = if chr_len == 0 { if mapper == 30 { 32768 } else { 8192 } } else { 0 };
         }
         if prg_len == 0 {
             return Err(RomError::BadHeader("ROM sem PRG"));
@@ -165,14 +166,6 @@ fn nes2_rom_size(lo: u8, hi: u8, unit: usize) -> Result<usize, RomError> {
     }
 }
 
-/// Entrada do cache de nametable por quadrante.
-#[derive(Debug, Clone, Copy)]
-enum NtCache {
-    Ciram(u8),
-    Chr(usize),
-    Value(u8),
-}
-
 pub struct Cartridge {
     pub data: CartData,
     mapper: MapperKind,
@@ -180,10 +173,12 @@ pub struct Cartridge {
     wants_cpu_clock: bool,
     /// PRG RAM padrão em `$6000-$7FFF` quando o mapper não trata o endereço.
     prg_ram_fallback: bool,
+    /// O mapper tem efeito colateral em leituras da CPU (MMC5 `$5204`, N163 `$4800`).
+    read_hook: bool,
     /// Base física de cada banco de 1 KB de CHR (recalculada após cada escrita da CPU).
     chr_cache: [usize; 8],
     chr_dynamic: bool,
-    nt_cache: [NtCache; 4],
+    nt_cache: [NtSource; 4],
     nt_dynamic: bool,
     /// Nível da linha IRQ do mapper, atualizado a cada chamada que pode mudá-lo.
     irq: bool,
@@ -228,7 +223,9 @@ impl Cartridge {
         mapper.reset(&mut data);
         let wants_cpu_clock = mapper.wants_cpu_clock();
         let prg_ram_fallback = !mapper.manages_prg_ram();
+        let read_hook = mapper.has_read_hook();
         let mut cart = Cartridge {
+            read_hook,
             chr_dynamic: mapper.chr_dynamic(),
             nt_dynamic: mapper.nt_dynamic(),
             data,
@@ -237,7 +234,7 @@ impl Cartridge {
             wants_cpu_clock,
             prg_ram_fallback,
             chr_cache: [0; 8],
-            nt_cache: [NtCache::Ciram(0); 4],
+            nt_cache: [NtSource::Ciram(0); 4],
             irq: false,
         };
         cart.refresh_caches();
@@ -313,10 +310,10 @@ impl Cartridge {
             for q in 0..4 {
                 let addr = 0x2000 + (q as u16) * 0x400;
                 self.nt_cache[q] = match self.mapper.nt_source(addr, &self.data) {
-                    None => NtCache::Ciram(mirror_nametable(addr, mirror).0 as u8),
-                    Some(NtSource::Ciram(p)) => NtCache::Ciram(p & 3),
-                    Some(NtSource::Chr(o)) => NtCache::Chr(o & !0x3FF),
-                    Some(NtSource::Value(v)) => NtCache::Value(v),
+                    None => NtSource::Ciram(mirror_nametable(addr, mirror).0 as u8),
+                    Some(NtSource::Ciram(p)) => NtSource::Ciram(p & 3),
+                    Some(NtSource::Chr(o)) => NtSource::Chr(o & !0x3FF),
+                    Some(v) => v,
                 };
             }
         }
@@ -326,8 +323,10 @@ impl Cartridge {
     #[inline]
     pub fn cpu_read_mut(&mut self, addr: u16) -> Option<u8> {
         let v = self.cpu_read(addr);
-        self.mapper.on_cpu_read(addr);
-        self.irq = self.mapper.irq_pending();
+        if self.read_hook {
+            self.mapper.on_cpu_read(addr);
+            self.irq = self.mapper.irq_pending();
+        }
         v
     }
 
@@ -354,9 +353,9 @@ impl Cartridge {
         if !self.nt_dynamic {
             let off = (addr & 0x03FF) as usize;
             return match self.nt_cache[(addr >> 10) as usize & 3] {
-                NtCache::Ciram(p) => ciram[p as usize][off],
-                NtCache::Chr(base) => self.data.chr_at(base + off),
-                NtCache::Value(v) => v,
+                NtSource::Ciram(p) => ciram[p as usize][off],
+                NtSource::Chr(base) => self.data.chr_at(base + off),
+                NtSource::Value(v) => v,
             };
         }
         let src = self.mapper.nt_source(addr, &self.data);
@@ -377,9 +376,9 @@ impl Cartridge {
         if !self.nt_dynamic {
             let off = (addr & 0x03FF) as usize;
             match self.nt_cache[(addr >> 10) as usize & 3] {
-                NtCache::Ciram(p) => ciram[p as usize][off] = val,
-                NtCache::Chr(base) => self.data.chr_set(base + off, val),
-                NtCache::Value(_) => {}
+                NtSource::Ciram(p) => ciram[p as usize][off] = val,
+                NtSource::Chr(base) => self.data.chr_set(base + off, val),
+                NtSource::Value(_) => {}
             }
             return;
         }

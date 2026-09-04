@@ -316,9 +316,7 @@ impl Mapper for Vrc6 {
     }
 
     fn reset(&mut self, data: &mut CartData) {
-        let swap = self.swap_a0_a1;
         *self = Vrc6::new(data);
-        self.swap_a0_a1 = swap;
     }
 
     fn state_string(&self) -> String {

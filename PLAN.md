@@ -8,15 +8,10 @@ Branch por fase (`fase-N-nome`), merge `--no-ff` em `main` no marco. Push só no
 Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
-sed -n '/^## Onde parei/,/^## /p' PLAN.md
-cargo test -p rnfe-core 2>&1 | grep -E 'test result|panicked|SKIP|agora PASSA'
-cargo run -q -p rnfe-core --release --bin status | tail -3
-```
-
-## Onde parei
-Tarefa: revisão por 9 agentes aplicada (Android, UI, UX, núcleo, CI) + 6 mappers + varredura com jogos reais
-Estado: check verde; push em main → CI → APK
-Próximo: usuário testa o APK no g56 (menus, toque, gamepad, "Abrir com"); candidatos: mappers 64/68/65/105 (14 ROMs dos EUA), miniaturas nos slots, PWA offline (service worker), GpuCore mantido em suspended (volta mais rápida), overlay em meia resolução
+sed -n '/^## Onde parei
+Tarefa: mappers 21-25/28/30/64/65/68/105, limpeza do núcleo (APU/CPU/PPU/debug), shader sem arrays (tela metade preta no g56)
+Estado: check verde; push em main → CI → APK para o usuário testar a diagonal preta
+Próximo: backlog dos agentes (2º jogador, screenshot PNG, miniaturas nos slots, auto-state ao sair, toasts de erro, sharp-bilinear, PWA, CI: toolchain fixa/16 KB/versionName); relatórios dos agentes da 2ª rodada (UX e "o que construir" já entregues)
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):

@@ -26,17 +26,21 @@ struct Xform {
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-    var positions = array<vec2<f32>, 6>(
-        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
-    );
-    var uvs = array<vec2<f32>, 6>(
-        vec2(0.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 0.0),
-        vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(0.0, 0.0),
-    );
+    // Quad como 2 triângulos: (0,1,2) = BL,BR,TR e (3,4,5) = BL,TR,TL. Os cantos saem de
+    // aritmética com o índice, sem array local: drivers móveis (Mali/Adreno) já devolveram lixo
+    // ao indexar um array<> de função com vertex_index e o 2º triângulo sumia (metade da tela
+    // preta na diagonal).
+    let t = idx % 3u;
+    var c = t; // canto: 0 = BL, 1 = BR, 2 = TR, 3 = TL
+    if idx >= 3u {
+        c = t * 2u - u32(t == 2u);
+    }
+    let x = f32(((c + 1u) >> 1u) & 1u);
+    let y = f32(c >> 1u);
     var out: VertexOutput;
-    out.pos = vec4(positions[idx] * xform.scale.xy + xform.scale.zw, 0.0, 1.0);
-    out.uv = xform.uv.xy + uvs[idx] * xform.uv.zw;
+    out.pos = vec4(vec2(x, y) * 2.0 - 1.0, 0.0, 1.0);
+    out.pos = vec4(out.pos.xy * xform.scale.xy + xform.scale.zw, 0.0, 1.0);
+    out.uv = xform.uv.xy + vec2(x, 1.0 - y) * xform.uv.zw;
     return out;
 }
 

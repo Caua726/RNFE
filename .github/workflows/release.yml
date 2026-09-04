@@ -37,7 +37,7 @@ jobs:
           mkdir -p out/rnfe-${{ matrix.name }}
           cp README.md LICENSE out/rnfe-${{ matrix.name }}/
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/release/rnfe-desktop.exe target/release/rnfe-tty.exe out/rnfe-${{ matrix.name }}/
+            cp target/release/rnfe-desktop.exe out/rnfe-${{ matrix.name }}/  # rnfe-tty usa stty: só Linux
             cd out && 7z a ../rnfe-${{ matrix.name }}.zip rnfe-${{ matrix.name }}
           else
             cp target/release/rnfe-desktop target/release/rnfe-tty out/rnfe-${{ matrix.name }}/

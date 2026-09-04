@@ -1,5 +1,5 @@
 //! Comportamentos de mapper que nenhuma ROM de teste cobre: ROMs sintéticas por mapper.
-use rnfe_core::Cartridge;
+use rnfe_core::{Cartridge, Mirror};
 
 /// ROM iNES com `prg_16k` bancos de 16 KB, cada um preenchido com o seu índice; CHR RAM.
 fn rom(mapper: u8, prg_16k: usize, flags6_low: u8) -> Cartridge {
@@ -464,4 +464,140 @@ fn nina_cprom_quattro_and_mmc3_variants() {
     assert_eq!(cart.chr_read(0x1005), 0x77);
     cart.cpu_write(0x8001, 0x01); // ROM banco 1 (CHR RAM do header: zeros)
     assert_eq!(cart.chr_read(0x1005), 0x00);
+}
+
+#[test]
+fn rambo1_h3001_sunsoft4_nwc() {
+    // RAMBO-1 (64): 3 bancos de PRG, modo P, IRQ por ciclos (÷4) com atraso
+    let mut cart = rom(64, 8, 0); // 16 bancos de 8 KB
+    assert_eq!(cart.cpu_read(0xE000), Some(7));
+    cart.cpu_write(0x8000, 0x06);
+    cart.cpu_write(0x8001, 4); // R6 = 4 → $8000
+    cart.cpu_write(0x8000, 0x0F);
+    cart.cpu_write(0x8001, 9); // R15 = 9 → $C000
+    assert_eq!(cart.cpu_read(0x8000), Some(2));
+    assert_eq!(cart.cpu_read(0xC000), Some(4));
+    cart.cpu_write(0x8000, 0x40 | 0x0F); // modo P: $8000 = R15, $C000 = R7
+    assert_eq!(cart.cpu_read(0x8000), Some(4));
+    cart.cpu_write(0xC000, 2); // latch
+    cart.cpu_write(0xC001, 1); // modo ciclo + reload
+    cart.cpu_write(0xE001, 0); // enable
+    let mut fired = None;
+    for i in 0..64 {
+        cart.cpu_clock();
+        if cart.irq_pending() {
+            fired = Some(i);
+            break;
+        }
+    }
+    assert!(fired.is_some_and(|i| (12..=24).contains(&i)), "IRQ do RAMBO-1 em modo ciclo: {fired:?}");
+    cart.cpu_write(0xE000, 0);
+    assert!(!cart.irq_pending());
+
+    // H3001 (65): contador de 16 bits por ciclo
+    let mut cart = rom(65, 4, 0);
+    cart.cpu_write(0x8000, 3);
+    assert_eq!(cart.cpu_read(0x8000), Some(1));
+    cart.cpu_write(0x9005, 0x00);
+    cart.cpu_write(0x9006, 0x05); // latch 5
+    cart.cpu_write(0x9004, 0); // reload
+    cart.cpu_write(0x9003, 0x80); // enable
+    for _ in 0..4 {
+        cart.cpu_clock();
+    }
+    assert!(!cart.irq_pending());
+    cart.cpu_clock();
+    assert!(cart.irq_pending());
+    cart.cpu_write(0x9003, 0x80);
+    assert!(!cart.irq_pending(), "escrever $9003 reconhece");
+
+    // Sunsoft-4 (68): nametables da CHR ROM
+    let mut cart = rom(68, 4, 0);
+    let ciram = [[0u8; 1024]; 4];
+    cart.chr_write(0x0000, 0x00); // CHR RAM (header sem CHR): banco NT vem de chr_at
+    cart.cpu_write(0xE000, 0x10); // NT na CHR, mirroring V
+    cart.cpu_write(0xC000, 0x02); // NT A = banco 2 (| 0x80 → 0x82; máscara da CHR RAM de 8 KB)
+    cart.cpu_write(0xD000, 0x03);
+    // 0x82 * 1 KB & 0x1FFF = 0x0800; escreve lá pela CHR RAM e lê pela nametable
+    cart.chr_write(0x0800 + 0x10, 0x5A);
+    assert_eq!(cart.nt_read(0x2010, &ciram), 0x5A, "$2000 → NT A");
+    cart.chr_write(0x0C00 + 0x10, 0xA5);
+    assert_eq!(cart.nt_read(0x2410, &ciram), 0xA5, "vertical: $2400 → NT B");
+    cart.cpu_write(0xF000, 0x11); // PRG 1 + RAM
+    assert_eq!(cart.cpu_read(0x8000), Some(1));
+    cart.cpu_write(0x6000, 0x42);
+    assert_eq!(cart.cpu_read(0x6000), Some(0x42));
+
+    // NES-EVENT (105): bancos fixos até o bit 4 alternar; contador de 30 bits
+    let mut cart = rom(105, 16, 0); // 256 KB
+    assert_eq!(cart.cpu_read(0x8000), Some(0));
+    let w = |cart: &mut Cartridge, addr: u16, v: u8| {
+        for i in 0..5 {
+            cart.data.cpu_cycle += 4;
+            cart.cpu_write(addr, (v >> i) & 1);
+        }
+    };
+    w(&mut cart, 0xA000, 0x00); // bit 4 baixa (init 1), P=0, banco 0
+    w(&mut cart, 0xA000, 0x10); // sobe (init 2)
+    w(&mut cart, 0xA000, 0x04); // P=0, 32 KB banco 2 → 16 KB nº 4
+    assert_eq!(cart.cpu_read(0x8000), Some(4));
+    w(&mut cart, 0xA000, 0x08); // P=1: MMC1 normal na 2ª metade; modo 3 → $C000 = último (15)
+    assert_eq!(cart.cpu_read(0xC000), Some(15));
+    w(&mut cart, 0xE000, 2); // banco 8+2
+    assert_eq!(cart.cpu_read(0x8000), Some(10));
+    for _ in 0..1000 {
+        cart.cpu_clock();
+    }
+    assert!(!cart.irq_pending(), "contador longe do bit 29");
+}
+
+#[test]
+fn unrom512_action53_vrc4() {
+    // UNROM 512 (30): PRG bits 0-4, CHR RAM 32 KB bits 5-6, 1 tela pelo bit 7 (four-screen no header)
+    let mut cart = rom(30, 8, 0x08);
+    cart.cpu_write(0x8000, 0x03 | 0x20);
+    assert_eq!(cart.cpu_read(0x8000), Some(3));
+    assert_eq!(cart.cpu_read(0xC000), Some(7));
+    cart.chr_write(0x0010, 0x77); // banco 1 de CHR RAM
+    cart.cpu_write(0x8000, 0x03);
+    assert_eq!(cart.chr_read(0x0010), 0x00, "banco 0");
+    cart.cpu_write(0x8000, 0x83);
+    assert_eq!(cart.get_mirror(), Mirror::OneScreenHi);
+
+    // Action 53 (28): jogo de 32 KB (S=0) no banco externo 3 → 16 KB nº 6/7
+    let mut cart = rom(28, 16, 0);
+    cart.cpu_write(0x5000, 0x80);
+    cart.cpu_write(0x8000, 0x00); // modo: S=0, P=0, mirroring 1 tela
+    cart.cpu_write(0x5000, 0x81);
+    cart.cpu_write(0x8000, 0x03); // outer 3
+    assert_eq!(cart.cpu_read(0x8000), Some(6));
+    assert_eq!(cart.cpu_read(0xC000), Some(7));
+    cart.cpu_write(0x5000, 0x80);
+    cart.cpu_write(0x8000, 0x1C); // S=1 (64 KB), P=3 ($C000 fixo no último do jogo)
+    cart.cpu_write(0x5000, 0x01);
+    cart.cpu_write(0x8000, 0x01); // inner 1
+    assert_eq!(cart.cpu_read(0x8000), Some(5), "outer 3, jogo 64 KB = bancos 4-7, inner 1");
+    assert_eq!(cart.cpu_read(0xC000), Some(7));
+
+    // VRC4a (21): CHR de 9 bits por 2 nibbles, swap, IRQ em modo ciclo
+    let mut cart = rom(21, 8, 0);
+    cart.cpu_write(0x8000, 5);
+    assert_eq!(cart.cpu_read(0x8000), Some(2)); // 8 KB 5 = 16 KB 2
+    assert_eq!(cart.cpu_read(0xC000), Some(7)); // penúltimo (14) = 16 KB 7
+    cart.cpu_write(0x9004, 0x02); // r=2 (A1) → swap
+    assert_eq!(cart.cpu_read(0xC000), Some(2));
+    cart.cpu_write(0xB000, 0x05); // CHR slot 0 nibble baixo
+    cart.cpu_write(0xB002, 0x01); // nibble alto (A0 = 0x02) → banco 0x15
+    cart.chr_write(0x0000, 0);
+    // banco 0x15 de 1 KB dentro de 8 KB de CHR RAM (máscara): 0x15*0x400 & 0x1FFF = 0x1400
+    cart.chr_write(0x1400 + 3, 0x66);
+    cart.cpu_write(0xB002, 0x00); // volta o slot 0 para banco 5 → 0x1400
+    assert_eq!(cart.chr_read(0x0003), 0x66);
+    cart.cpu_write(0xF000, 0x0F);
+    cart.cpu_write(0xF002, 0x0F); // latch 0xFF
+    cart.cpu_write(0xF004, 0x06); // enable + modo ciclo
+    cart.cpu_clock();
+    assert!(cart.irq_pending());
+    cart.cpu_write(0xF006, 0);
+    assert!(!cart.irq_pending());
 }

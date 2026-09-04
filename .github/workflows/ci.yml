@@ -21,8 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98"
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
@@ -50,8 +51,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libxkbcommon-dev pkg-config
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98"
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -65,8 +67,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98"
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -96,8 +99,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98"
           components: clippy
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
@@ -111,6 +115,17 @@ jobs:
           cargo ndk -t arm64-v8a -P 26 clippy -p rnfe-android -- -D warnings
           CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 cargo ndk -t arm64-v8a -P 26 -o android/app/src/main/jniLibs build -p rnfe-android --release
           ls -la android/app/src/main/jniLibs/arm64-v8a
+        env:
+          # Android 15+ em aparelhos com páginas de 16 KB exige segmentos LOAD alinhados a 16 KB
+          RUSTFLAGS: -C link-arg=-Wl,-z,max-page-size=16384
+      - name: Alinhamento de 16 KB da .so
+        run: |
+          for so in android/app/src/main/jniLibs/arm64-v8a/*.so; do
+            for a in $(readelf -lW "$so" | awk '$1=="LOAD"{print $NF}'); do
+              if [ $((a)) -lt 16384 ]; then echo "$so: segmento LOAD alinhado a $a (< 16 KB)"; exit 1; fi
+            done
+            echo "$so: alinhamento ok"
+          done
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -141,6 +156,19 @@ jobs:
           name: rnfe-android-apk
           path: android/app/build/outputs/apk/release/*.apk
 
+  msrv:
+    name: MSRV 1.85 — cargo check (núcleo, frontend, tty)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo check -p rnfe-core -p rnfe-frontend -p rnfe-tty --all-targets --features rnfe-core/serde
+
   pages:
     name: GitHub Pages
     needs: [web, core]
@@ -163,7 +191,9 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
         with:
           key: bench

@@ -8,6 +8,7 @@
 //! contando as buscas de tile desde o começo da scanline (34 por linha: as 2 últimas são as
 //! primeiras colunas da linha seguinte).
 use super::{CartData, Mapper};
+use crate::apu::{DUTY_TABLE as DUTY, LENGTH_TABLE as LENGTH, pulse_mix};
 use crate::cartridge::NtSource;
 
 /// Pulso do MMC5: igual ao da 2A03 sem sweep.
@@ -27,13 +28,6 @@ struct Pulse {
     env_divider: u8,
     env_decay: u8,
 }
-
-const DUTY: [[u8; 8]; 4] =
-    [[0, 1, 0, 0, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0, 0], [0, 1, 1, 1, 1, 0, 0, 0], [1, 0, 0, 1, 1, 1, 1, 1]];
-const LENGTH: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24,
-    72, 26, 16, 28, 32, 30,
-];
 
 impl Pulse {
     fn write(&mut self, reg: u16, val: u8) {
@@ -361,6 +355,10 @@ impl Mapper for Mmc5 {
         true
     }
 
+    fn has_read_hook(&self) -> bool {
+        true
+    }
+
     fn on_cpu_read(&mut self, addr: u16) {
         if addr == 0x5204 {
             self.irq_pending = false;
@@ -516,9 +514,7 @@ impl Mapper for Mmc5 {
 
     #[inline]
     fn audio_output(&self) -> f32 {
-        let p = (self.pulse1.output() + self.pulse2.output()) as f32;
-        let pulse = if p > 0.0 { 95.88 / (8128.0 / p + 100.0) } else { 0.0 };
-        pulse + self.pcm as f32 / 255.0 * 0.4
+        pulse_mix(self.pulse1.output() + self.pulse2.output()) + self.pcm as f32 / 255.0 * 0.4
     }
 
     fn reset(&mut self, data: &mut CartData) {

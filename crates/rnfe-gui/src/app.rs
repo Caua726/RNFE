@@ -759,26 +759,25 @@ impl App {
             }
             self.fps_counter += 1;
         }
-        if let Some(a) = &self.audio {
-            if self.rewinding || self.turbo || self.config.volume <= 0.0 {
-                nes.bus.apu.sample_buffer.clear();
-            } else {
-                if self.config.volume < 1.0 {
-                    let v = self.config.volume;
-                    for s in nes.bus.apu.sample_buffer.iter_mut() {
-                        *s *= v;
+        let muted = self.rewinding || self.turbo || self.config.volume <= 0.0;
+        let volume = self.config.volume;
+        match &self.audio {
+            Some(a) if !muted => {
+                nes.take_audio(|samples| {
+                    if volume < 1.0 {
+                        for s in samples.iter_mut() {
+                            *s *= volume;
+                        }
                     }
-                }
-                a.ring.push_capped(&nes.bus.apu.sample_buffer, AudioOut::TARGET_QUEUE * 2);
-                nes.bus.apu.sample_buffer.clear();
-                // Controle fino da taxa: o relógio do DAC e o do pacer divergem um pouco; puxa a
-                // taxa da APU em ±0,5 % conforme a fila está acima/abaixo do alvo.
+                    a.ring.push_capped(samples, AudioOut::TARGET_QUEUE * 2);
+                });
+                // Controle fino da taxa: o relógio do DAC e o do pacer divergem um pouco; puxa
+                // a taxa da APU em ±0,5 % conforme a fila está acima/abaixo do alvo.
                 let fill = a.ring.len() as f32 / AudioOut::TARGET_QUEUE as f32;
                 let adj = 1.0 + 0.005 * (fill - 1.0).clamp(-1.0, 1.0);
                 nes.set_sample_rate((a.sample_rate as f32 * adj) as u32);
             }
-        } else {
-            nes.bus.apu.sample_buffer.clear();
+            _ => nes.take_audio(|_| {}),
         }
         if self.fps_timer.elapsed() >= Duration::from_secs(1) {
             self.fps_display = self.fps_counter;

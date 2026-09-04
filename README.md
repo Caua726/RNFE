@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 24 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 34 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 
@@ -19,8 +19,9 @@ gerado a cada marco e lista as 116 ROMs (blargg e outras) com o resultado atual 
 e o `nestest` é comparado instrução a instrução (8 991 linhas) com o log de referência.
 
 Numa varredura de 857 ROMs dos EUA de um pack (600 frames cada, `examples/sweep`), 815 mostram imagem,
-27 ainda estão em intros longas (todas as conferidas renderizam depois), 12 usam mappers que faltam
-(64, 65, 68, 228…) e 3 travam executando lixo (dumps ruins). Castlevania III (MMC5), Akumajou Densetsu
+27 ainda estão em intros longas (todas as conferidas renderizam depois), 4 usam mappers que faltam
+(15, 41, 8, 228) e 3 travam executando lixo (dumps ruins). Klax (RAMBO-1), After Burner (Sunsoft-4) e
+NWC 1990 (NES-EVENT) chegam ao jogo. Castlevania III (MMC5), Akumajou Densetsu
 (VRC6), Gimmick! (5B), Splatterhouse (N163), Batman: Return of the Joker (FME-7) e Punch-Out!! (MMC2)
 chegam à fase 1 com HUD correto.
 
@@ -118,12 +119,19 @@ de ROMs recentes (reabrem sem o seletor).
 | 11 | Color Dreams | — |
 | 13 | CPROM | Videomation |
 | 19 | Namco 163 (+ áudio wavetable) | Rolling Thunder, Megami Tensei II |
+| 21 / 22 / 23 / 25 | VRC2 / VRC4 | Contra (J), Gradius II, Ganbare Goemon 2 |
 | 24 / 26 | VRC6 (+ áudio) | Akumajou Densetsu, Madara |
+| 28 | Action 53 | multicarts homebrew |
+| 30 | UNROM 512 | homebrew (Twin Dragons, Lizard) |
 | 34 | BNROM | Deadly Towers |
+| 64 | RAMBO-1 | Klax, Skull & Crossbones |
+| 65 | Irem H3001 | Daiku no Gen-san 2, Spartan X 2 |
 | 66 | GxROM | Dragon Ball, Doraemon |
+| 68 | Sunsoft-4 | After Burner, Maharaja |
 | 69 | FME-7 / Sunsoft 5B (+ áudio) | Batman: Return of the Joker, Gimmick! |
 | 71 | Camerica | Micro Machines |
 | 79 / 113 | NINA-03/06 | Krazy Kreatures, Tiles of Fate |
+| 105 | NES-EVENT | Nintendo World Championships 1990 |
 | 118 / 119 | TxSROM / TQROM (MMC3) | Armadillo, Pin Bot, High Speed |
 | 206 | DxROM / Namco 118 | Gauntlet, Karnov |
 | 227 | 1200-in-1 | multicarts |

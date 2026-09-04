@@ -760,7 +760,6 @@ impl Ppu {
         let mut bg_pixel = 0u8;
         let mut bg_palette = 0u8;
 
-        // Temporariamente desabilitar background rendering para debug
         if (self.mask & 0x08) != 0 && ((self.mask & 0x02) != 0 || self.cycle >= 9) {
             let bit_mux = 0x8000 >> self.fine_x;
             let p0_pixel = if (self.bg_shifter_pattern_lo & bit_mux) > 0 { 1 } else { 0 };
@@ -785,38 +784,30 @@ impl Ppu {
             sprite_zero = e & 0x20 != 0;
         }
 
-        let mut pixel = 0u8;
-        let mut palette = 0u8;
-
-        if bg_pixel == 0 && fg_pixel == 0 {
-            pixel = 0x00;
-            palette = 0x00;
-        } else if bg_pixel == 0 && fg_pixel > 0 {
-            pixel = fg_pixel;
-            palette = fg_palette;
-        } else if bg_pixel > 0 && fg_pixel == 0 {
-            pixel = bg_pixel;
-            palette = bg_palette;
-        } else if bg_pixel > 0 && fg_pixel > 0 {
-            if fg_priority {
-                pixel = fg_pixel;
-                palette = fg_palette;
-            } else {
-                pixel = bg_pixel;
-                palette = bg_palette;
-            }
-
-            if self.sprite_zero_hit_possible
-                && sprite_zero
-                && (self.mask & 0x08) != 0
-                && (self.mask & 0x10) != 0
-            {
-                // nunca no pixel 255; com clipping da coluna esquerda, só a partir do pixel 8
-                let x = self.cycle - 1;
-                let clipped = (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0;
-                if x != 255 && (!clipped || x >= 8) {
-                    self.status |= 0x40;
+        let (pixel, palette) = match (bg_pixel, fg_pixel) {
+            (0, 0) => (0, 0),
+            (0, f) => (f, fg_palette),
+            (b, 0) => (b, bg_palette),
+            (b, f) => {
+                if fg_priority {
+                    (f, fg_palette)
+                } else {
+                    (b, bg_palette)
                 }
+            }
+        };
+        if bg_pixel != 0
+            && fg_pixel != 0
+            && self.sprite_zero_hit_possible
+            && sprite_zero
+            && (self.mask & 0x08) != 0
+            && (self.mask & 0x10) != 0
+        {
+            // nunca no pixel 255; com clipping da coluna esquerda, só a partir do pixel 8
+            let x = self.cycle - 1;
+            let clipped = (self.mask & 0x02) == 0 || (self.mask & 0x04) == 0;
+            if x != 255 && (!clipped || x >= 8) {
+                self.status |= 0x40;
             }
         }
 
