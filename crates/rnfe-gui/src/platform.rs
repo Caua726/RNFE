@@ -9,7 +9,10 @@ use winit::event_loop::EventLoopProxy;
 #[cfg(not(target_os = "android"))]
 pub fn pick_rom(proxy: EventLoopProxy<UserEvent>) {
     spawn_with(move || async move {
-        let dialog = rfd::AsyncFileDialog::new().add_filter("NES ROM", &["nes"]).set_title("Abrir ROM");
+        let dialog = rfd::AsyncFileDialog::new()
+            .add_filter("NES ROM", &["nes", "NES"])
+            .add_filter("Todos os arquivos", &["*"])
+            .set_title("Abrir ROM");
         let ev = match dialog.pick_file().await {
             Some(file) => {
                 let name = file.file_name();

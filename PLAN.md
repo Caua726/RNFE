@@ -9,9 +9,9 @@ Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
 sed -n '/^## Onde parei
-Tarefa: mappers 21-25/28/30/64/65/68/105, limpeza do núcleo (APU/CPU/PPU/debug), shader sem arrays (tela metade preta no g56)
-Estado: check verde; push em main → CI → APK para o usuário testar a diagonal preta
-Próximo: backlog dos agentes (2º jogador, screenshot PNG, miniaturas nos slots, auto-state ao sair, toasts de erro, sharp-bilinear, PWA, CI: toolchain fixa/16 KB/versionName); relatórios dos agentes da 2ª rodada (UX e "o que construir" já entregues)
+Tarefa: 2ª rodada de agentes (UX, "o que construir", código gui/frontend, Android entregues; problemas reais e compatibilidade ainda rodando; 8 caíram no limite da API) + lote de UX/Android aplicado
+Estado: check + clippy wasm/android → commit em main → CI → APK (testar no g56: diagonal preta, "Continuar · jogo", START+SELECT, tela apaga nos menus)
+Próximo: relatórios pendentes (problemas reais, compatibilidade); do agente Android: erro de GPU visível + retry com GL, áudio na taxa nativa (48 kHz) com foco de áudio, overlay em meia resolução, insets do recorte por JNI, exclusão de gesto ≤ 200 dp, predictive back (targetSdk 36); do UX: miniaturas nos slots, tela "Controles", indicador de rolagem, selo TURBO/rewind, GPU error na web; do "o que construir": .zip, filtros de vídeo, paleta, run-ahead, remapeamento, cheats, PWA offline
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):

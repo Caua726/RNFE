@@ -177,6 +177,8 @@ pub enum Action {
     /// Volta ~5 s.
     Rewind,
     ToggleTurbo,
+    /// Grava o frame atual em PNG no Storage (`shots/`).
+    Screenshot,
     Settings,
     Back,
     Quit,
@@ -258,6 +260,15 @@ pub struct MenuState {
     pub confirm_remove: Option<u64>,
     /// A plataforma tem tela de toque (mostra a seção Toque dos ajustes).
     pub touch_platform: bool,
+    /// Há vibração (senão o ajuste "Vibrar ao tocar" some).
+    pub has_haptics: bool,
+    /// Captura de tela para arquivo faz sentido (desktop).
+    pub can_screenshot: bool,
+}
+
+/// Nome de exibição de uma ROM: sem a extensão `.nes`.
+pub fn display_name(name: &str) -> &str {
+    name.strip_suffix(".nes").or_else(|| name.strip_suffix(".NES")).unwrap_or(name)
 }
 
 /// Escala da interface: pelo fator de DPI da janela (`Window::scale_factor`, ~2,6 num celular
@@ -334,12 +345,26 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 format!("Famicom / NES · v{}", st.version)
             };
             col.y = h * 0.40;
-            let rows = 2.0 + (!st.recent.is_empty()) as u8 as f32 + st.can_quit as u8 as f32;
+            // Quem já jogou algo volta direto ao último jogo (o auto-state retoma de onde parou)
+            let resume = if st.loading { None } else { st.recent.first() };
+            let rows = 2.0
+                + (!st.recent.is_empty()) as u8 as f32
+                + resume.is_some() as u8 as f32
+                + st.can_quit as u8 as f32;
             col.fit(rows, h, min_row);
+            if let Some(r) = resume {
+                col.push(
+                    &mut items,
+                    format!("Continuar · {}", display_name(&r.name)),
+                    Action::OpenRecent(r.hash),
+                    ItemKind::Primary,
+                );
+            }
             if st.loading {
                 col.push(&mut items, "Abrindo…", Action::None, ItemKind::Button);
             } else {
-                col.push(&mut items, "Abrir ROM", Action::OpenRom, ItemKind::Primary);
+                let kind = if resume.is_some() { ItemKind::Button } else { ItemKind::Primary };
+                col.push(&mut items, "Abrir ROM", Action::OpenRom, kind);
             }
             if !st.recent.is_empty() {
                 col.push(
@@ -357,10 +382,10 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
         Screen::Paused => {
             title = "Pausado".into();
             let mins = st.play_seconds / 60;
-            subtitle =
-                if mins > 0 { format!("{} · {} min", st.rom_name, mins) } else { st.rom_name.clone() };
+            let name = display_name(&st.rom_name);
+            subtitle = if mins > 0 { format!("{name} · {mins} min") } else { name.to_string() };
             col.y = (h * 0.15).max(row_h);
-            let rows = 6.0 + st.can_quit as u8 as f32;
+            let rows = 6.0 + st.can_quit as u8 as f32 + st.can_screenshot as u8 as f32;
             col.fit(rows, h, min_row);
             col.push(&mut items, "Continuar", Action::Resume, ItemKind::Primary);
             col.row(
@@ -382,6 +407,9 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 col.push(&mut items, "Abrindo…", Action::None, ItemKind::Button);
             } else {
                 col.push(&mut items, "Abrir outra ROM", Action::OpenRom, ItemKind::Button);
+            }
+            if st.can_screenshot {
+                col.push(&mut items, "Captura de tela (F12)", Action::Screenshot, ItemKind::Button);
             }
             col.push(&mut items, "Ajustes", Action::Settings, ItemKind::Button);
             let i = col.push(
@@ -413,6 +441,9 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 ));
                 col.y += header_h + gap * 0.5;
                 for &set in *settings {
+                    if set == Setting::Haptics && !st.has_haptics {
+                        continue;
+                    }
                     let value = set.value(config);
                     let i = if set.is_bool() {
                         col.push(
@@ -451,7 +482,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 let rm_w = if confirming { side * 2.2 } else { side };
                 items.push(item(
                     Rect { x, y, w: bw - rm_w - gap, h: col.row_h },
-                    r.name.clone(),
+                    display_name(&r.name).to_string(),
                     Action::OpenRecent(r.hash),
                     ItemKind::Button,
                 ));
@@ -586,6 +617,8 @@ mod tests {
             version: "0.2.0".into(),
             slots: [true, false, false],
             touch_platform: true,
+            has_haptics: true,
+            can_screenshot: true,
             ..Default::default()
         }
     }

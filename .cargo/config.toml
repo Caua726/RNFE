@@ -1,2 +1,7 @@
 [build]
 jobs = 4
+
+# Android 15+ em aparelhos com páginas de 16 KB só carrega .so com segmentos alinhados a 16 KB
+# (o CI confere com readelf). Vale para o APK e para builds locais.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

@@ -33,6 +33,8 @@ public class MainActivity extends NativeActivity {
 
     /** Implementado em Rust (crates/rnfe-android); pode ser chamado de qualquer thread. */
     public native void onRomPicked(byte[] data, String name);
+    /** Motivo legível quando a ROM não pôde ser lida (o Rust mostra num aviso). */
+    public native void onRomFailed(String why);
 
     /** Eixos do gamepad (d-pad como hat, analógico esquerdo), -1..1. Implementado em Rust. */
     public native void onPadAxes(float x, float y);
@@ -40,11 +42,13 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Jogo em andamento: a tela não pode apagar sozinha
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // A tela fica ligada só enquanto joga (setKeepScreenOn, chamado pelo Rust)
         vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
         hideSystemUi();
-        handleViewIntent(getIntent());
+        // Reaberto pelo Recents depois de o sistema matar o processo: o VIEW original não vale mais
+        if ((getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
+            handleViewIntent(getIntent());
+        }
     }
 
     @Override
@@ -77,29 +81,33 @@ public class MainActivity extends NativeActivity {
 
     /** Retângulos onde o gesto de borda do sistema não deve capturar o toque (d-pad, A/B). */
     public void setGestureExclusion(int l1, int t1, int r1, int b1, int l2, int t2, int r2, int b2) {
+        if (android.os.Build.VERSION.SDK_INT < 29) return; // API 29+; antes disso é NoSuchMethodError (Error, não Exception)
         mainHandler.post(() -> {
             List<Rect> rects = new ArrayList<>();
             if (r1 > l1 && b1 > t1) rects.add(new Rect(l1, t1, r1, b1));
             if (r2 > l2 && b2 > t2) rects.add(new Rect(l2, t2, r2, b2));
             try {
                 getWindow().getDecorView().setSystemGestureExclusionRects(rects);
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         });
     }
 
     @Override
     protected void onDestroy() {
-        if (!isFinishing()) {
-            // Recriação da Activity (mudança de configuração fora de configChanges, "Não manter
-            // atividades"): o winit ignora o Destroy e nunca sai do laço; super.onDestroy()
-            // esperaria por ele para sempre (ANR). Recomeçar do zero é mais barato.
-            android.os.Process.killProcess(android.os.Process.myPid());
-        }
+        // O winit não recria o laço de eventos numa Activity nova e o glue nativo bloqueia a
+        // thread principal esperando a thread do jogo (ANR): o processo morre aqui, sempre.
+        // save/config já foram gravados em `suspended`.
         super.onDestroy();
-        // Saída normal (android_main voltou → finish): o winit não recria o EventLoop no mesmo
-        // processo, então encerra o processo para o próximo toque no ícone começar limpo.
-        System.exit(0);
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    /** Mantém a tela ligada enquanto há jogo rodando (chamada pelo Rust via JNI). */
+    public void setKeepScreenOn(boolean on) {
+        mainHandler.post(() -> {
+            if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
     }
 
     /** Vibração curta ao tocar num botão (chamada pelo Rust via JNI, da thread de emulação). */
@@ -135,7 +143,7 @@ public class MainActivity extends NativeActivity {
             try {
                 startActivityForResult(intent, PICK_ROM);
             } catch (Exception e) { // ActivityNotFoundException: aparelho sem seletor de arquivos
-                onRomPicked(new byte[0], "");
+                onRomFailed("este aparelho não tem um seletor de arquivos");
             }
         });
     }
@@ -162,18 +170,27 @@ public class MainActivity extends NativeActivity {
                 }
             } catch (Exception ignored) {
             }
-            byte[] bytes = new byte[0];
+            if (name == null || name.isEmpty()) {
+                String seg = uri.getLastPathSegment();
+                name = seg == null ? "rom.nes" : seg;
+            }
+            byte[] bytes;
             try (InputStream in = getContentResolver().openInputStream(uri)) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 byte[] buf = new byte[65536];
                 int n, total = 0;
                 while ((n = in.read(buf)) > 0) {
                     total += n;
-                    if (total > MAX_ROM) { out = null; break; } // não é uma ROM
+                    if (total > MAX_ROM) { // não é uma ROM de NES
+                        onRomFailed(name + " tem mais de 8 MB: não é uma ROM de NES");
+                        return;
+                    }
                     out.write(buf, 0, n);
                 }
-                if (out != null) bytes = out.toByteArray();
-            } catch (Exception ignored) {
+                bytes = out.toByteArray();
+            } catch (Exception e) {
+                onRomFailed("não consegui ler " + name + " (" + e.getClass().getSimpleName() + ")");
+                return;
             }
             onRomPicked(bytes, name);
         }, "rnfe-rom").start();

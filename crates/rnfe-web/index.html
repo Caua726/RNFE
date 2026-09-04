@@ -25,9 +25,10 @@
   <script>
     // Some o aviso após o primeiro gesto; o canvas recebe foco para o teclado funcionar.
     const c = document.getElementById('rnfe');
-    const hide = () => { document.getElementById('hint').style.display = 'none'; c.focus(); };
-    c.addEventListener('pointerdown', hide, { once: true });
+    const hide = () => { document.getElementById('hint').style.display = 'none'; };
+    c.addEventListener('pointerdown', () => { hide(); c.focus(); });
     window.addEventListener('keydown', hide, { once: true });
+    window.addEventListener('load', () => c.focus()); // 1ª tecla já vai para o canvas
   </script>
 </body>
 </html>

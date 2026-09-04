@@ -13,6 +13,7 @@ pub mod debug;
 pub mod diagnostic;
 pub mod mappers;
 pub mod nes;
+pub mod png;
 pub mod ppu;
 #[cfg(feature = "serde")]
 pub mod state;

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8–11 (antes de dataExtractionRules): saves e ajustes vão para o backup, ROMs não
+     (estourariam a cota de 25 MB e derrubariam o backup inteiro). -->
+<full-backup-content>
+    <exclude domain="file" path="rnfe/roms" />
+</full-backup-content>

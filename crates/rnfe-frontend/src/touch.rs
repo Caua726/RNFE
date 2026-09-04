@@ -25,6 +25,11 @@ impl Rect {
     pub fn contains(&self, x: f32, y: f32) -> bool {
         x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
+
+    /// `contains` com folga de `px`/`py` em cada lado (alvos de toque maiores que o desenho).
+    pub fn contains_pad(&self, x: f32, y: f32, px: f32, py: f32) -> bool {
+        x >= self.x - px && x < self.x + self.w + px && y >= self.y - py && y < self.y + self.h + py
+    }
 }
 
 /// Um botão especial do overlay (não é do NES).
@@ -146,10 +151,11 @@ impl TouchLayout {
         if inside(&self.b, x, y, 1.3) {
             b |= Buttons::B;
         }
-        if self.start.contains(x, y) {
+        // As pílulas são baixas (~25 dp): folga vertical de meia altura em cada lado
+        if self.start.contains_pad(x, y, self.start.w * 0.1, self.start.h * 0.5) {
             b |= Buttons::START;
         }
-        if self.select.contains(x, y) {
+        if self.select.contains_pad(x, y, self.select.w * 0.1, self.select.h * 0.5) {
             b |= Buttons::SELECT;
         }
         b

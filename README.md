@@ -85,16 +85,18 @@ bash scripts/check.sh          # fmt + clippy -D warnings + testes (o mesmo que 
 
 | NES | Desktop / Web (teclado) | Toque (web, celular) | Gamepad | Terminal |
 |---|---|---|---|---|
-| D-pad | setas | d-pad na tela | d-pad ou analógico esquerdo | setas ou WASD |
+| D-pad | setas ou WASD | d-pad na tela | d-pad ou analógico esquerdo | setas ou WASD |
 | A / B | Z / X | A / B | Sul·Leste / Oeste·Norte | Z / X |
 | Start / Select | Enter / Tab | START / SELECT | Start / Select | Enter / Tab (ou C) |
 | Reset | R | menu → Reset | — | R |
-| Pausa / menu | Esc | MENU | — | — |
+| Pausa / menu | Esc | MENU (ou START+SELECT) | Mode/Guide ou Start+Select | — |
+| Jogador 2 | I J K L · O / U · . / , | — | 2º gamepad | — |
 | Abrir ROM | O ou clique | toque em Open ROM | — | — |
 | Save / load state | F5 / F7 (slot 1) | menu → Salvar / Carregar (3 slots) | — | 1 / 2 |
+| Captura de tela | F12 ou menu (PNG em `shots/`) | — | — | — |
 | Rewind (segurar) | Backspace | — | — | Backspace |
 | Turbo (segurar) | Espaço | — | — | — |
-| Sair | Esc (sem ROM) | — | — | Q ou Ctrl-C |
+| Sair | Esc duas vezes (sem ROM) | — | — | Q ou Ctrl-C |
 | Debug | F3 overlay · F4 cobertura · F6 diagnóstico · F9 trace · F11 tela cheia | — | — | — |
 
 Os controles de toque aparecem no primeiro toque; em retrato a imagem fica em cima e os botões

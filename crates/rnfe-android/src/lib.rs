@@ -16,7 +16,7 @@ use winit::platform::android::activity::AndroidApp;
 
 static PROXY: Mutex<Option<EventLoopProxy<UserEvent>>> = Mutex::new(None);
 /// ROM escolhida antes de o laço existir (processo recriado pelo sistema durante o SAF).
-static PENDING: Mutex<Option<(String, Vec<u8>)>> = Mutex::new(None);
+static PENDING: Mutex<Option<UserEvent>> = Mutex::new(None);
 
 /// Chama um método `void` sem argumentos da `MainActivity` pela JNI.
 fn call_activity(app: &AndroidApp, method: &str) -> Result<(), String> {
@@ -34,11 +34,45 @@ fn call_activity(app: &AndroidApp, method: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Chama um método `void(boolean)` da `MainActivity`.
+fn call_activity_bool(app: &AndroidApp, method: &str, on: bool) -> Result<(), String> {
+    // SAFETY: idem `call_activity`.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
+        .map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let arg = jni::objects::JValue::Bool(u8::from(on));
+    if let Err(e) = env.call_method(&activity, method, "(Z)V", &[arg]) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
 fn call_pick_rom(app: &AndroidApp) -> Result<(), String> {
     call_activity(app, "pickRom")
 }
 
-/// Chamado pelo Java com o conteúdo da ROM escolhida (ou vazio se cancelou).
+/// Entrega um evento ao laço do winit; antes de o laço existir fica guardado em `PENDING`.
+/// Depois de guardar, o proxy é conferido de novo: `on_proxy` pode ter passado no meio
+/// (arranque frio por "Abrir com") e já ter drenado um `PENDING` vazio.
+fn deliver(ev: UserEvent) {
+    if let Some(p) = PROXY.lock().ok().and_then(|g| g.clone()) {
+        let _ = p.send_event(ev);
+        return;
+    }
+    if let Ok(mut g) = PENDING.lock() {
+        *g = Some(ev);
+    }
+    if let Some(p) = PROXY.lock().ok().and_then(|g| g.clone()) {
+        if let Some(ev) = PENDING.lock().ok().and_then(|mut g| g.take()) {
+            let _ = p.send_event(ev);
+        }
+    }
+}
+
+/// Chamado pelo Java com o conteúdo da ROM escolhida (vazio = cancelou).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomPicked<'l>(
     mut env: JNIEnv<'l>,
@@ -48,23 +82,22 @@ pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomPicked<'l>(
 ) {
     let bytes = env.convert_byte_array(&data).unwrap_or_default();
     let name: String = env.get_string(&name).map(|s| s.into()).unwrap_or_default();
-    let ev = if bytes.is_empty() {
+    deliver(if bytes.is_empty() {
         UserEvent::RomLoadFailed("cancelado".into())
     } else {
         UserEvent::RomLoaded { name, bytes }
-    };
-    match PROXY.lock().ok().and_then(|g| g.clone()) {
-        Some(p) => {
-            let _ = p.send_event(ev);
-        }
-        None => {
-            if let UserEvent::RomLoaded { name, bytes } = ev {
-                if let Ok(mut g) = PENDING.lock() {
-                    *g = Some((name, bytes));
-                }
-            }
-        }
-    }
+    });
+}
+
+/// Chamado pelo Java quando a ROM não pôde ser lida (motivo legível para o aviso).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomFailed<'l>(
+    mut env: JNIEnv<'l>,
+    _this: JObject<'l>,
+    why: JString<'l>,
+) {
+    let why: String = env.get_string(&why).map(|s| s.into()).unwrap_or_default();
+    deliver(UserEvent::RomLoadFailed(if why.is_empty() { "não consegui ler a ROM".into() } else { why }));
 }
 
 /// Eixos do gamepad vindos do Java (d-pad como hat ou analógico esquerdo).
@@ -123,6 +156,12 @@ fn android_main(app: AndroidApp) {
             log::debug!("gesture exclusion: {e}");
         }
     }));
+    let kso_app = app.clone();
+    launch.keep_screen_on = Some(Box::new(move |on| {
+        if let Err(e) = call_activity_bool(&kso_app, "setKeepScreenOn", on) {
+            log::debug!("setKeepScreenOn: {e}");
+        }
+    }));
     let haptic_app = app.clone();
     launch.haptic = Some(Box::new(move || {
         if let Err(e) = call_activity(&haptic_app, "vibrate") {
@@ -133,8 +172,8 @@ fn android_main(app: AndroidApp) {
         if let Ok(mut g) = PROXY.lock() {
             *g = Some(proxy.clone());
         }
-        if let Some((name, bytes)) = PENDING.lock().ok().and_then(|mut g| g.take()) {
-            let _ = proxy.send_event(UserEvent::RomLoaded { name, bytes });
+        if let Some(ev) = PENDING.lock().ok().and_then(|mut g| g.take()) {
+            let _ = proxy.send_event(ev);
         }
     };
     if let Err(e) = rnfe_gui::run_android(app, launch, on_proxy) {

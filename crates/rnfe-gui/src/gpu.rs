@@ -459,3 +459,15 @@ impl GpuState {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// O shader não roda numa GPU no CI, mas passa pelo mesmo parser e validador do naga que o
+    /// wgpu usa em `create_shader_module` (roda no job desktop: `cargo test -p rnfe-gui --lib`).
+    #[test]
+    fn shader_wgsl_valido() {
+        use wgpu::naga::valid::{Capabilities, ValidationFlags, Validator};
+        let module = wgpu::naga::front::wgsl::parse_str(super::SHADER).expect("WGSL inválido");
+        Validator::new(ValidationFlags::all(), Capabilities::empty()).validate(&module).expect("validação");
+    }
+}

@@ -85,6 +85,7 @@ pub struct App {
     storage: Box<dyn Storage>,
     picker: Option<RomPicker>,
     haptic: Option<Haptic>,
+    keep_screen_on: Option<crate::KeepScreenOn>,
     config: Config,
     recent: Vec<RecentRom>,
     screen: Screen,
@@ -125,8 +126,18 @@ pub struct App {
     touch_layout: TouchLayout,
     #[cfg(feature = "gamepad")]
     gilrs: Option<gilrs::Gilrs>,
-    pad: Buttons,
-    pad_stick: Buttons,
+    /// Botões e analógico dos gamepads, por porta (0 = jogador 1).
+    pad: [Buttons; 2],
+    pad_stick: [Buttons; 2],
+    /// Gamepads (gilrs) já vistos, em ordem: o índice é a porta.
+    #[cfg(feature = "gamepad")]
+    pad_ports: Vec<usize>,
+    /// Teclado do 2º jogador (IJKL, U/O, vírgula/ponto).
+    input2: InputState,
+    /// Erro de gravação do save já avisado (uma vez por sessão).
+    save_error_shown: bool,
+    /// Esc na tela inicial aguardando o 2º Esc (desktop).
+    confirm_esc: bool,
     /// Navegação de menu pedida pelo gamepad, consumida em `about_to_wait`.
     nav_queue: Vec<i32>,
     last_touch_buttons: Buttons,
@@ -147,7 +158,8 @@ pub struct App {
 
 impl App {
     pub fn new(launch: Launch, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let Launch { mut nes, rom_name, mut storage, picker, haptic, gesture_exclusion } = launch;
+        let Launch { mut nes, rom_name, mut storage, picker, haptic, gesture_exclusion, keep_screen_on } =
+            launch;
         let config = Config::load(storage.as_ref());
         let recent = config::load_recent(storage.as_ref());
         let mut save = match &nes {
@@ -171,6 +183,7 @@ impl App {
             storage,
             picker,
             haptic,
+            keep_screen_on,
             touch_layout: TouchLayout::for_size_scaled(768.0, 720.0, config.touch_scale),
             config,
             recent,
@@ -201,8 +214,13 @@ impl App {
             touch: TouchState::new(),
             #[cfg(feature = "gamepad")]
             gilrs: None,
-            pad: Buttons::NONE,
-            pad_stick: Buttons::NONE,
+            pad: [Buttons::NONE; 2],
+            pad_stick: [Buttons::NONE; 2],
+            #[cfg(feature = "gamepad")]
+            pad_ports: Vec::new(),
+            input2: InputState::new(),
+            save_error_shown: false,
+            confirm_esc: false,
             nav_queue: Vec::new(),
             last_touch_buttons: Buttons::NONE,
             cursor: (0.0, 0.0),
@@ -304,6 +322,9 @@ impl App {
     }
 
     fn set_screen(&mut self, s: Screen) {
+        if let Some(f) = &self.keep_screen_on {
+            f(s == Screen::Playing);
+        }
         if s == Screen::Playing && self.nes.is_none() {
             self.screen = Screen::Start;
         } else {
@@ -319,6 +340,7 @@ impl App {
         self.selected = None;
         self.invalidate_layout();
         self.input.clear();
+        self.input2.clear();
         self.touch.clear();
         self.rewinding = false;
         self.save_config();
@@ -393,6 +415,7 @@ impl App {
     }
 
     fn flush_save(&mut self) {
+        self.save_auto_state();
         if let Some(n) = self.nes.as_mut() {
             if let Err(e) = self.save.flush(n, self.storage.as_mut()) {
                 log::error!("erro ao gravar save: {e}");
@@ -413,6 +436,8 @@ impl App {
         if self.save.load(&mut nes, self.storage.as_mut()) {
             log::info!("save carregado: {}", self.save.key().unwrap_or(""));
         }
+        // Continua de onde parou (auto-state de sair/suspender); state de outra versão é ignorado
+        let resumed = self.storage.read(&Self::auto_key(&nes)).is_some_and(|d| nes.load_state(&d).is_ok());
         self.nes = Some(nes);
         self.rom_name = name;
         self.play_frames = 0;
@@ -423,6 +448,9 @@ impl App {
             w.set_title(&format!("RNFE — {}", self.rom_name));
         }
         self.set_screen(Screen::Playing);
+        if resumed {
+            self.toast(format!("{} · continuando de onde parou", menu::display_name(&self.rom_name)));
+        }
     }
 
     /// `store`: guardar os bytes em `roms/<hash>.nes` (ROM nova); reabrir dos recentes só
@@ -433,10 +461,41 @@ impl App {
                 let hash = nes.cartridge().rom_hash();
                 self.recent =
                     config::push_recent(self.storage.as_mut(), hash, &name, store.then_some(&bytes[..]));
-                self.install_nes(nes, name.clone());
-                self.toast(name);
+                self.toast(menu::display_name(&name).to_string());
+                self.install_nes(nes, name);
+            }
+            Err(rnfe_core::RomError::BadMagic) if bytes.starts_with(b"PK\x03\x04") => {
+                self.toast_error(format!("{name} é um .zip: extraia o .nes antes de abrir"))
             }
             Err(e) => self.toast_error(friendly_rom_error(&name, &e)),
+        }
+    }
+
+    /// Frame atual em PNG no Storage (`shots/<hash>-<frame>.png`).
+    fn screenshot(&mut self) {
+        let Some(nes) = self.nes.as_mut() else { return };
+        let hash = nes.cartridge().rom_hash();
+        let png = rnfe_core::png::encode(nes.framebuffer(), rnfe_core::SCREEN_W, rnfe_core::SCREEN_H);
+        let key = format!("shots/{hash:016x}-{}.png", self.play_frames);
+        match self.storage.write(&key, &png) {
+            Ok(()) => self.toast(format!("Captura salva: {key}")),
+            Err(e) => self.toast_error(format!("Não consegui salvar a captura: {e}")),
+        }
+    }
+
+    /// Chave do auto-state (gravado ao sair/suspender; carregado ao abrir a ROM de novo).
+    fn auto_key(nes: &Nes) -> String {
+        format!("state/{:016x}/auto.rnfs", nes.cartridge().rom_hash())
+    }
+
+    fn save_auto_state(&mut self) {
+        let Some(nes) = self.nes.as_ref() else { return };
+        if self.play_frames == 0 {
+            return; // nada jogado: não sobrescreve um auto-state anterior
+        }
+        let (key, data) = (Self::auto_key(nes), nes.save_state());
+        if let Err(e) = self.storage.write(&key, &data) {
+            log::warn!("auto-state: {e}");
         }
     }
 
@@ -538,6 +597,8 @@ impl App {
             loading: self.loading,
             confirm_remove: self.confirm_remove,
             touch_platform: cfg!(any(target_os = "android", target_arch = "wasm32")) || self.touch.seen,
+            has_haptics: self.haptic.is_some(),
+            can_screenshot: cfg!(not(any(target_os = "android", target_arch = "wasm32"))),
         }
     }
 
@@ -622,6 +683,10 @@ impl App {
                 self.set_turbo(on);
                 self.invalidate_layout();
             }
+            Action::Screenshot => {
+                self.screenshot();
+                self.set_screen(Screen::Playing);
+            }
             Action::Settings => self.set_screen(Screen::Settings),
             Action::Back => self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start }),
             Action::Quit => {
@@ -654,7 +719,18 @@ impl App {
         let Some(g) = self.gilrs.as_mut() else { return };
         let mut nav = Vec::new();
         let (mut pad, mut stick) = (self.pad, self.pad_stick);
+        let mut ports = std::mem::take(&mut self.pad_ports);
         while let Some(ev) = g.next_event() {
+            // 1º gamepad visto = jogador 1, 2º = jogador 2; os demais são ignorados
+            let id: usize = ev.id.into();
+            let port = match ports.iter().position(|&p| p == id) {
+                Some(p) => p,
+                None if ports.len() < 2 => {
+                    ports.push(id);
+                    ports.len() - 1
+                }
+                None => continue,
+            };
             let map = |b: Button| match b {
                 Button::South | Button::East => Buttons::A,
                 Button::West | Button::North => Buttons::B,
@@ -681,19 +757,20 @@ impl App {
             }
             match ev.event {
                 EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
-                EventType::ButtonPressed(b, _) => pad |= map(b),
-                EventType::ButtonReleased(b, _) => pad = pad.with(map(b), false),
+                EventType::ButtonPressed(b, _) => pad[port] |= map(b),
+                EventType::ButtonReleased(b, _) => pad[port] = pad[port].with(map(b), false),
                 EventType::AxisChanged(axis, v, _) => {
                     let (neg, pos) = match axis {
                         Axis::LeftStickX => (Buttons::LEFT, Buttons::RIGHT),
                         Axis::LeftStickY => (Buttons::DOWN, Buttons::UP),
                         _ => continue,
                     };
-                    stick = stick.with(neg, v < -0.5).with(pos, v > 0.5);
+                    stick[port] = stick[port].with(neg, v < -0.5).with(pos, v > 0.5);
                 }
                 _ => {}
             }
         }
+        self.pad_ports = ports;
         self.pad = pad;
         self.pad_stick = stick;
         self.nav_queue.extend(nav);
@@ -740,9 +817,22 @@ impl App {
         // Frame skip adaptativo: quando o laço atrasa (due > 1), só o último frame emulado
         // vai para a tela — o redraw abaixo é um por chamada, não um por frame.
         self.skipped_frames += due.saturating_sub(1);
+        let buttons = self.input.current(now) | self.touch.buttons() | self.pad[0] | self.pad_stick[0];
+        let buttons2 = self.input2.current(now) | self.pad[1] | self.pad_stick[1];
+        // START+SELECT juntos (gamepad, toque ou teclado) abrem o menu em qualquer plataforma
+        let combo = Buttons::START.0 | Buttons::SELECT.0;
+        if buttons.0 & combo == combo {
+            self.input.clear();
+            self.input2.clear();
+            self.touch.clear();
+            self.pad = [Buttons::NONE; 2];
+            self.set_screen(Screen::Paused);
+            return;
+        }
         let Some(nes) = self.nes.as_mut() else { return };
-        let buttons = self.input.current(now) | self.touch.buttons() | self.pad | self.pad_stick;
         nes.set_controller(0, buttons);
+        nes.set_controller(1, buttons2);
+        let mut save_err: Option<String> = None;
         for _ in 0..due {
             if self.rewinding {
                 if !self.rewind.step_back(nes) {
@@ -756,6 +846,7 @@ impl App {
             self.rewind.record(nes);
             if let Err(e) = self.save.tick(nes, self.storage.as_mut()) {
                 log::error!("erro ao gravar save: {e}");
+                save_err = Some(e.to_string());
             }
             self.fps_counter += 1;
         }
@@ -778,6 +869,10 @@ impl App {
                 nes.set_sample_rate((a.sample_rate as f32 * adj) as u32);
             }
             _ => nes.take_audio(|_| {}),
+        }
+        if let Some(e) = save_err.filter(|_| !self.save_error_shown) {
+            self.save_error_shown = true;
+            self.toast_error(format!("Não consegui gravar o save: {e}"));
         }
         if self.fps_timer.elapsed() >= Duration::from_secs(1) {
             self.fps_display = self.fps_counter;
@@ -1019,10 +1114,9 @@ impl App {
 
     fn nav_activate(&mut self, dir: i32, el: &ActiveEventLoop) {
         let layout = self.layout();
-        let Some(i) = self.selected else {
-            self.nav(1, el);
-            return;
-        };
+        // Sem seleção (mouse, ou tela recém-aberta): vale o primeiro item, que é o principal
+        let Some(i) = self.selected.or_else(|| menu::next_selectable(&layout, None, 1)) else { return };
+        self.selected = Some(i);
         if let Some(a) = menu::activate(&layout, i, dir) {
             self.act(a, el);
         }
@@ -1052,10 +1146,29 @@ impl App {
                 KeyCode::ArrowDown => Some(Buttons::DOWN),
                 KeyCode::ArrowLeft => Some(Buttons::LEFT),
                 KeyCode::ArrowRight => Some(Buttons::RIGHT),
+                KeyCode::KeyW => Some(Buttons::UP),
+                KeyCode::KeyS => Some(Buttons::DOWN),
+                KeyCode::KeyA => Some(Buttons::LEFT),
+                KeyCode::KeyD => Some(Buttons::RIGHT),
                 _ => None,
             };
             if let Some(b) = bit {
                 self.input.set(b, pressed);
+            }
+            // Jogador 2 no mesmo teclado
+            let bit2 = match key {
+                KeyCode::KeyO => Some(Buttons::A),
+                KeyCode::KeyU => Some(Buttons::B),
+                KeyCode::Comma => Some(Buttons::SELECT),
+                KeyCode::Period => Some(Buttons::START),
+                KeyCode::KeyI => Some(Buttons::UP),
+                KeyCode::KeyK => Some(Buttons::DOWN),
+                KeyCode::KeyJ => Some(Buttons::LEFT),
+                KeyCode::KeyL => Some(Buttons::RIGHT),
+                _ => None,
+            };
+            if let Some(b) = bit2 {
+                self.input2.set(b, pressed);
             }
             match key {
                 KeyCode::Backspace => self.rewinding = pressed,
@@ -1077,16 +1190,22 @@ impl App {
                 Screen::Start => {
                     if cfg!(not(any(target_arch = "wasm32", target_os = "android"))) || self.picker.is_some()
                     {
-                        self.flush_save();
-                        self.save_config();
-                        el.exit();
+                        if self.confirm_esc && Instant::now() < self.toast_until {
+                            self.flush_save();
+                            self.save_config();
+                            el.exit();
+                        } else {
+                            self.confirm_esc = true;
+                            self.toast("Esc de novo para sair");
+                        }
                     }
                 }
             },
             KeyCode::KeyO => self.open_rom(),
             KeyCode::KeyR => {
                 if self.playing() {
-                    if self.confirm_reset {
+                    // só vale enquanto o aviso está na tela: um R perdido não arma um reset eterno
+                    if self.confirm_reset && Instant::now() < self.toast_until {
                         self.confirm_reset = false;
                         self.reset();
                     } else {
@@ -1106,6 +1225,7 @@ impl App {
                 }
             }
             KeyCode::F5 => self.save_state(1),
+            KeyCode::F12 => self.screenshot(),
             KeyCode::F7 => self.load_state(1),
             KeyCode::F6 => {
                 if let Some(n) = &self.nes {
@@ -1299,17 +1419,17 @@ impl ApplicationHandler<UserEvent> for App {
                     .with(Buttons::DOWN, y > 0.5);
                 if !self.playing() {
                     // d-pad do controle navega os menus (só nas bordas de subida)
-                    if stick.0 & !self.pad_stick.0 & Buttons::UP.0 != 0 {
+                    if stick.0 & !self.pad_stick[0].0 & Buttons::UP.0 != 0 {
                         self.nav(-1, _el);
-                    } else if stick.0 & !self.pad_stick.0 & Buttons::DOWN.0 != 0 {
+                    } else if stick.0 & !self.pad_stick[0].0 & Buttons::DOWN.0 != 0 {
                         self.nav(1, _el);
-                    } else if stick.0 & !self.pad_stick.0 & Buttons::LEFT.0 != 0 {
+                    } else if stick.0 & !self.pad_stick[0].0 & Buttons::LEFT.0 != 0 {
                         self.nav_activate(-1, _el);
-                    } else if stick.0 & !self.pad_stick.0 & Buttons::RIGHT.0 != 0 {
+                    } else if stick.0 & !self.pad_stick[0].0 & Buttons::RIGHT.0 != 0 {
                         self.nav_activate(1, _el);
                     }
                 }
-                self.pad_stick = stick;
+                self.pad_stick[0] = stick;
             }
             UserEvent::RomLoadFailed(why) => {
                 self.loading = false;
@@ -1369,6 +1489,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::Focused(false) => {
                 self.input.clear();
+                self.input2.clear();
                 self.touch.clear();
                 self.rewinding = false;
                 // Cortina de notificações, diálogo, outro app: pausa em vez de correr às cegas
@@ -1379,6 +1500,9 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
                 if !self.playing() {
+                    if self.pressed.is_none() && self.selected.is_some() {
+                        self.selected = None; // volta ao hover do mouse
+                    }
                     if self.pressed.is_some() {
                         self.menu_drag(MOUSE_ID, position.x as f32, position.y as f32, el);
                     }
@@ -1492,6 +1616,7 @@ impl ApplicationHandler<UserEvent> for App {
     fn suspended(&mut self, _el: &ActiveEventLoop) {
         self.flush_save();
         self.input.clear();
+        self.input2.clear();
         self.touch.clear();
         self.rewinding = false;
         self.save_config();
