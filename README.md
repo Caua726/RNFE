@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 36 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 39 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 
@@ -117,6 +117,7 @@ de ROMs recentes (reabrem sem o seletor).
 | 3 | CNROM | Arkanoid, Gradius |
 | 4 | MMC3 | Super Mario Bros. 3, Kirby's Adventure |
 | 5 | MMC5 (+ áudio, divisão vertical) | Castlevania III, Just Breed |
+| 6 / 8 / 17 | Copiadores FFE (F4/F3/F8) | dumps de copiador (87 de 109 do pack rodam) |
 | 7 | AxROM | Battletoads, Marble Madness |
 | 9 / 10 | MMC2 / MMC4 | Punch-Out!!, Fire Emblem, Famicom Wars |
 | 11 | Color Dreams | — |

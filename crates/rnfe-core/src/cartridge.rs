@@ -133,9 +133,10 @@ impl RomHeader {
             // UNROM 512 (30) tem 32 KB de CHR RAM; o resto, 8 KB
             chr_ram_len = if chr_len == 0 {
                 match mapper {
-                    30 => 32768, // UNROM 512
-                    28 => 32768, // Action 53
-                    13 => 16384, // CPROM: 4 páginas de 4 KB
+                    30 => 32768,         // UNROM 512
+                    28 => 32768,         // Action 53
+                    13 => 16384,         // CPROM: 4 páginas de 4 KB
+                    6 | 8 | 17 => 32768, // copiadores FFE: CHR RAM em bancos
                     _ => 8192,
                 }
             } else {

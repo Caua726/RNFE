@@ -19,6 +19,7 @@ pub mod camerica;
 pub mod cnrom;
 pub mod colordreams;
 pub mod dxrom;
+mod ffe;
 pub mod fme7;
 pub mod gxrom;
 pub mod h3001;
@@ -297,6 +298,7 @@ pub enum MapperKind {
     Mmc5(Box<mmc5::Mmc5>),
     Nina(simple::Nina),
     Nina001(simple::Nina001),
+    Ffe(ffe::Ffe),
     Cprom(simple::Cprom),
     Quattro(simple::Quattro),
     Rambo1(rambo1::Rambo1),
@@ -309,8 +311,8 @@ pub enum MapperKind {
 }
 
 pub const SUPPORTED_MAPPERS: &[u16] = &[
-    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69, 71, 79,
-    105, 113, 118, 119, 206, 227, 232,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 17, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69,
+    71, 79, 105, 113, 118, 119, 206, 227, 232,
 ];
 
 impl MapperKind {
@@ -323,6 +325,9 @@ impl MapperKind {
             3 => MapperKind::Cnrom(cnrom::Cnrom::new()),
             4 => MapperKind::Mmc3(mmc3::Mmc3::new(data)),
             7 => MapperKind::Axrom(axrom::Axrom::new()),
+            6 => MapperKind::Ffe(ffe::Ffe::new(ffe::FfeKind::F4, data)),
+            8 => MapperKind::Ffe(ffe::Ffe::new(ffe::FfeKind::F3, data)),
+            17 => MapperKind::Ffe(ffe::Ffe::new(ffe::FfeKind::F8, data)),
             9 => MapperKind::Mmc2(mmc2::Mmc2::new()),
             10 => MapperKind::Mmc2(mmc2::Mmc2::new_mmc4()),
             11 => MapperKind::ColorDreams(colordreams::ColorDreams::new()),
@@ -379,6 +384,7 @@ impl MapperKind {
             MapperKind::Mmc5(_) => "MMC5",
             MapperKind::Nina(_) => "NINA-03/06",
             MapperKind::Nina001(_) => "NINA-001",
+            MapperKind::Ffe(m) => m.name(),
             MapperKind::Cprom(_) => "CPROM",
             MapperKind::Quattro(_) => "Camerica Quattro",
             MapperKind::Rambo1(_) => "Tengen RAMBO-1",
@@ -420,6 +426,7 @@ macro_rules! dispatch {
             MapperKind::Mmc5($m) => $e,
             MapperKind::Nina($m) => $e,
             MapperKind::Nina001($m) => $e,
+            MapperKind::Ffe($m) => $e,
             MapperKind::Cprom($m) => $e,
             MapperKind::Quattro($m) => $e,
             MapperKind::Rambo1($m) => $e,
