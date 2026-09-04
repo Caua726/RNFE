@@ -93,6 +93,8 @@ pub struct GpuState {
     overlay: Layer,
     /// Onde a imagem do NES ficou na janela (px): x, y, w, h — para o layout de toque.
     pub viewport: (f32, f32, f32, f32),
+    /// Nome e API do adaptador (diagnóstico).
+    adapter_info: String,
     /// Múltiplos inteiros de 256×240 (pixels quadrados) em vez de preencher com aspecto 8:7.
     integer_scale: bool,
     /// 0 = nítido, 1 = suave, 2 = scanlines.
@@ -105,9 +107,28 @@ pub struct GpuState {
 }
 
 impl GpuState {
+    /// Cria o contexto. `backends` restringe a API (no Android o driver Vulkan de alguns
+    /// aparelhos apresenta em preto; o GLES é o caminho mais compatível).
     pub async fn new(window: Arc<Window>) -> Result<GpuState, String> {
+        // Android: tenta GLES primeiro; se falhar, o padrão (Vulkan). Nos outros, o padrão.
+        #[cfg(target_os = "android")]
+        {
+            match Self::with_backends(window.clone(), wgpu::Backends::GL).await {
+                Ok(g) => return Ok(g),
+                Err(e) => log::warn!("GLES indisponível ({e}); tentando Vulkan"),
+            }
+        }
+        Self::with_backends(window, wgpu::Backends::all()).await
+    }
+
+    /// Nome e API do adaptador em uso (para o aviso de diagnóstico).
+    pub fn adapter_info(&self) -> String {
+        self.adapter_info.clone()
+    }
+
+    async fn with_backends(window: Arc<Window>, backends: wgpu::Backends) -> Result<GpuState, String> {
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
         let surface = instance.create_surface(window.clone()).map_err(|e| format!("surface: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -137,7 +158,9 @@ impl GpuState {
             .map_err(|e| format!("device: {e}"))?;
         // Erro de validação (ex.: swapchain na rotação) vira log, não panic
         device.on_uncaptured_error(Box::new(|e| log::error!("wgpu: {e}")));
-        log::info!("GPU: {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+        let info = adapter.get_info();
+        let adapter_info = format!("{} · {:?}", info.name, info.backend);
+        log::info!("GPU: {adapter_info}");
 
         let caps = surface.get_capabilities(&adapter);
         // A paleta do NES e o overlay já são bytes sRGB compostos em gamma (ui::blend): sem sRGB
@@ -261,6 +284,7 @@ impl GpuState {
         );
         let viewport = Self::calc_viewport(config.width, config.height, false, false);
         Ok(GpuState {
+            adapter_info,
             integer_scale: false,
             filter: 0,
             overscan: false,
