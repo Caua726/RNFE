@@ -27,17 +27,12 @@ struct Xform {
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-    // Quad como 2 triângulos: (0,1,2) = BL,BR,TR e (3,4,5) = BL,TR,TL. Os cantos saem de
-    // aritmética com o índice, sem array local: drivers móveis (Mali/Adreno) já devolveram lixo
-    // ao indexar um array<> de função com vertex_index e o 2º triângulo sumia (metade da tela
-    // preta na diagonal).
-    let t = idx % 3u;
-    var c = t; // canto: 0 = BL, 1 = BR, 2 = TR, 3 = TL
-    if idx >= 3u {
-        c = t * 2u - u32(t == 2u);
-    }
-    let x = f32(((c + 1u) >> 1u) & 1u);
-    let y = f32(c >> 1u);
+    // Dois triângulos: (0,0)(1,0)(1,1) e (0,0)(1,1)(0,1). Os cantos saem de dois bitmaps, sem
+    // array local, sem `%` e sem conversão de bool: drivers móveis já devolveram lixo com cada
+    // uma dessas construções e a tela ficou preta.
+    let i = min(idx, 5u);
+    let x = f32((22u >> i) & 1u); // 0b010110
+    let y = f32((52u >> i) & 1u); // 0b110100
     var out: VertexOutput;
     out.pos = vec4(vec2(x, y) * 2.0 - 1.0, 0.0, 1.0);
     out.pos = vec4(out.pos.xy * xform.scale.xy + xform.scale.zw, 0.0, 1.0);
@@ -474,7 +469,9 @@ impl GpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        // Não é preto de propósito: com o fundo visível dá para saber se o
+                        // render pass rodou quando o resto não aparece.
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.02, g: 0.06, b: 0.10, a: 1.0 }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
