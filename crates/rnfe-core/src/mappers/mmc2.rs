@@ -1,4 +1,6 @@
-//! Mapper 009 (MMC2, Punch-Out!!): CHR trocado por latches disparados pela leitura de tiles.
+//! Mappers 009 (MMC2, Punch-Out!!) e 010 (MMC4, Fire Emblem, Famicom Wars): CHR trocado por
+//! latches disparados pela leitura de tiles. A diferença é a PRG: o MMC2 comuta 8 KB em `$8000`
+//! e fixa os três últimos bancos; o MMC4 comuta 16 KB e fixa os últimos 16 KB.
 use super::{CartData, Mapper};
 use crate::cartridge::Mirror;
 
@@ -8,11 +10,35 @@ pub struct Mmc2 {
     prg_bank: u8,
     chr_banks: [u8; 4],
     latch: [u8; 2],
+    /// MMC4 (mapper 10): PRG em bancos de 16 KB e latches decodificados por faixa.
+    mmc4: bool,
 }
 
 impl Mmc2 {
     pub fn new() -> Self {
-        Mmc2 { prg_bank: 0, chr_banks: [0; 4], latch: [0xFE, 0xFE] }
+        Mmc2 { prg_bank: 0, chr_banks: [0; 4], latch: [0xFE, 0xFE], mmc4: false }
+    }
+
+    pub fn new_mmc4() -> Self {
+        Mmc2 { mmc4: true, ..Mmc2::new() }
+    }
+
+    pub fn name(&self) -> &'static str {
+        if self.mmc4 { "MMC4" } else { "MMC2" }
+    }
+
+    fn bank_offset(&self, addr: u16, data: &CartData) -> usize {
+        if self.mmc4 {
+            let bank = if addr < 0xC000 { self.prg_bank as usize } else { data.prg_16k().saturating_sub(1) };
+            return bank * 0x4000 + (addr & 0x3FFF) as usize;
+        }
+        let bank = match addr {
+            0x8000..=0x9FFF => self.prg_bank as usize,
+            0xA000..=0xBFFF => data.prg_8k().saturating_sub(3),
+            0xC000..=0xDFFF => data.prg_8k().saturating_sub(2),
+            _ => data.prg_8k().saturating_sub(1),
+        };
+        bank * 0x2000 + (addr & 0x1FFF) as usize
     }
 }
 
@@ -25,29 +51,11 @@ impl Default for Mmc2 {
 impl Mapper for Mmc2 {
     #[inline]
     fn prg_offset(&self, addr: u16, data: &CartData) -> Option<usize> {
-        if addr < 0x8000 {
-            return None;
-        }
-        let bank = match addr {
-            0x8000..=0x9FFF => self.prg_bank as usize,
-            0xA000..=0xBFFF => data.prg_8k().saturating_sub(3),
-            0xC000..=0xDFFF => data.prg_8k().saturating_sub(2),
-            _ => data.prg_8k().saturating_sub(1),
-        };
-        Some(bank * 0x2000 + (addr & 0x1FFF) as usize)
+        (addr >= 0x8000).then(|| self.bank_offset(addr, data))
     }
 
     fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
-        if addr < 0x8000 {
-            return None;
-        }
-        let bank = match addr {
-            0x8000..=0x9FFF => self.prg_bank as usize,
-            0xA000..=0xBFFF => data.prg_8k().saturating_sub(3),
-            0xC000..=0xDFFF => data.prg_8k().saturating_sub(2),
-            _ => data.prg_8k().saturating_sub(1),
-        };
-        Some(data.prg_at(bank * 0x2000 + (addr & 0x1FFF) as usize))
+        (addr >= 0x8000).then(|| data.prg_at(self.bank_offset(addr, data)))
     }
 
     fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
@@ -83,8 +91,11 @@ impl Mapper for Mmc2 {
 
     fn ppu_read(&mut self, addr: u16, data: &CartData) -> u8 {
         let v = data.chr_at(self.chr_offset(addr));
-        // Os latches mudam DEPOIS da leitura do tile $FD/$FE
+        // Os latches mudam DEPOIS da leitura do tile $FD/$FE. O MMC4 decodifica a faixa
+        // inteira ($0FD8-$0FDF); o MMC2, só o endereço exato.
         match addr {
+            0x0FD8..=0x0FDF if self.mmc4 => self.latch[0] = 0xFD,
+            0x0FE8..=0x0FEF if self.mmc4 => self.latch[0] = 0xFE,
             0x0FD8 => self.latch[0] = 0xFD,
             0x0FE8 => self.latch[0] = 0xFE,
             0x1FD8..=0x1FDF => self.latch[1] = 0xFD,
@@ -101,6 +112,12 @@ impl Mapper for Mmc2 {
     }
 
     fn state_string(&self) -> String {
-        format!("  MMC2 PRG: {}  CHR: {:?}  latches: {:02X?}\n", self.prg_bank, self.chr_banks, self.latch)
+        format!(
+            "  {} PRG: {}  CHR: {:?}  latches: {:02X?}\n",
+            if self.mmc4 { "MMC4" } else { "MMC2" },
+            self.prg_bank,
+            self.chr_banks,
+            self.latch
+        )
     }
 }

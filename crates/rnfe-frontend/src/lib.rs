@@ -13,6 +13,7 @@ pub mod pacer;
 pub mod rewind;
 pub mod save_manager;
 pub mod touch;
+pub mod zip;
 
 pub use audio_ring::AudioRing;
 pub use config::{Config, RecentRom};

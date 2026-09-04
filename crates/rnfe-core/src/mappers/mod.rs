@@ -309,8 +309,8 @@ pub enum MapperKind {
 }
 
 pub const SUPPORTED_MAPPERS: &[u16] = &[
-    0, 1, 2, 3, 4, 5, 7, 9, 11, 13, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69, 71, 79, 105,
-    113, 118, 119, 206, 227, 232,
+    0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 13, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69, 71, 79,
+    105, 113, 118, 119, 206, 227, 232,
 ];
 
 impl MapperKind {
@@ -324,6 +324,7 @@ impl MapperKind {
             4 => MapperKind::Mmc3(mmc3::Mmc3::new(data)),
             7 => MapperKind::Axrom(axrom::Axrom::new()),
             9 => MapperKind::Mmc2(mmc2::Mmc2::new()),
+            10 => MapperKind::Mmc2(mmc2::Mmc2::new_mmc4()),
             11 => MapperKind::ColorDreams(colordreams::ColorDreams::new()),
             // 34 é ambíguo: com CHR ROM é NINA-001, com CHR RAM é BNROM
             34 if !data.chr_is_ram && data.chr.len() > 8192 => MapperKind::Nina001(simple::Nina001::new()),
@@ -359,7 +360,7 @@ impl MapperKind {
             MapperKind::Cnrom(_) => "CNROM",
             MapperKind::Mmc3(_) => "MMC3",
             MapperKind::Axrom(_) => "AxROM",
-            MapperKind::Mmc2(_) => "MMC2",
+            MapperKind::Mmc2(m) => m.name(),
             MapperKind::ColorDreams(_) => "Color Dreams",
             MapperKind::Bnrom(_) => "BNROM",
             MapperKind::Gxrom(_) => "GxROM",

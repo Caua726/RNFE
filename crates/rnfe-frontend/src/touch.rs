@@ -183,6 +183,24 @@ impl TouchLayout {
     }
 
     /// Retângulos onde o sistema não deve capturar gestos de borda (Android): d-pad e A/B.
+    /// Faixa vertical (px) que os controles ocupam: quem desenha limpa só essas linhas.
+    pub fn vertical_span(&self) -> (f32, f32) {
+        let mut lo = f32::MAX;
+        let mut hi = 0.0f32;
+        for (a, b) in [
+            (self.dpad.cy - self.dpad.r * 1.2, self.dpad.cy + self.dpad.r * 1.2),
+            (self.a.cy - self.a.r * 1.4, self.a.cy + self.a.r * 1.4),
+            (self.b.cy - self.b.r * 1.4, self.b.cy + self.b.r * 1.4),
+            (self.start.y, self.start.y + self.start.h),
+            (self.select.y, self.select.y + self.select.h),
+            (self.menu.y, self.menu.y + self.menu.h),
+        ] {
+            lo = lo.min(a);
+            hi = hi.max(b);
+        }
+        (lo.max(0.0), hi.max(lo))
+    }
+
     pub fn gesture_exclusion(&self) -> [Rect; 2] {
         let d = &self.dpad;
         let reach = d.r * 1.3;

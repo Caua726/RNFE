@@ -53,6 +53,10 @@ fn friendly_rom_error(name: &str, e: &rnfe_core::RomError) -> String {
     }
 }
 
+/// Tamanho da miniatura guardada com cada save state (tela ÷ 4).
+const THUMB_W: usize = rnfe_core::SCREEN_W / 4;
+const THUMB_H: usize = rnfe_core::SCREEN_H / 4;
+
 /// Velocidade do turbo.
 const TURBO: f64 = 4.0;
 /// Frames que "Voltar 5 s" desfaz.
@@ -151,6 +155,10 @@ pub struct App {
     confirm_esc: bool,
     /// O áudio estava mudo no frame anterior (rewind, turbo ou volume 0).
     was_muted: bool,
+    /// Faixas do overlay desenhadas no último frame de jogo (limpas no próximo).
+    overlay_spans: Vec<(f32, f32)>,
+    /// O último overlay desenhado foi um menu (tela inteira pintada).
+    overlay_menu: bool,
     /// Para onde o arrasto atual está travado (decidido no primeiro movimento).
     drag: Drag,
     /// Navegação de menu pedida pelo gamepad, consumida em `about_to_wait`.
@@ -237,6 +245,8 @@ impl App {
             save_error_shown: false,
             confirm_esc: false,
             was_muted: false,
+            overlay_spans: Vec::new(),
+            overlay_menu: true,
             drag: Drag::Undecided,
             nav_queue: Vec::new(),
             last_touch_buttons: Buttons::NONE,
@@ -487,6 +497,11 @@ impl App {
     /// `store`: guardar os bytes em `roms/<hash>.nes` (ROM nova); reabrir dos recentes só
     /// reordena a lista.
     fn load_rom_bytes(&mut self, name: String, bytes: Vec<u8>, store: bool) {
+        // Packs de ROM vêm zipados: abre o primeiro .nes de dentro em vez de recusar o arquivo
+        let (name, bytes) = match rnfe_frontend::zip::extract_nes(&bytes) {
+            Some((inner, data)) => (inner, data),
+            None => (name, bytes),
+        };
         match crate::load_rom_bytes(&bytes) {
             Ok(nes) => {
                 let hash = nes.cartridge().rom_hash();
@@ -495,8 +510,8 @@ impl App {
                 self.toast(menu::display_name(&name).to_string());
                 self.install_nes(nes, name);
             }
-            Err(rnfe_core::RomError::BadMagic) if bytes.starts_with(b"PK\x03\x04") => {
-                self.toast_error(format!("{name} é um .zip: extraia o .nes antes de abrir"))
+            Err(rnfe_core::RomError::BadMagic) if bytes.starts_with(rnfe_frontend::zip::MAGIC) => {
+                self.toast_error(format!("{name} é um .zip sem nenhuma ROM .nes dentro"))
             }
             Err(e) => self.toast_error(friendly_rom_error(&name, &e)),
         }
@@ -568,8 +583,35 @@ impl App {
         let data = self.nes.as_ref().map(|n| n.save_state()).unwrap_or_default();
         match self.storage.write(&key, &data) {
             Ok(()) => self.toast(format!("State salvo no slot {slot}")),
-            Err(e) => self.toast(format!("Erro: {e}")),
+            Err(e) => self.toast_error(format!("Não consegui salvar o state: {e}")),
         }
+        // Miniatura ao lado do slot: a tela reduzida 4x, em índices de paleta (7,5 KB)
+        if let Some(nes) = self.nes.as_ref() {
+            let src = nes.framebuffer_indexed();
+            let mut thumb = Vec::with_capacity(THUMB_W * THUMB_H * 2);
+            for y in 0..THUMB_H {
+                for x in 0..THUMB_W {
+                    let i = (y * 4) * rnfe_core::SCREEN_W + x * 4;
+                    thumb.extend_from_slice(&src[i].to_le_bytes());
+                }
+            }
+            let _ = self.storage.write(&format!("{key}.thumb"), &thumb);
+        }
+    }
+
+    /// Miniatura de um slot, em RGBA já pronto para desenhar.
+    fn slot_thumb(&self, slot: u8) -> Option<Vec<u8>> {
+        let key = format!("{}.thumb", self.state_key(slot)?);
+        let raw = self.storage.read(&key)?;
+        if raw.len() != THUMB_W * THUMB_H * 2 {
+            return None;
+        }
+        let mut rgba = Vec::with_capacity(THUMB_W * THUMB_H * 4);
+        for px in raw.chunks_exact(2) {
+            let idx = u16::from_le_bytes([px[0], px[1]]) as usize;
+            rgba.extend_from_slice(&rnfe_core::ppu::PALETTE_RGBA[idx & 0x1FF]);
+        }
+        Some(rgba)
     }
 
     fn load_state(&mut self, slot: u8) {
@@ -979,6 +1021,23 @@ impl App {
                 continue;
             }
             self.ui.draw_item(&mut fb, w, h, &it, &layout, hot, &theme);
+            // Miniatura do slot à direita da linha (só na tela de states, slots preenchidos)
+            if self.screen == Screen::States {
+                if let ItemKind::Slot { filled: true } = it.kind {
+                    let slot = (i as u8) + 1;
+                    if let Some(rgba) = self.slot_thumb(slot) {
+                        let th = it.rect.h * 0.78;
+                        let tw = th * THUMB_W as f32 / THUMB_H as f32;
+                        let dst = Rect {
+                            x: it.rect.x + it.rect.w - tw - layout.radius,
+                            y: it.rect.y + (it.rect.h - th) / 2.0,
+                            w: tw,
+                            h: th,
+                        };
+                        ui::draw_image(&mut fb, w, h, &dst, &rgba, THUMB_W as u32, THUMB_H as u32);
+                    }
+                }
+            }
         }
         if scroll > 0.0 {
             // conteúdo rolado passa por baixo do cabeçalho: faixa opaca + título de novo
@@ -1070,8 +1129,43 @@ impl App {
 
         if self.screen != Screen::Playing || self.nes.is_none() {
             self.draw_menu(w, h);
+            self.overlay_menu = true;
+            self.overlay_spans.clear();
         } else {
-            self.overlay.fill(0);
+            // Jogando, o overlay só tem controles de toque, selo, toast e debug: limpar a tela
+            // toda (10 MB num celular) a cada aperto de botão era o grosso do custo.
+            let mut spans: Vec<(f32, f32)> = Vec::new();
+            if touch_visible {
+                spans.push(self.touch_layout.vertical_span());
+            }
+            if self.status_badge().is_some() {
+                let vy = self.gpu.as_ref().map_or(0.0, |g| g.viewport.1);
+                spans.push((vy, vy + 40.0 * s));
+            }
+            if show_toast {
+                spans.push((h as f32 - 90.0 * s, h as f32));
+            }
+            if self.debug_overlay {
+                spans.push((0.0, 130.0 * s));
+            }
+            // Também limpa o que foi desenhado no frame anterior (toast que sumiu, controles que
+            // mudaram de lugar); vindo de um menu, a tela inteira estava pintada.
+            let mut to_clear = spans.clone();
+            if self.overlay_menu {
+                to_clear.push((0.0, h as f32));
+                self.overlay_menu = false;
+            } else {
+                to_clear.extend(self.overlay_spans.iter().copied());
+            }
+            self.overlay_spans = spans;
+            let row = (w * 4) as usize;
+            for (y0, y1) in to_clear {
+                let a = (y0.max(0.0) as u32).min(h) as usize * row;
+                let b = (y1.max(0.0).ceil() as u32).min(h) as usize * row;
+                if b > a {
+                    self.overlay[a..b].fill(0);
+                }
+            }
             if touch_visible {
                 let pressed = self.touch.buttons();
                 let (op, hc) = (self.config.touch_opacity, self.config.high_contrast);

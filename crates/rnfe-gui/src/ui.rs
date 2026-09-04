@@ -410,6 +410,30 @@ fn fill_circle(fb: &mut [u8], w: u32, h: u32, c: &Circle, color: [u8; 4]) {
     }
 }
 
+/// Desenha uma imagem RGBA (`src`, `sw`×`sh`) esticada dentro de `dst`, com borda escura.
+/// Vizinho mais próximo: são miniaturas de 64×60, ampliar suave só borraria.
+pub fn draw_image(fb: &mut [u8], w: u32, h: u32, dst: &Rect, src: &[u8], sw: u32, sh: u32) {
+    if src.len() < (sw * sh * 4) as usize || dst.w < 1.0 || dst.h < 1.0 {
+        return;
+    }
+    let border = Rect { x: dst.x - 1.0, y: dst.y - 1.0, w: dst.w + 2.0, h: dst.h + 2.0 };
+    fill_round_rect(fb, w, h, &border, 2.0, [0, 0, 0, 220]);
+    let (x0, y0) = (dst.x.max(0.0) as i32, dst.y.max(0.0) as i32);
+    let (x1, y1) = (((dst.x + dst.w) as i32).min(w as i32), ((dst.y + dst.h) as i32).min(h as i32));
+    for py in y0..y1 {
+        let v = ((py as f32 - dst.y) / dst.h * sh as f32) as u32;
+        let v = v.min(sh - 1);
+        for px in x0..x1 {
+            let u = ((px as f32 - dst.x) / dst.w * sw as f32) as u32;
+            let u = u.min(sw - 1);
+            let si = ((v * sw + u) * 4) as usize;
+            let di = ((py as u32 * w + px as u32) * 4) as usize;
+            let c = [src[si], src[si + 1], src[si + 2], 255];
+            fb[di..di + 4].copy_from_slice(&c);
+        }
+    }
+}
+
 /// Fundo (tela inicial / pausa), já premultiplicado pelo alpha.
 pub fn clear(fb: &mut [u8], color: [u8; 4]) {
     let a = color[3] as u32;
