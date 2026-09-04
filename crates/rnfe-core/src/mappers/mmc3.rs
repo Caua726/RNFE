@@ -183,6 +183,18 @@ impl Mapper for Mmc3 {
         Some(crate::cartridge::NtSource::Ciram((self.regs[reg] >> 7) & 1))
     }
 
+    /// Mesmo mapa para escritas (aqui `nt_source` não tem efeito colateral).
+    fn nt_dest(&self, addr: u16, _data: &CartData) -> Option<crate::cartridge::NtSource> {
+        if !self.txsrom {
+            return None;
+        }
+        // TxSROM: nametable de cada quadrante = bit 7 do registrador de CHR que cobre a
+        // mesma posição em $0000-$0FFF (modo normal) — regs 0,0,1,1 ou 2,3,4,5 com A12 invertido
+        let q = (addr >> 10) as usize & 3;
+        let reg = if self.bank_select & 0x80 == 0 { [0, 0, 1, 1][q] } else { [2, 3, 4, 5][q] };
+        Some(crate::cartridge::NtSource::Ciram((self.regs[reg] >> 7) & 1))
+    }
+
     fn a12_rise(&mut self) {
         let before = self.irq_counter;
         if before == 0 || self.irq_reload {

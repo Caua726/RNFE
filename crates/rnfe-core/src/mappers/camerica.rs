@@ -1,6 +1,7 @@
 //! Mapper 071 (Camerica/Codemasters): 16 KB comutáveis em `$8000` (registrador em `$C000-$FFFF`),
 //! último banco fixo em `$C000`.
 use super::{CartData, Mapper};
+use crate::cartridge::Mirror;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Default)]
@@ -24,12 +25,18 @@ impl Mapper for Camerica {
         }
     }
 
-    fn cpu_write(&mut self, addr: u16, val: u8, _data: &mut CartData) -> bool {
-        if addr >= 0xC000 {
-            self.prg_bank = val & 0x0F;
-            true
-        } else {
-            false
+    fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
+        match addr {
+            // BF9097 (Fire Hawk): mirroring de uma tela pelo bit 4
+            0x9000..=0x9FFF => {
+                data.mirror = if val & 0x10 != 0 { Mirror::OneScreenHi } else { Mirror::OneScreenLo };
+                true
+            }
+            0xC000..=0xFFFF => {
+                self.prg_bank = val & 0x0F;
+                true
+            }
+            _ => false,
         }
     }
 

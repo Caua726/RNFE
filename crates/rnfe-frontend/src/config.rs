@@ -88,7 +88,10 @@ overscan={}
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else { continue };
             let (k, v) = (k.trim(), v.trim());
-            let f = |cur: f32, lo: f32, hi: f32| v.parse::<f32>().map(|x| x.clamp(lo, hi)).unwrap_or(cur);
+            // NaN sobrevive ao clamp e depois estoura no layout de toque: só valores finitos
+            let f = |cur: f32, lo: f32, hi: f32| {
+                v.parse::<f32>().ok().filter(|x| x.is_finite()).map_or(cur, |x| x.clamp(lo, hi))
+            };
             let b = |cur: bool| match v {
                 "true" | "1" => true,
                 "false" | "0" => false,
@@ -159,6 +162,10 @@ pub fn push_recent(storage: &mut dyn Storage, hash: u64, name: &str, bytes: Opti
     let name: String =
         name.chars().map(|c| if c == '\t' || c == '\n' || c == '\r' { ' ' } else { c }).collect();
     list.insert(0, RecentRom { hash, name });
+    // ROMs que saíram da lista não podem ficar ocupando espaço (na web é a cota do navegador)
+    for old in list.iter().skip(RECENT_MAX) {
+        let _ = storage.remove(&RecentRom::rom_key(old.hash));
+    }
     list.truncate(RECENT_MAX);
     let text: String = list.iter().map(|r| format!("{:016x}\t{}\n", r.hash, r.name)).collect();
     if let Err(e) = storage.write(RECENT_KEY, text.as_bytes()) {

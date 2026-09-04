@@ -475,6 +475,20 @@ impl Mapper for Mmc5 {
         false
     }
 
+    /// Destino de uma **escrita** em nametable, sem os efeitos colaterais de `nt_source` (que
+    /// conta leituras da PPU para achar a scanline: uma escrita da CPU no vblank fazia o
+    /// contador andar sozinho e o IRQ escorregar de frame).
+    fn nt_dest(&self, addr: u16, _data: &CartData) -> Option<NtSource> {
+        let addr = addr & 0x0FFF;
+        let quadrant = (addr >> 10) as usize;
+        Some(match (self.nt_map >> (quadrant * 2)) & 3 {
+            0 => NtSource::Ciram(0),
+            1 => NtSource::Ciram(1),
+            2 => NtSource::Value(0), // ExRAM já tratada em `nt_write`
+            _ => NtSource::Value(0), // fill mode: escrita não vai a lugar nenhum
+        })
+    }
+
     fn wants_cpu_clock(&self) -> bool {
         true
     }
@@ -513,6 +527,10 @@ impl Mapper for Mmc5 {
     }
 
     #[inline]
+    fn has_audio(&self) -> bool {
+        true
+    }
+
     fn audio_output(&self) -> f32 {
         pulse_mix(self.pulse1.output() + self.pulse2.output()) + self.pcm as f32 / 255.0 * 0.4
     }

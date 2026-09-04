@@ -21,7 +21,7 @@ impl Mapper for Cnrom {
 
     fn cpu_write(&mut self, addr: u16, val: u8, _data: &mut CartData) -> bool {
         if addr >= 0x8000 {
-            self.chr_bank = val & 0x03;
+            self.chr_bank = val; // a máscara do cartucho já limita (há ROMs com 64-128 KB)
             true
         } else {
             false

@@ -21,6 +21,8 @@ pub struct Bus {
     pub cpu_cycles: u64,
     /// O mapper quer `cpu_clock` a cada ciclo (lido uma vez do cartucho).
     mapper_clock: bool,
+    /// O cartucho tem áudio próprio (some na média por ciclo em vez de amostrar por ponto).
+    cart_audio: bool,
     /// Página pedida por `$4014`; a CPU consome no próximo ciclo de leitura.
     oam_dma_page: Option<u8>,
     /// Último valor no barramento de dados (lido em endereços não mapeados).
@@ -35,6 +37,7 @@ impl Bus {
     pub fn new(cartridge: Cartridge) -> Bus {
         Bus {
             mapper_clock: cartridge.wants_cpu_clock(),
+            cart_audio: cartridge.has_audio(),
             ppu: Ppu::new(),
             apu: Apu::new(),
             cartridge,
@@ -55,8 +58,10 @@ impl Bus {
     pub fn tick_pre(&mut self) {
         // A APU avança antes do acesso: uma leitura de $4015 vê o mesmo estado que a linha IRQ
         // amostrada no fim deste ciclo.
-        let cart = &self.cartridge;
-        self.apu.clock(|| cart.audio_output());
+        // O áudio do cartucho entra na mesma média por ciclo da 2A03: amostrar só no instante
+        // da amostra (1 em ~37 ciclos) enchia de aliasing os canais do VRC6/N163/MMC5/5B.
+        let exp = if self.cart_audio { self.cartridge.audio_output() } else { 0.0 };
+        self.apu.clock(exp);
         for _ in 0..DOTS_BEFORE_ACCESS {
             self.ppu.step(&mut self.cartridge);
         }

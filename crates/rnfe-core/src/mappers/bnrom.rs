@@ -25,7 +25,7 @@ impl Mapper for Bnrom {
 
     fn cpu_write(&mut self, addr: u16, val: u8, _data: &mut CartData) -> bool {
         if addr >= 0x8000 {
-            self.prg_bank = val & 0x03;
+            self.prg_bank = val; // 256 KB existem (a máscara do cartucho limita)
             true
         } else {
             false

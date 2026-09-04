@@ -49,6 +49,8 @@ pub struct CartData {
     pub chr: Vec<u8>,
     pub prg_ram: Vec<u8>,
     prg_mask: usize,
+    /// Tamanho real da PRG (antes do preenchimento até potência de 2).
+    prg_len: usize,
     chr_mask: usize,
     prg_ram_mask: usize,
     /// Tamanho real (antes do padding), em bancos de 16 KB / 8 KB.
@@ -78,11 +80,13 @@ impl CartData {
         let prg_ram_len = hdr.prg_ram_len.min(64 * 1024);
         let prg_banks = (prg.len() / 16384) as u16;
         let chr_banks = if chr_is_ram { 0 } else { (chr.len() / 8192) as u16 };
+        let prg_len = prg.len();
         let prg = pad_pow2(prg);
         let chr = pad_pow2(chr);
         let prg_ram = vec![0u8; prg_ram_len.next_power_of_two().max(8192)];
         CartData {
             prg_mask: prg.len() - 1,
+            prg_len,
             chr_mask: chr.len() - 1,
             prg_ram_mask: prg_ram.len() - 1,
             prg,
@@ -154,16 +158,18 @@ impl CartData {
         self.prg_ram_dirty = true;
     }
 
-    /// Número de bancos de 16 KB de PRG (≥ 1).
+    /// Número de bancos de 16 KB de PRG (≥ 1), pelo tamanho **real** da ROM. Os mappers usam
+    /// isto para o "último banco fixo": com o tamanho preenchido, uma ROM que não é potência de
+    /// 2 apontaria para a repetição do começo e o vetor de reset saía errado.
     #[inline]
     pub fn prg_16k(&self) -> usize {
-        (self.prg.len() / 16384).max(1)
+        (self.prg_len / 16384).max(1)
     }
 
-    /// Número de bancos de 8 KB de PRG (≥ 1).
+    /// Número de bancos de 8 KB de PRG (≥ 1), pelo tamanho real.
     #[inline]
     pub fn prg_8k(&self) -> usize {
-        (self.prg.len() / 8192).max(1)
+        (self.prg_len / 8192).max(1)
     }
 }
 
@@ -220,7 +226,14 @@ pub trait Mapper {
     fn nt_source(&mut self, _addr: u16, _data: &CartData) -> Option<NtSource> {
         None
     }
-    /// Escrita em nametable tratada pelo mapper (ExRAM do MMC5). `false` = seguir `nt_source`.
+    /// Para onde vai uma **escrita** em nametable que `nt_write` não absorveu. Separado de
+    /// `nt_source` porque aquele pode ter efeito colateral (o MMC5 conta leituras da PPU para
+    /// achar a scanline, e escrita da CPU não é leitura).
+    #[inline]
+    fn nt_dest(&self, _addr: u16, _data: &CartData) -> Option<NtSource> {
+        None
+    }
+    /// Escrita em nametable tratada pelo mapper (ExRAM do MMC5). `false` = seguir `nt_dest`.
     fn nt_write(&mut self, _addr: u16, _val: u8, _data: &mut CartData) -> bool {
         false
     }
@@ -243,6 +256,10 @@ pub trait Mapper {
     /// Saída de áudio de expansão (somada ao mix da APU), em [-1, 1].
     fn audio_output(&self) -> f32 {
         0.0
+    }
+    /// O cartucho gera áudio (o bus soma `audio_output` a cada ciclo; sem isto, nem chama).
+    fn has_audio(&self) -> bool {
+        false
     }
     fn reset(&mut self, data: &mut CartData);
     fn state_string(&self) -> String {
@@ -272,6 +289,7 @@ pub enum MapperKind {
     N163(n163::N163),
     Mmc5(Box<mmc5::Mmc5>),
     Nina(simple::Nina),
+    Nina001(simple::Nina001),
     Cprom(simple::Cprom),
     Quattro(simple::Quattro),
     Rambo1(rambo1::Rambo1),
@@ -300,6 +318,8 @@ impl MapperKind {
             7 => MapperKind::Axrom(axrom::Axrom::new()),
             9 => MapperKind::Mmc2(mmc2::Mmc2::new()),
             11 => MapperKind::ColorDreams(colordreams::ColorDreams::new()),
+            // 34 é ambíguo: com CHR ROM é NINA-001, com CHR RAM é BNROM
+            34 if !data.chr_is_ram && data.chr.len() > 8192 => MapperKind::Nina001(simple::Nina001::new()),
             34 => MapperKind::Bnrom(bnrom::Bnrom::new()),
             66 => MapperKind::Gxrom(gxrom::Gxrom::new()),
             69 => MapperKind::Fme7(fme7::Fme7::new()),
@@ -350,6 +370,7 @@ impl MapperKind {
             MapperKind::N163(_) => "Namco 163",
             MapperKind::Mmc5(_) => "MMC5",
             MapperKind::Nina(_) => "NINA-03/06",
+            MapperKind::Nina001(_) => "NINA-001",
             MapperKind::Cprom(_) => "CPROM",
             MapperKind::Quattro(_) => "Camerica Quattro",
             MapperKind::Rambo1(_) => "Tengen RAMBO-1",
@@ -390,6 +411,7 @@ macro_rules! dispatch {
             MapperKind::N163($m) => $e,
             MapperKind::Mmc5($m) => $e,
             MapperKind::Nina($m) => $e,
+            MapperKind::Nina001($m) => $e,
             MapperKind::Cprom($m) => $e,
             MapperKind::Quattro($m) => $e,
             MapperKind::Rambo1($m) => $e,
@@ -442,6 +464,10 @@ impl Mapper for MapperKind {
         dispatch!(self, m => m.nt_source(addr, data))
     }
     #[inline]
+    fn nt_dest(&self, addr: u16, data: &CartData) -> Option<NtSource> {
+        dispatch!(self, m => m.nt_dest(addr, data))
+    }
+
     fn nt_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
         dispatch!(self, m => m.nt_write(addr, val, data))
     }
@@ -461,6 +487,10 @@ impl Mapper for MapperKind {
         dispatch!(self, m => m.irq_pending())
     }
     #[inline]
+    fn has_audio(&self) -> bool {
+        dispatch!(self, m => m.has_audio())
+    }
+
     fn audio_output(&self) -> f32 {
         dispatch!(self, m => m.audio_output())
     }

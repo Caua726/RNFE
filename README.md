@@ -125,7 +125,7 @@ de ROMs recentes (reabrem sem o seletor).
 | 24 / 26 | VRC6 (+ áudio) | Akumajou Densetsu, Madara |
 | 28 | Action 53 | multicarts homebrew |
 | 30 | UNROM 512 | homebrew (Twin Dragons, Lizard) |
-| 34 | BNROM | Deadly Towers |
+| 34 | BNROM / NINA-001 | Deadly Towers, Impossible Mission 2 |
 | 64 | RAMBO-1 | Klax, Skull & Crossbones |
 | 65 | Irem H3001 | Daiku no Gen-san 2, Spartan X 2 |
 | 66 | GxROM | Dragon Ball, Doraemon |

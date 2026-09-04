@@ -87,10 +87,12 @@ const fn build_palette() -> [[u8; 4]; 512] {
         let emph = (i >> 6) & 7; // bit0 = vermelho, bit1 = verde, bit2 = azul
         let mut c = [base[0] as u32, base[1] as u32, base[2] as u32];
         if emph != 0 {
+            // Cada bit de ênfase realça o seu canal atenuando os OUTROS dois (~0,746). Com os
+            // três ligados a imagem inteira escurece — truque usado por vários jogos.
             let mut ch = 0;
             while ch < 3 {
-                if emph & (1 << ch) == 0 {
-                    c[ch] = c[ch] * 215 / 256;
+                if emph & !(1 << ch) & 7 != 0 {
+                    c[ch] = c[ch] * 191 / 256;
                 }
                 ch += 1;
             }
@@ -605,7 +607,12 @@ impl Ppu {
                     cart.data.ppu_sprite_fetch = false;
                 }
                 2..=257 => {
-                    self.fetch_tile(cart);
+                    // Com o render desligado a PPU não busca nada no barramento: quem observa
+                    // (MMC5 conta leituras iguais de nametable, MMC2/MMC4 têm latches) via
+                    // eventos que no hardware não existem.
+                    if self.rendering {
+                        self.fetch_tile(cart);
+                    }
                     if c == 65 {
                         if self.scanline >= 0 && self.rendering {
                             // Avaliação de sprites da próxima linha (o hardware faz entre os
@@ -658,9 +665,11 @@ impl Ppu {
                     if c == 321 {
                         cart.data.ppu_sprite_fetch = false;
                     }
-                    self.fetch_tile(cart);
+                    if self.rendering {
+                        self.fetch_tile(cart);
+                    }
                 }
-                338 | 340 => {
+                338 | 340 if self.rendering => {
                     self.bg_next_tile_id = self.vram_read(0x2000 | (self.vram_addr & 0x0FFF), cart);
                 }
                 _ => {}

@@ -134,7 +134,9 @@ impl Mapper for N163 {
             0xF800..=0xFFFF => {
                 self.ram_addr = val;
                 // $F800 = $4x: bits 0-3 protegem cada bloco de 2 KB da PRG RAM
-                self.ram_protect = if val & 0xF0 == 0x40 { val & 0x0F } else { 0 };
+                // escrita só é liberada com o nibble alto == 0100 (estava invertido: qualquer
+                // outro valor destravava e podia corromper o .sav de Famista/Megami Tensei 2)
+                self.ram_protect = if val & 0xF0 == 0x40 { val & 0x0F } else { 0x0F };
             }
             _ => return false,
         }
@@ -189,6 +191,16 @@ impl Mapper for N163 {
         })
     }
 
+    /// Mesmo mapa para escritas (aqui `nt_source` não tem efeito colateral).
+    fn nt_dest(&self, addr: u16, _data: &CartData) -> Option<NtSource> {
+        let r = self.banks[8 + ((addr >> 10) as usize & 3)];
+        Some(if r >= 0xE0 {
+            NtSource::Ciram(r & 1)
+        } else {
+            NtSource::Chr(r as usize * 0x0400 + (addr & 0x03FF) as usize)
+        })
+    }
+
     fn wants_cpu_clock(&self) -> bool {
         true
     }
@@ -219,6 +231,10 @@ impl Mapper for N163 {
     }
 
     #[inline]
+    fn has_audio(&self) -> bool {
+        true
+    }
+
     fn audio_output(&self) -> f32 {
         if self.sound_disabled {
             return 0.0;

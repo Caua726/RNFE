@@ -137,3 +137,57 @@ impl Mapper for Quattro {
         self.bank = 0;
     }
 }
+
+/// Mapper 034 (AVE NINA-001): PRG de 32 KB e CHR em duas metades de 4 KB, com os registradores
+/// **na PRG RAM** (`$7FFD`/`$7FFE`/`$7FFF`). O mesmo número iNES serve à BNROM (CHR RAM): quem
+/// tem CHR ROM é NINA-001.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Default)]
+pub struct Nina001 {
+    prg: u8,
+    chr: [u8; 2],
+}
+
+impl Nina001 {
+    pub fn new() -> Self {
+        Nina001::default()
+    }
+}
+
+impl Mapper for Nina001 {
+    #[inline]
+    fn cpu_read(&self, addr: u16, data: &CartData) -> Option<u8> {
+        if addr >= 0x8000 {
+            Some(data.prg_at(self.prg as usize * 0x8000 + (addr & 0x7FFF) as usize))
+        } else {
+            None
+        }
+    }
+
+    fn cpu_write(&mut self, addr: u16, val: u8, data: &mut CartData) -> bool {
+        match addr {
+            0x7FFD => self.prg = val & 0x01,
+            0x7FFE => self.chr[0] = val & 0x0F,
+            0x7FFF => self.chr[1] = val & 0x0F,
+            _ => return false,
+        }
+        // os registradores também ficam na RAM (o jogo lê de volta)
+        data.prg_ram_set((addr & 0x1FFF) as usize, val);
+        true
+    }
+
+    #[inline]
+    fn chr_offset(&self, addr: u16) -> usize {
+        let half = (addr >> 12) as usize & 1;
+        self.chr[half] as usize * 0x1000 + (addr & 0x0FFF) as usize
+    }
+
+    fn manages_prg_ram(&self) -> bool {
+        false
+    }
+
+    fn reset(&mut self, _data: &mut CartData) {
+        self.prg = 0;
+        self.chr = [0, 1];
+    }
+}

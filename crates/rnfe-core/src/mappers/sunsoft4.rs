@@ -94,6 +94,22 @@ impl Mapper for Sunsoft4 {
         Some(NtSource::Chr(self.nt[which] as usize * 0x0400 + (addr & 0x03FF) as usize))
     }
 
+    /// Mesmo mapa para escritas (aqui `nt_source` não tem efeito colateral).
+    fn nt_dest(&self, addr: u16, data: &CartData) -> Option<NtSource> {
+        if !self.chr_nametables() {
+            return None;
+        }
+        // qual das duas nametables (A/B) o quadrante usa, pelo mirroring atual
+        let q = (addr >> 10) as usize & 3;
+        let which = match data.mirror {
+            Mirror::Vertical => q & 1,
+            Mirror::Horizontal => q >> 1,
+            Mirror::OneScreenLo => 0,
+            _ => 1,
+        };
+        Some(NtSource::Chr(self.nt[which] as usize * 0x0400 + (addr & 0x03FF) as usize))
+    }
+
     fn reset(&mut self, data: &mut CartData) {
         *self = Sunsoft4::new(data);
     }

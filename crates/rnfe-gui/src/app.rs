@@ -149,6 +149,8 @@ pub struct App {
     save_error_shown: bool,
     /// Esc na tela inicial aguardando o 2º Esc (desktop).
     confirm_esc: bool,
+    /// O áudio estava mudo no frame anterior (rewind, turbo ou volume 0).
+    was_muted: bool,
     /// Para onde o arrasto atual está travado (decidido no primeiro movimento).
     drag: Drag,
     /// Navegação de menu pedida pelo gamepad, consumida em `about_to_wait`.
@@ -234,6 +236,7 @@ impl App {
             input2: InputState::new(),
             save_error_shown: false,
             confirm_esc: false,
+            was_muted: false,
             drag: Drag::Undecided,
             nav_queue: Vec::new(),
             last_touch_buttons: Buttons::NONE,
@@ -387,7 +390,8 @@ impl App {
     fn prime_audio(&self) {
         if let Some(a) = &self.audio {
             a.ring.clear();
-            a.ring.prime(AudioOut::TARGET_QUEUE / 2);
+            a.ring.prime(AudioOut::TARGET_QUEUE);
+            // (o `clear` marca o ponto do descarte: o silêncio primado depois dele sobrevive)
         }
     }
 
@@ -433,7 +437,7 @@ impl App {
                 if let Some(n) = self.nes.as_mut() {
                     n.set_sample_rate(a.sample_rate);
                 }
-                a.ring.prime(AudioOut::TARGET_QUEUE / 2);
+                a.ring.prime(AudioOut::TARGET_QUEUE);
                 self.audio = Some(a);
                 self.audio_failed_at = None;
             }
@@ -878,6 +882,14 @@ impl App {
             self.fps_counter += 1;
         }
         let muted = self.rewinding || self.turbo || self.config.volume <= 0.0;
+        if self.was_muted && !muted {
+            // voltar do rewind/turbo com a fila vazia dava engasgo: reenche com silêncio
+            if let Some(a) = &self.audio {
+                a.ring.clear();
+                a.ring.prime(AudioOut::TARGET_QUEUE);
+            }
+        }
+        self.was_muted = muted;
         let volume = self.config.volume;
         match &self.audio {
             Some(a) if !muted => {
@@ -889,10 +901,11 @@ impl App {
                     }
                     a.ring.push_capped(samples, AudioOut::TARGET_QUEUE * 2);
                 });
-                // Controle fino da taxa: o relógio do DAC e o do pacer divergem um pouco; puxa
-                // a taxa da APU em ±0,5 % conforme a fila está acima/abaixo do alvo.
-                let fill = a.ring.len() as f32 / AudioOut::TARGET_QUEUE as f32;
-                let adj = 1.0 + 0.005 * (fill - 1.0).clamp(-1.0, 1.0);
+                // Controle fino da taxa: o relógio do DAC e o do pacer divergem um pouco.
+                // Fila abaixo do alvo = produzir MAIS (taxa maior); acima = produzir menos.
+                // (com o sinal trocado a realimentação vira positiva e a fila esvazia sempre)
+                let err = a.ring.len() as f32 / AudioOut::TARGET_QUEUE as f32 - 1.0;
+                let adj = if err.abs() < 0.05 { 1.0 } else { 1.0 - 0.005 * err.clamp(-1.0, 1.0) };
                 nes.set_sample_rate((a.sample_rate as f32 * adj) as u32);
             }
             _ => nes.take_audio(|_| {}),
@@ -1272,7 +1285,7 @@ impl App {
                     }
                 }
             },
-            KeyCode::KeyO => self.open_rom(),
+            KeyCode::KeyO if !self.playing() => self.open_rom(),
             KeyCode::KeyR => {
                 if self.playing() {
                     // só vale enquanto o aviso está na tela: um R perdido não arma um reset eterno
@@ -1296,7 +1309,9 @@ impl App {
                 }
             }
             KeyCode::F5 => self.save_state(1),
-            KeyCode::F12 => self.screenshot(),
+            KeyCode::F12 if cfg!(not(any(target_os = "android", target_arch = "wasm32"))) => {
+                self.screenshot()
+            }
             KeyCode::F7 => self.load_state(1),
             KeyCode::F6 => {
                 if let Some(n) = &self.nes {
@@ -1433,7 +1448,30 @@ impl ApplicationHandler<UserEvent> for App {
                 .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
             attrs = attrs.with_canvas(canvas).with_prevent_default(true).with_focusable(true);
         }
-        let window = Arc::new(el.create_window(attrs).expect("janela"));
+        let window = match el.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                // sem janela não há o que fazer, mas morrer com panic/abort não ajuda ninguém
+                log::error!("janela: {e}");
+                self.gpu_error = Some(format!("não consegui abrir a janela: {e}"));
+                el.exit();
+                return;
+            }
+        };
+        // Na web o winit grava a largura/altura em px no style do canvas, o que anula o
+        // `100vw/100dvh` da página: tira o style inline e deixa o CSS mandar.
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            if let Some(c) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id("rnfe"))
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = c.style().remove_property("width");
+                let _ = c.style().remove_property("height");
+            }
+        }
         self.window = Some(window.clone());
         self.dpi = window.scale_factor() as f32;
         log::info!("janela {}x{} @{:.2}", window.inner_size().width, window.inner_size().height, self.dpi);

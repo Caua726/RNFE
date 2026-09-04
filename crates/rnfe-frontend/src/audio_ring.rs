@@ -3,6 +3,10 @@
 //! Sem `unsafe` e sem `Mutex`: cada slot é um `AtomicU32` com os bits do `f32`, e os índices
 //! são `AtomicUsize` com ordem acquire/release. Um único produtor e um único consumidor.
 //! Em underrun o consumidor repete a última amostra (menos estalo que silêncio).
+//!
+//! `head` só é escrito pelo consumidor: descartar amostras (limpar ou limitar a latência) é um
+//! **pedido** do produtor (`flush`/`trim`) aplicado pelo consumidor no `pop` seguinte. Escrever
+//! `head` das duas pontas dava estalo quando a limpeza caía no meio de um `pop`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -10,10 +14,17 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 pub struct AudioRing {
     slots: Box<[AtomicU32]>,
     mask: usize,
-    head: AtomicUsize, // próximo a ler
+    head: AtomicUsize, // próximo a ler (só o consumidor escreve)
     tail: AtomicUsize, // próximo a escrever
     last: AtomicU32,
     underruns: AtomicUsize,
+    /// Geração de "descarte tudo" pedida pelo produtor; o consumidor confirma em `flush_ack`.
+    flush: AtomicUsize,
+    flush_ack: AtomicUsize,
+    /// Posição do `tail` quando o descarte foi pedido (o que vier depois é mantido).
+    flush_at: AtomicUsize,
+    /// Teto de amostras acumuladas: acima disso o consumidor pula as mais antigas.
+    trim: AtomicUsize,
 }
 
 impl AudioRing {
@@ -28,6 +39,10 @@ impl AudioRing {
             tail: AtomicUsize::new(0),
             last: AtomicU32::new(0),
             underruns: AtomicUsize::new(0),
+            flush: AtomicUsize::new(0),
+            flush_ack: AtomicUsize::new(0),
+            flush_at: AtomicUsize::new(0),
+            trim: AtomicUsize::new(usize::MAX),
         })
     }
 
@@ -61,10 +76,12 @@ impl AudioRing {
 
     /// Escreve só o que couber abaixo de `max_len` amostras na fila (o excesso — o mais novo —
     /// é descartado). Só o produtor toca nos índices dele: mantém o SPSC.
+    /// Escreve tudo que couber e limita a latência **descartando o passado** (o consumidor
+    /// aplica): jogar fora as amostras novas abriria um buraco no meio da onda.
     pub fn push_capped(&self, samples: &[f32], max_len: usize) -> usize {
-        let room = max_len.saturating_sub(self.len());
-        let n = samples.len().min(room);
-        self.push(&samples[..n])
+        let n = self.push(samples);
+        self.trim_to(max_len);
+        n
     }
 
     /// Enche com silêncio até `n` amostras: partida/retomada absorvem o jitter do laço sem
@@ -83,6 +100,22 @@ impl AudioRing {
     pub fn pop(&self, out: &mut [f32]) {
         let tail = self.tail.load(Ordering::Acquire);
         let mut head = self.head.load(Ordering::Relaxed);
+        // pedidos do produtor, aplicados aqui (só esta ponta escreve `head`)
+        let flush = self.flush.load(Ordering::Acquire);
+        if flush != self.flush_ack.load(Ordering::Relaxed) {
+            self.flush_ack.store(flush, Ordering::Relaxed);
+            let at = self.flush_at.load(Ordering::Acquire);
+            // só o que existia quando o descarte foi pedido: o silêncio primado logo depois
+            // (prime_audio) precisa sobreviver, senão a fila volta a zero e estala
+            if tail.wrapping_sub(at) <= tail.wrapping_sub(head) {
+                head = at;
+            }
+        }
+        let trim = self.trim.load(Ordering::Relaxed);
+        let ahead = tail.wrapping_sub(head);
+        if ahead > trim {
+            head = head.wrapping_add(ahead - trim); // joga fora o passado, não o presente
+        }
         let avail = tail.wrapping_sub(head);
         let n = out.len().min(avail);
         let mut last = f32::from_bits(self.last.load(Ordering::Relaxed));
@@ -103,18 +136,15 @@ impl AudioRing {
         }
     }
 
-    /// Descarta tudo (troca de ROM, pausa).
+    /// Pede ao consumidor que descarte tudo (troca de ROM, pausa). Vale no próximo `pop`.
     pub fn clear(&self) {
-        self.head.store(self.tail.load(Ordering::Acquire), Ordering::Release);
+        self.flush_at.store(self.tail.load(Ordering::Acquire), Ordering::Release);
+        self.flush.fetch_add(1, Ordering::Release);
     }
 
-    /// Descarta amostras antigas até sobrar `keep` (controle de latência).
+    /// Teto de latência: o consumidor pula as amostras antigas acima de `keep`.
     pub fn trim_to(&self, keep: usize) {
-        let len = self.len();
-        if len > keep {
-            let head = self.head.load(Ordering::Relaxed);
-            self.head.store(head.wrapping_add(len - keep), Ordering::Release);
-        }
+        self.trim.store(keep, Ordering::Relaxed);
     }
 
     pub fn underruns(&self) -> usize {
@@ -163,12 +193,12 @@ mod tests {
         assert_eq!(r.len(), 10);
         r.prime(4);
         assert_eq!(r.len(), 10, "prime nunca descarta");
-        assert_eq!(r.push_capped(&[1.0; 20], 16), 6, "só até o teto");
-        assert_eq!(r.len(), 16);
+        // o teto vale ao ler: entra tudo, o consumidor pula o passado
+        r.push_capped(&[1.0; 20], 16);
         let mut out = [0.0; 16];
         r.pop(&mut out);
-        assert_eq!(&out[..10], &[0.0; 10]);
-        assert_eq!(&out[10..], &[1.0; 6]);
+        assert_eq!(out, [1.0; 16], "sobra o áudio mais novo, não o mais velho");
+        assert!(r.is_empty());
     }
 
     #[test]
@@ -181,6 +211,8 @@ mod tests {
         assert_eq!(out, [4.0, 5.0]);
         r.push(&[7.0]);
         r.clear();
+        let mut out = [9.0; 1];
+        r.pop(&mut out); // o descarte pedido é aplicado aqui, do lado do consumidor
         assert!(r.is_empty());
     }
 

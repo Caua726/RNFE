@@ -72,6 +72,10 @@ pub fn mirror_nametable(addr: u16, mirror: Mirror) -> (usize, usize) {
 /// Limite de bom senso para cada ROM (o maior cartucho licenciado tem 1 MB; 64 MB cobre
 /// qualquer multicart e o tamanho exponencial do NES 2.0 sem estourar o `usize` do wasm).
 const MAX_ROM: usize = 64 << 20;
+/// Quanto pode faltar no fim de um dump antes de recusar a ROM: um punhado de bytes (bit de
+/// trainer setado por engano, corte no fim do arquivo) é comum nos packs; falta grande é ROM
+/// errada.
+const MAX_MISSING: usize = 4096;
 
 /// O que o header diz, já decodificado (iNES 1 ou NES 2.0).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,7 +112,7 @@ impl RomHeader {
         };
         let mut mapper = ((h[7] & 0xF0) | (h[6] >> 4)) as u16;
         let mut submapper = 0;
-        let (prg_len, chr_len, prg_ram_len, chr_ram_len);
+        let (prg_len, chr_len, mut prg_ram_len, chr_ram_len);
         if nes2 {
             mapper |= ((h[8] & 0x0F) as u16) << 8;
             submapper = h[8] >> 4;
@@ -127,7 +131,25 @@ impl RomHeader {
             chr_len = h[5] as usize * 8192;
             prg_ram_len = if h[8] == 0 { 8192 } else { h[8] as usize * 8192 };
             // UNROM 512 (30) tem 32 KB de CHR RAM; o resto, 8 KB
-            chr_ram_len = if chr_len == 0 { if mapper == 30 { 32768 } else { 8192 } } else { 0 };
+            chr_ram_len = if chr_len == 0 {
+                match mapper {
+                    30 => 32768, // UNROM 512
+                    28 => 32768, // Action 53
+                    13 => 16384, // CPROM: 4 páginas de 4 KB
+                    _ => 8192,
+                }
+            } else {
+                0
+            };
+            // O byte 8 do iNES 1 quase nunca é preenchido: dimensiona a PRG RAM pela placa
+            // (MMC1 SOROM/SXROM chega a 32 KB, MMC5 a 64 KB; sobra não atrapalha).
+            if h[8] == 0 {
+                prg_ram_len = match mapper {
+                    5 => 64 * 1024,
+                    1 => 32 * 1024,
+                    _ => prg_ram_len,
+                };
+            }
         }
         if prg_len == 0 {
             return Err(RomError::BadHeader("ROM sem PRG"));
@@ -171,6 +193,7 @@ pub struct Cartridge {
     mapper: MapperKind,
     rom_hash: u64,
     wants_cpu_clock: bool,
+    has_audio: bool,
     /// PRG RAM padrão em `$6000-$7FFF` quando o mapper não trata o endereço.
     prg_ram_fallback: bool,
     /// O mapper tem efeito colateral em leituras da CPU (MMC5 `$5204`, N163 `$4800`).
@@ -193,9 +216,21 @@ impl Cartridge {
         }
         let mut offset = 16 + if hdr.trainer { 512 } else { 0 };
         let expected = offset + hdr.prg_len + hdr.chr_len;
-        if buffer.len() < expected {
+        let missing = expected.saturating_sub(buffer.len());
+        if missing > MAX_MISSING || missing * 8 > expected {
             return Err(RomError::Truncated { expected, got: buffer.len() });
         }
+        // Dumps a que faltam alguns bytes (ou com o bit de trainer setado por engano) são comuns
+        // nos packs: completa com $FF em vez de recusar a ROM inteira.
+        let mut rest = vec![0xFFu8; missing];
+        if !rest.is_empty() {
+            log::warn!("ROM truncada em {} bytes: completando com $FF", rest.len());
+        }
+        let mut full = buffer.to_vec();
+        full.append(&mut rest);
+        let buffer: &[u8] = &full;
+        // Trainer: 512 bytes que o copiador punha em $7000-$71FF da PRG RAM
+        let trainer = if hdr.trainer { Some(buffer[16..528].to_vec()) } else { None };
         let prg = buffer[offset..offset + hdr.prg_len].to_vec();
         offset += hdr.prg_len;
         let (chr, chr_is_ram) = if hdr.chr_len > 0 {
@@ -218,10 +253,17 @@ impl Cartridge {
         );
 
         let mut data = CartData::new(prg, chr, chr_is_ram, &hdr);
+        if let Some(t) = trainer {
+            let end = (0x1000 + t.len()).min(data.prg_ram.len());
+            if end > 0x1000 {
+                data.prg_ram[0x1000..end].copy_from_slice(&t[..end - 0x1000]);
+            }
+        }
         let mut mapper =
             MapperKind::create(hdr.mapper, &data).ok_or(RomError::UnsupportedMapper(hdr.mapper))?;
         mapper.reset(&mut data);
         let wants_cpu_clock = mapper.wants_cpu_clock();
+        let has_audio = mapper.has_audio();
         let prg_ram_fallback = !mapper.manages_prg_ram();
         let read_hook = mapper.has_read_hook();
         let mut cart = Cartridge {
@@ -232,6 +274,7 @@ impl Cartridge {
             mapper,
             rom_hash,
             wants_cpu_clock,
+            has_audio,
             prg_ram_fallback,
             chr_cache: [0; 8],
             nt_cache: [NtSource::Ciram(0); 4],
@@ -385,7 +428,7 @@ impl Cartridge {
         if self.mapper.nt_write(addr, val, &mut self.data) {
             return;
         }
-        match self.mapper.nt_source(addr, &self.data) {
+        match self.mapper.nt_dest(addr, &self.data) {
             None => {
                 let (nt, off) = mirror_nametable(addr, self.get_mirror());
                 ciram[nt][off] = val;
@@ -445,6 +488,11 @@ impl Cartridge {
     #[inline]
     pub fn irq_pending(&self) -> bool {
         self.irq
+    }
+
+    /// O cartucho tem canal de áudio próprio.
+    pub fn has_audio(&self) -> bool {
+        self.has_audio
     }
 
     /// Áudio de expansão do cartucho, em [-1, 1].

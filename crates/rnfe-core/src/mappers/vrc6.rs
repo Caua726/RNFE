@@ -310,6 +310,10 @@ impl Mapper for Vrc6 {
     }
 
     #[inline]
+    fn has_audio(&self) -> bool {
+        true
+    }
+
     fn audio_output(&self) -> f32 {
         (self.pulse1.output() as f32 + self.pulse2.output() as f32) * 0.0095
             + self.saw.output() as f32 * 0.0066

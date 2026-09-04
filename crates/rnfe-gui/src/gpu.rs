@@ -120,7 +120,9 @@ impl GpuState {
         // A paleta do NES e o overlay já são bytes sRGB compostos em gamma (ui::blend): sem sRGB
         // na superfície nem nas texturas eles passam intactos e o blend premultiplicado do
         // overlay acontece no mesmo espaço em que foi calculado.
-        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+        // superfície incompatível com o adaptador devolve listas vazias (indexar seria panic)
+        let first = *caps.formats.first().ok_or("a GPU não suporta esta superfície")?;
+        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(first);
         let tex_format = if format.is_srgb() {
             wgpu::TextureFormat::Rgba8UnormSrgb
         } else {
@@ -132,7 +134,7 @@ impl GpuState {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: caps.alpha_modes[0],
+            alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };

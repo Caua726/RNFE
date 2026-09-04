@@ -173,6 +173,10 @@ impl Mapper for Fme7 {
     }
 
     #[inline]
+    fn has_audio(&self) -> bool {
+        true
+    }
+
     fn audio_output(&self) -> f32 {
         self.audio.output()
     }

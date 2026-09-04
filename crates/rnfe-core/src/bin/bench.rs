@@ -89,7 +89,7 @@ fn main() {
         let cycles = frames as u64 * 29_781;
         let t = Instant::now();
         for _ in 0..cycles {
-            nes.bus.apu.clock(|| 0.0);
+            nes.bus.apu.clock(0.0);
             if nes.bus.apu.sample_buffer.len() > 4096 {
                 nes.bus.apu.sample_buffer.clear();
             }

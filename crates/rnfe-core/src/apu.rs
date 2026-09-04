@@ -281,7 +281,9 @@ impl Triangle {
     fn clock_timer(&mut self) {
         if self.timer == 0 {
             self.timer = self.period;
-            if self.length.active() && self.linear_counter > 0 {
+            // period < 2 daria uma onda ultrassônica: congela o sequenciador (a saída fica no
+            // valor atual em vez de saltar para zero, que virava "pop")
+            if self.length.active() && self.linear_counter > 0 && self.period >= 2 {
                 self.sequence_pos = (self.sequence_pos + 1) & 31;
             }
         } else {
@@ -302,8 +304,9 @@ impl Triangle {
 
     #[inline]
     fn output(&self) -> u8 {
-        // Períodos ultrassônicos (< 2) só produzem pop: silencia
-        if self.period < 2 { 0 } else { TRIANGLE_TABLE[self.sequence_pos as usize] }
+        // Período ultrassônico (< 2): o hardware congela o sequenciador. Zerar a saída daria um
+        // degrau audível toda vez que um driver de música "cala" o triângulo assim.
+        TRIANGLE_TABLE[self.sequence_pos as usize]
     }
 }
 
@@ -455,6 +458,13 @@ impl Dmc {
 }
 
 /// Coeficiente de um passa-alta RC de 1ª ordem (`y = α·(y₋₁ + x − x₋₁)`) com corte `fc`.
+/// Passa-baixa de 1ª ordem: `alpha = dt / (RC + dt)`.
+fn lp_alpha(fc: f64, fs: f64) -> f32 {
+    let dt = 1.0 / fs.max(1.0);
+    let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
+    (dt / (rc + dt)) as f32
+}
+
 fn hp_alpha(fc: f64, fs: f64) -> f32 {
     let rc = 1.0 / (2.0 * std::f64::consts::PI * fc);
     let dt = 1.0 / fs.max(1.0);
@@ -534,6 +544,11 @@ pub struct Apu {
     // Filtros high-pass (NES tem dois: 90 Hz e 440 Hz); coeficientes dependem da taxa
     hp1_alpha: f32,
     hp2_alpha: f32,
+    /// Passa-baixa de 14 kHz da saída do console (estado transitório: fora do save state).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    lp_alpha: f32,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    lp_prev: f32,
     hp1_prev_in: f32,
     hp1_prev_out: f32,
     hp2_prev_in: f32,
@@ -571,6 +586,8 @@ impl Apu {
             acc_n: 0,
             hp1_alpha: hp_alpha(90.0, 44100.0),
             hp2_alpha: hp_alpha(440.0, 44100.0),
+            lp_alpha: lp_alpha(14_000.0, 44100.0),
+            lp_prev: 0.0,
             hp1_prev_in: 0.0,
             hp1_prev_out: 0.0,
             hp2_prev_in: 0.0,
@@ -609,6 +626,7 @@ impl Apu {
         self.sample_clock = 0.0;
         self.acc = 0.0;
         self.acc_n = 0;
+        self.lp_prev = 0.0;
         self.hp1_prev_in = 0.0;
         self.hp1_prev_out = 0.0;
         self.hp2_prev_in = 0.0;
@@ -620,6 +638,7 @@ impl Apu {
         self.sample_step = rate as f64 / CPU_HZ;
         self.hp1_alpha = hp_alpha(90.0, rate as f64);
         self.hp2_alpha = hp_alpha(440.0, rate as f64);
+        self.lp_alpha = lp_alpha(14_000.0, rate as f64);
     }
 
     /// Nível da linha IRQ da APU (frame counter ou DMC).
@@ -801,7 +820,7 @@ impl Apu {
     #[inline]
     /// Um ciclo de CPU. `expansion` é chamado só quando a APU gera uma amostra (~44 kHz) e
     /// devolve o áudio do cartucho (VRC6, N163, MMC5, 5B…), já na escala do mix da 2A03.
-    pub fn clock(&mut self, expansion: impl FnOnce() -> f32) {
+    pub fn clock(&mut self, expansion: f32) {
         self.cycle += 1;
 
         // --- frame counter
@@ -857,12 +876,12 @@ impl Apu {
         self.dmc.clock_timer();
 
         // --- amostragem: média das saídas de todos os ciclos desde a última amostra
-        self.acc += self.mix();
+        self.acc += self.mix() + expansion;
         self.acc_n += 1;
         self.sample_clock += self.sample_step;
         if self.sample_clock >= 1.0 {
             self.sample_clock -= 1.0;
-            let raw = self.acc / self.acc_n as f32 + expansion();
+            let raw = self.acc / self.acc_n as f32;
             self.acc = 0.0;
             self.acc_n = 0;
             // High-pass 1 (90 Hz)
@@ -873,7 +892,12 @@ impl Apu {
             let hp2 = self.hp2_alpha * (self.hp2_prev_out + hp1 - self.hp2_prev_in);
             self.hp2_prev_in = hp1;
             self.hp2_prev_out = hp2;
-            self.sample_buffer.push(hp2 * 0.8);
+            // Passa-baixa de 14 kHz: o console tem os três filtros; sem este o som sai mais
+            // áspero e o lixo acima de 14 kHz passa inteiro.
+            self.lp_prev += self.lp_alpha * (hp2 - self.lp_prev);
+            // Ganho: o pico real de um jogo fica em torno de −12 dBFS com 0,8; 2,0 aproxima o
+            // nível dos outros emuladores sem estourar (o clamp protege picos raros).
+            self.sample_buffer.push((self.lp_prev * 2.0).clamp(-1.0, 1.0));
         }
     }
 

@@ -79,8 +79,10 @@ impl TouchLayout {
         if portrait {
             let zone = h - img_bottom.clamp(0.0, h) - inset - m * 2.0;
             let want = unit * 0.17 * scale * 2.0 + unit * 0.06 * scale * 2.0 + m * 2.0;
-            if zone > 0.0 && zone < want {
-                fit = (zone / want).clamp(0.45, 1.0);
+            if want > 0.0 {
+                // sem piso: com pouca altura (tablet 4:3, dobrável) os controles precisam mesmo
+                // encolher, senão ficam desenhados fora da tela e nada responde ao toque
+                fit = (zone.max(0.0) / want).clamp(0.15, 1.0);
             }
         }
         let scale = scale * fit;
@@ -101,6 +103,8 @@ impl TouchLayout {
             let top = menu.y + menu.h + m;
             let bottom = py - m;
             let cy = (top + (bottom - top) * 0.55).clamp(top + dpad_r, (bottom - dpad_r).max(top + dpad_r));
+            // nunca abaixo da borda da tela (mesmo se a zona era pequena demais)
+            let cy = cy.min(h - inset - dpad_r).max(dpad_r);
             dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
             a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
             b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
@@ -173,7 +177,9 @@ impl TouchLayout {
     }
 
     pub fn special(&self, x: f32, y: f32) -> Option<Special> {
-        self.menu.contains(x, y).then_some(Special::Menu)
+        // mesma folga das outras pílulas: é o botão que abre o menu
+        let m = &self.menu;
+        m.contains_pad(x, y, m.w * 0.1, m.h * 0.5).then_some(Special::Menu)
     }
 
     /// Retângulos onde o sistema não deve capturar gestos de borda (Android): d-pad e A/B.
