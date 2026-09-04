@@ -25,4 +25,4 @@ pub use save_manager::SaveManager;
 pub use touch::{TouchLayout, TouchState};
 
 /// Frequência de quadros do NTSC (Hz).
-pub const NTSC_FPS: f64 = 60.098_814;
+pub use rnfe_core::NTSC_FPS;

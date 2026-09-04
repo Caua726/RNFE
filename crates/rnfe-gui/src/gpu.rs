@@ -7,8 +7,6 @@ use winit::window::Window;
 
 pub const NES_WIDTH: u32 = 256;
 pub const NES_HEIGHT: u32 = 240;
-/// Pixel do NES é 8:7 → imagem de 256 px "vale" 292,6 px de largura.
-pub const NES_ASPECT: f32 = (256.0 * 8.0 / 7.0) / 240.0;
 /// Uniform do overlay: quad inteiro, textura inteira.
 const OVERLAY_XFORM: [f32; 8] = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
 

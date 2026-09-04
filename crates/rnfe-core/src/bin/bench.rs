@@ -70,7 +70,7 @@ fn main() {
         "rom={name} frames={frames} wall={:.2}s fps={fps:.1} ns_frame={ns_frame:.0} ms_frame={:.3} realtime={:.1}x vmhwm_kb={} vmrss_kb={}→{} profile={}",
         wall.as_secs_f64(),
         ns_frame / 1e6,
-        fps / 60.0988,
+        fps / rnfe_core::NTSC_FPS,
         proc_status("VmHWM:").map_or("n/a".into(), |v| v.to_string()),
         rss_start.map_or("n/a".into(), |v| v.to_string()),
         proc_status("VmRSS:").map_or("n/a".into(), |v| v.to_string()),

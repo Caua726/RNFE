@@ -19,7 +19,7 @@ fn fs_storage_roundtrip_and_key_validation() {
     assert_eq!(st.read("sav/x.sav"), None);
     st.write("sav/x.sav", b"hello").unwrap();
     assert_eq!(st.read("sav/x.sav").as_deref(), Some(&b"hello"[..]));
-    assert!(!dir.join("sav/x.tmp").exists(), "tmp renomeado");
+    assert!(!dir.join("sav/x.sav.tmp").exists(), "tmp renomeado");
     st.write("sav/x.sav", b"bye").unwrap();
     assert_eq!(st.read("sav/x.sav").as_deref(), Some(&b"bye"[..]));
     assert!(st.write("../fora", b"x").is_err());

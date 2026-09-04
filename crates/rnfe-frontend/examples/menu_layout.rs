@@ -15,7 +15,6 @@ fn main() {
         _ => Screen::Paused,
     };
     let st = MenuState {
-        has_rom: true,
         rom_name: "jogo.nes".into(),
         turbo: false,
         can_quit: true,

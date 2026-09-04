@@ -40,18 +40,6 @@ pub const SECTIONS: &[(&str, &[Setting])] = &[
 ];
 
 impl Setting {
-    pub const ALL: [Setting; 9] = [
-        Setting::Volume,
-        Setting::IntegerScale,
-        Setting::Overscan,
-        Setting::TouchScale,
-        Setting::TouchOpacity,
-        Setting::TouchAlways,
-        Setting::Haptics,
-        Setting::TextScale,
-        Setting::HighContrast,
-    ];
-
     pub fn label(self) -> &'static str {
         match self {
             Setting::TouchScale => "Tamanho dos botões",
@@ -240,7 +228,6 @@ pub struct Layout {
 /// O que o menu precisa saber do aplicativo.
 #[derive(Debug, Clone, Default)]
 pub struct MenuState {
-    pub has_rom: bool,
     pub rom_name: String,
     pub turbo: bool,
     /// Há um botão "Sair" (desktop; web/Android não fecham por menu).
@@ -609,7 +596,6 @@ mod tests {
 
     fn state() -> MenuState {
         MenuState {
-            has_rom: true,
             rom_name: "jogo.nes".into(),
             turbo: false,
             can_quit: true,

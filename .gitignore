@@ -9,3 +9,6 @@
 /android/app/build/
 /android/app/src/main/jniLibs/
 /android/local.properties
+
+# o golden do teste de compatibilidade do save state é versionado
+!crates/rnfe-core/tests/golden/*.rnfs

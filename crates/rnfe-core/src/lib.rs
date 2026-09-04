@@ -23,6 +23,9 @@ pub mod storage;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod testing;
 
+/// Frames por segundo do NTSC (PPU a 5,369 MHz, 89 341,5 dots por frame).
+pub const NTSC_FPS: f64 = 60.098_814;
+
 pub use buttons::Buttons;
 pub use cartridge::{Cartridge, Mirror, RomError, RomHeader};
 pub use nes::Nes;

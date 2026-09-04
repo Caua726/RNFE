@@ -326,13 +326,6 @@ pub fn fill_rect(fb: &mut [u8], w: u32, h: u32, rx: i32, ry: i32, rw: i32, rh: i
     }
 }
 
-pub fn outline(fb: &mut [u8], w: u32, h: u32, x: i32, y: i32, bw: i32, bh: i32, color: [u8; 4]) {
-    fill_rect(fb, w, h, x, y, bw, 2, color);
-    fill_rect(fb, w, h, x, y + bh - 2, bw, 2, color);
-    fill_rect(fb, w, h, x, y, 2, bh, color);
-    fill_rect(fb, w, h, x + bw - 2, y, 2, bh, color);
-}
-
 fn fill_rect_f(fb: &mut [u8], w: u32, h: u32, x: f32, y: f32, rw: f32, rh: f32, color: [u8; 4]) {
     fill_rect(fb, w, h, x as i32, y as i32, rw as i32, rh as i32, color);
 }

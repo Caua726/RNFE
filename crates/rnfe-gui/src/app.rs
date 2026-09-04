@@ -570,7 +570,7 @@ impl App {
         self.toast(if steps == 0 {
             "Sem histórico".to_string()
         } else {
-            format!("Voltou {:.1} s", steps as f32 * Rewind::EVERY as f32 / 60.0)
+            format!("Voltou {:.1} s", steps as f32 * Rewind::EVERY as f32 / NTSC_FPS as f32)
         });
     }
 
@@ -584,7 +584,6 @@ impl App {
 
     fn menu_state(&self) -> MenuState {
         MenuState {
-            has_rom: self.nes.is_some(),
             rom_name: self.rom_name.clone(),
             turbo: self.turbo,
             can_quit: cfg!(not(any(target_arch = "wasm32", target_os = "android"))),
@@ -1265,7 +1264,7 @@ impl App {
             // dedo fora de item: pode virar rolagem
             self.pressed = Some((usize::MAX, id, x, y));
         }
-        if let Some((i, ..)) = self.pressed {
+        if let Some((i, ..)) = self.pressed.filter(|(i, ..)| *i != usize::MAX) {
             if matches!(layout.items[i].kind, ItemKind::Slider { .. }) {
                 if let Some(a) = menu::hit(&layout, x, y) {
                     self.act(a, el);
