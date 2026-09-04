@@ -9,9 +9,9 @@ Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
 sed -n '/^## Onde parei
-Tarefa: 2ª rodada de agentes (UX, "o que construir", código gui/frontend, Android entregues; problemas reais e compatibilidade ainda rodando; 8 caíram no limite da API) + lote de UX/Android aplicado
-Estado: check + clippy wasm/android → commit em main → CI → APK (testar no g56: diagonal preta, "Continuar · jogo", START+SELECT, tela apaga nos menus)
-Próximo: relatórios pendentes (problemas reais, compatibilidade); do agente Android: erro de GPU visível + retry com GL, áudio na taxa nativa (48 kHz) com foco de áudio, overlay em meia resolução, insets do recorte por JNI, exclusão de gesto ≤ 200 dp, predictive back (targetSdk 36); do UX: miniaturas nos slots, tela "Controles", indicador de rolagem, selo TURBO/rewind, GPU error na web; do "o que construir": .zip, filtros de vídeo, paleta, run-ahead, remapeamento, cheats, PWA offline
+Tarefa: relatórios dos agentes aplicados (UX, Android, UI, código) + fix VRC2/VRC4 + tela Controles
+Estado: 4 commits em main com CI verde; APK instalado no g56; check + clippy wasm/android verdes a cada lote
+Próximo: relatórios em curso (problemas reais, compatibilidade, áudio, performance em Opus); backlog restante: miniaturas nos slots, erro de GPU visível + retry GL, áudio na taxa nativa do aparelho, overlay em meia resolução, insets do recorte por JNI, .zip, filtros de vídeo, paleta, run-ahead, remapeamento, cheats, PWA offline
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):

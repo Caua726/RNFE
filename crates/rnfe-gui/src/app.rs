@@ -82,6 +82,8 @@ struct OverlayKey {
     pressed: Option<usize>,
     scroll: i32,
     selected: Option<usize>,
+    /// Selo no canto: turbo ou rebobinando.
+    badge: Option<&'static str>,
 }
 
 pub struct App {
@@ -305,6 +307,19 @@ impl App {
             .map(|g| g.size())
             .or_else(|| self.window.as_ref().map(|w| (w.inner_size().width, w.inner_size().height)))
             .unwrap_or((768, 720))
+    }
+
+    /// Texto do selo de estado mostrado sobre o jogo (nada em jogo normal).
+    fn status_badge(&self) -> Option<&'static str> {
+        if !self.playing() {
+            None
+        } else if self.rewinding {
+            Some("◀◀ voltando")
+        } else if self.turbo {
+            Some("TURBO 4x")
+        } else {
+            None
+        }
     }
 
     fn playing(&self) -> bool {
@@ -699,6 +714,7 @@ impl App {
                 self.set_screen(Screen::Playing);
             }
             Action::Settings => self.set_screen(Screen::Settings),
+            Action::Controls => self.set_screen(Screen::Controls),
             Action::Back => self.set_screen(if self.nes.is_some() { Screen::Paused } else { Screen::Start }),
             Action::Quit => {
                 self.flush_save();
@@ -1017,13 +1033,15 @@ impl App {
             pressed: self.pressed.map(|p| p.0),
             scroll: self.scroll as i32,
             selected: self.selected,
+            badge: self.status_badge(),
         };
         let dirty = self.overlay_key.as_ref() != Some(&key) || self.overlay_size != (w, h);
         let has_overlay = self.screen != Screen::Playing
             || self.nes.is_none()
             || touch_visible
             || self.debug_overlay
-            || show_toast;
+            || show_toast
+            || self.status_badge().is_some();
         if !dirty {
             let Some(gpu) = self.gpu.as_mut() else { return };
             let fb = self.nes.as_mut().map(|n| n.framebuffer());
@@ -1046,6 +1064,26 @@ impl App {
                 let (op, hc) = (self.config.touch_opacity, self.config.high_contrast);
                 let layout = self.touch_layout.clone();
                 self.ui.draw_touch_controls(&mut self.overlay, w, h, &layout, pressed, op, &theme, hc);
+            }
+            if let Some(text) = self.status_badge() {
+                // canto superior direito da imagem, para não cobrir o HUD do jogo
+                let size = 14.0 * s;
+                let tw = self.ui.text_width(text, size) as f32;
+                let pad = size * 0.5;
+                let (vx, vy, vw, _) = self.gpu.as_ref().map_or((0.0, 0.0, w as f32, 0.0), |g| g.viewport);
+                let r = Rect { x: vx + vw - tw - pad * 3.0, y: vy + pad, w: tw + pad * 2.0, h: size + pad };
+                ui::fill_round_rect(&mut self.overlay, w, h, &r, size * 0.35, [0, 0, 0, 170]);
+                let ty = self.ui.center_y(size, r.y + r.h * 0.5);
+                self.ui.draw_text(
+                    &mut self.overlay,
+                    w,
+                    h,
+                    text,
+                    size,
+                    (r.x + pad) as i32,
+                    ty,
+                    theme.accent_hot,
+                );
             }
             if self.debug_overlay {
                 if let Some(nes) = self.nes.as_ref() {
@@ -1217,7 +1255,9 @@ impl App {
             KeyCode::Escape => match self.screen {
                 Screen::Playing => self.set_screen(Screen::Paused),
                 Screen::Paused => self.set_screen(Screen::Playing),
-                Screen::Settings | Screen::Recents | Screen::States => self.act(Action::Back, el),
+                Screen::Settings | Screen::Recents | Screen::States | Screen::Controls => {
+                    self.act(Action::Back, el)
+                }
                 Screen::Start => {
                     if cfg!(not(any(target_arch = "wasm32", target_os = "android"))) || self.picker.is_some()
                     {

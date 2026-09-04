@@ -11,7 +11,9 @@ pub struct Vrc4 {
     /// Bits de endereço usados como A0 e A1 do registrador (ex.: VRC4a = A1,A2).
     a0: u16,
     a1: u16,
-    /// VRC2: CHR com 1 bit a menos (VRC2a desloca o banco) e sem IRQ.
+    /// VRC2 (sem IRQ e com o registrador de mirroring de 1 bit).
+    vrc2: bool,
+    /// VRC2a guarda o banco de CHR deslocado (a linha CHR A10 não é ligada).
     vrc2a: bool,
     prg: [u8; 2],
     swap: bool,
@@ -27,22 +29,30 @@ pub struct Vrc4 {
 
 impl Vrc4 {
     pub fn new(data: &CartData) -> Self {
-        // Permutações por mapper (as mais comuns; o submapper refina quando existe)
-        let (a0, a1, vrc2a) = match (data.mapper, data.submapper) {
-            (21, 2) => (0x04, 0x08, false), // VRC4c
-            (21, _) => (0x02, 0x04, false), // VRC4a
-            (22, _) => (0x02, 0x01, true),  // VRC2a (A0/A1 trocados, CHR >> 1)
-            (23, 3) => (0x04, 0x08, false), // VRC4e
-            (23, 2) => (0x02, 0x01, false), // VRC4f... (VRC2b compatível)
-            (23, _) => (0x01, 0x02, false), // VRC2b / VRC4f
-            (25, 2) => (0x08, 0x04, false), // VRC4d
-            (25, _) => (0x02, 0x01, false), // VRC4b
+        // Cada placa liga o registrador a um par de linhas de endereço diferente. Com o
+        // submapper (NES 2.0) sabemos qual é; sem ele, o jeito usado pelos emuladores é aceitar
+        // os dois pares do mesmo número iNES (máscara com os dois bits): quem escreve num
+        // endereço da outra variante acerta o mesmo registrador.
+        let (a0, a1, vrc2) = match (data.mapper, data.submapper) {
+            (21, 1) => (0x02, 0x04, false), // VRC4a: A1, A2
+            (21, 2) => (0x40, 0x80, false), // VRC4c: A6, A7
+            (21, _) => (0x02 | 0x40, 0x04 | 0x80, false),
+            (22, _) => (0x02, 0x01, true),  // VRC2a: A1, A0 (e CHR em 2 KB)
+            (23, 1) => (0x01, 0x02, false), // VRC4f: A0, A1
+            (23, 2) => (0x04, 0x08, false), // VRC4e: A2, A3
+            (23, 3) => (0x01, 0x02, true),  // VRC2b: A0, A1
+            (23, _) => (0x01 | 0x04, 0x02 | 0x08, false),
+            (25, 1) => (0x02, 0x01, false), // VRC4b: A1, A0
+            (25, 2) => (0x08, 0x04, false), // VRC4d: A3, A2
+            (25, 3) => (0x02, 0x01, true),  // VRC2c: A1, A0
+            (25, _) => (0x02 | 0x08, 0x01 | 0x04, false),
             _ => (0x01, 0x02, false),
         };
         Vrc4 {
             a0,
             a1,
-            vrc2a,
+            vrc2,
+            vrc2a: vrc2 && data.mapper == 22,
             prg: [0, 1],
             swap: false,
             chr: [0, 1, 2, 3, 4, 5, 6, 7],
@@ -57,7 +67,7 @@ impl Vrc4 {
     }
 
     pub fn is_vrc2(&self) -> bool {
-        self.vrc2a || self.a0 == 0x01 && self.a1 == 0x02 && false
+        self.vrc2
     }
 
     fn irq_clock(&mut self) {
@@ -106,9 +116,9 @@ impl Mapper for Vrc4 {
         match addr & 0xF000 {
             0x8000 => self.prg[0] = val & 0x1F,
             0x9000 => {
-                if r == 2 && !self.vrc2a {
+                if r == 2 && !self.vrc2 {
                     self.swap = val & 0x02 != 0;
-                } else if r < 2 || self.vrc2a {
+                } else if r < 2 || self.vrc2 {
                     data.mirror = match val & 0x03 {
                         0 => Mirror::Vertical,
                         1 => Mirror::Horizontal,
@@ -158,7 +168,7 @@ impl Mapper for Vrc4 {
     }
 
     fn wants_cpu_clock(&self) -> bool {
-        !self.vrc2a
+        !self.vrc2
     }
 
     #[inline]

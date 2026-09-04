@@ -15,6 +15,8 @@ pub enum Screen {
     Recents,
     /// Slots de save state (salvar ou carregar, conforme `MenuState::states_load`).
     States,
+    /// Lista de controles (teclado, gamepad, toque) — só leitura.
+    Controls,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +167,8 @@ pub enum Action {
     /// Volta ~5 s.
     Rewind,
     ToggleTurbo,
+    /// Abre a lista de controles.
+    Controls,
     /// Grava o frame atual em PNG no Storage (`shots/`).
     Screenshot,
     Settings,
@@ -353,7 +357,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             col.y = (h * 0.40).max(header_h);
             // Quem já jogou algo volta direto ao último jogo (o auto-state retoma de onde parou)
             let resume = if st.loading { None } else { st.recent.first() };
-            let rows = 2.0
+            let rows = 3.0
                 + (!st.recent.is_empty()) as u8 as f32
                 + resume.is_some() as u8 as f32
                 + st.can_quit as u8 as f32;
@@ -381,6 +385,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 );
             }
             col.push(&mut items, "Ajustes", Action::Settings, ItemKind::Button);
+            col.push(&mut items, "Controles", Action::Controls, ItemKind::Button);
             if st.can_quit {
                 col.push(&mut items, "Sair", Action::Quit, ItemKind::Button);
             }
@@ -391,7 +396,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             let name = display_name(&st.rom_name);
             subtitle = if mins > 0 { format!("{name} · {mins} min") } else { name.to_string() };
             col.y = header_h.max(h * 0.10);
-            let rows = 6.0 + st.can_quit as u8 as f32 + st.can_screenshot as u8 as f32;
+            let rows = 7.0 + st.can_quit as u8 as f32 + st.can_screenshot as u8 as f32;
             col.fit(rows, h, min_row);
             col.push(&mut items, "Continuar", Action::Resume, ItemKind::Primary);
             col.row(
@@ -418,6 +423,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 col.push(&mut items, "Captura de tela (F12)", Action::Screenshot, ItemKind::Button);
             }
             col.push(&mut items, "Ajustes", Action::Settings, ItemKind::Button);
+            col.push(&mut items, "Controles", Action::Controls, ItemKind::Button);
             let i = col.push(
                 &mut items,
                 if st.confirm_reset { "Confirmar reset?" } else { "Reset" },
@@ -501,6 +507,43 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                 rm.active = confirming;
                 items.push(rm);
                 col.y += col.row_h + gap;
+            }
+            col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
+        }
+        Screen::Controls => {
+            title = "Controles".into();
+            subtitle = "toque em Voltar quando terminar".into();
+            col.y = header_h;
+            col.row_h = 46.0 * s;
+            let rows: &[(&str, &str)] = if st.touch_platform {
+                &[
+                    ("D-pad", "canto inferior esquerdo"),
+                    ("A / B", "círculos à direita"),
+                    ("START / SELECT", "pílulas embaixo"),
+                    ("Menu", "botão MENU ou START+SELECT"),
+                    ("Gamepad", "Bluetooth: d-pad, A/B, Start/Select"),
+                    ("Jogador 2", "2º gamepad pareado"),
+                ]
+            } else {
+                &[
+                    ("D-pad", "setas ou W A S D"),
+                    ("A / B", "Z / X"),
+                    ("START / SELECT", "Enter / Tab"),
+                    ("Menu", "Esc (ou START+SELECT no controle)"),
+                    ("Jogador 2", "I J K L · O / U · . / ,"),
+                    ("State", "F5 salva · F7 carrega (slot 1)"),
+                    ("Voltar 5 s", "Backspace (segurar)"),
+                    ("Turbo", "Espaço (segurar)"),
+                    ("Captura de tela", "F12"),
+                    ("Abrir ROM", "O, ou arraste o arquivo"),
+                    ("Reset", "R duas vezes"),
+                    ("Tela cheia", "F11"),
+                ]
+            };
+            col.fit(rows.len() as f32 + 1.0, h, min_row);
+            for (what, how) in rows {
+                let i = col.push(&mut items, *what, Action::None, ItemKind::Button);
+                items[i].value = (*how).to_string();
             }
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
         }
@@ -722,7 +765,7 @@ mod tests {
             .find(|(_, it)| matches!(it.kind, ItemKind::Slider { .. }))
             .expect("um slider");
         let t = slider_track(&item.rect, &l);
-        assert_eq!(hit(&l, t.x + t.w * 0.5, t.y + t.h * 0.5).is_some(), true);
+        assert!(hit(&l, t.x + t.w * 0.5, t.y + t.h * 0.5).is_some());
         assert!(matches!(hit(&l, item.rect.x + 4.0, item.rect.y + 4.0), Some(Action::None)));
         // arrastar continua funcionando pelo índice do item
         assert!(matches!(slide(&l, i, t.x + t.w), Some(Action::Slide(..))));
