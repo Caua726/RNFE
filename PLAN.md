@@ -9,9 +9,9 @@ Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
 sed -n '/^## Onde parei
-Tarefa: relatórios dos agentes aplicados (UX, Android, UI, código) + fix VRC2/VRC4 + tela Controles
-Estado: 4 commits em main com CI verde; APK instalado no g56; check + clippy wasm/android verdes a cada lote
-Próximo: relatórios em curso (problemas reais, compatibilidade, áudio, performance em Opus); backlog restante: miniaturas nos slots, erro de GPU visível + retry GL, áudio na taxa nativa do aparelho, overlay em meia resolução, insets do recorte por JNI, .zip, filtros de vídeo, paleta, run-ahead, remapeamento, cheats, PWA offline
+Tarefa: aplicados os relatórios dos agentes (UX, UI, Android, código, áudio, problemas reais, compatibilidade, performance) + funcionalidades novas
+Estado: main verde a cada lote; 40 mappers, PAL, Zapper, .zip, filtros de vídeo, miniaturas nos slots, 2º jogador, auto-state, captura de tela
+Próximo: relatórios em curso (revisão do código novo e nova medição de compatibilidade); backlog: VS System (34 ROMs), mappers 15/90/45/225, Four Score, paleta selecionável, run-ahead, remapeamento, cheats, PWA offline, exportar saves por SAF, overlay em meia resolução
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
