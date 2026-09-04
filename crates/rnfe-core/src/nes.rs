@@ -132,6 +132,11 @@ impl Nes {
         &self.palette
     }
 
+    /// Liga/desliga o limite de 8 sprites por linha (desligado tira o piscar dos jogos).
+    pub fn set_sprite_limit(&mut self, on: bool) {
+        self.bus.ppu.set_sprite_limit(on);
+    }
+
     pub fn set_sample_rate(&mut self, hz: u32) {
         self.bus.apu.set_sample_rate(hz as f32);
     }

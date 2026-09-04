@@ -33,6 +33,8 @@ pub struct Config {
     pub region: f32,
     /// Paleta de cores: 0 padrão, 1 viva, 2 composto.
     pub palette: f32,
+    /// Limite de 8 sprites por linha (desligar tira o piscar, mas não é o hardware).
+    pub sprite_limit: bool,
 }
 
 impl Default for Config {
@@ -52,6 +54,7 @@ impl Default for Config {
             video_filter: 0.0,
             region: 0.0,
             palette: 0.0,
+            sprite_limit: true,
         }
     }
 }
@@ -86,6 +89,7 @@ zapper={}
 video_filter={}
 region={}
 palette={}
+sprite_limit={}
 ",
             self.touch_scale,
             self.touch_opacity,
@@ -99,7 +103,8 @@ palette={}
             self.zapper,
             self.video_filter,
             self.region,
-            self.palette
+            self.palette,
+            self.sprite_limit
         )
     }
 
@@ -131,6 +136,7 @@ palette={}
                 "video_filter" => c.video_filter = f(c.video_filter, 0.0, 2.0).round(),
                 "region" => c.region = f(c.region, 0.0, 2.0).round(),
                 "palette" => c.palette = f(c.palette, 0.0, 2.0).round(),
+                "sprite_limit" => c.sprite_limit = b(c.sprite_limit),
                 _ => {}
             }
         }

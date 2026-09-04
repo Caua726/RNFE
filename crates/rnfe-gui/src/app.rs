@@ -433,6 +433,9 @@ impl App {
 
     fn apply_config(&mut self) {
         self.apply_palette();
+        if let Some(nes) = self.nes.as_mut() {
+            nes.set_sprite_limit(self.config.sprite_limit);
+        }
         // região manual muda na hora (o "Automática" só vale ao abrir a ROM)
         if let Some(nes) = self.nes.as_mut() {
             let region = match self.config.region as u8 {
@@ -566,6 +569,9 @@ impl App {
             w.set_title(&format!("RNFE — {title}"));
         }
         self.apply_palette();
+        if let Some(nes) = self.nes.as_mut() {
+            nes.set_sprite_limit(self.config.sprite_limit);
+        }
         self.set_screen(Screen::Playing);
         if resumed {
             self.toast(format!("{} · continuando de onde parou", menu::display_name(&self.rom_name)));

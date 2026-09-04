@@ -29,6 +29,8 @@ pub enum Setting {
     RegionSetting,
     /// Paleta de cores.
     Palette,
+    /// Limite de 8 sprites por linha.
+    SpriteLimit,
     TouchScale,
     TouchOpacity,
     TouchAlways,
@@ -45,7 +47,7 @@ pub enum Setting {
 pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Som", &[Setting::Volume]),
     ("Vídeo", &[Setting::VideoFilter, Setting::Palette, Setting::IntegerScale, Setting::Overscan]),
-    ("Sistema", &[Setting::RegionSetting]),
+    ("Sistema", &[Setting::RegionSetting, Setting::SpriteLimit]),
     ("Controles", &[Setting::Zapper]),
     ("Toque", &[Setting::TouchScale, Setting::TouchOpacity, Setting::TouchAlways, Setting::Haptics]),
     ("Acessibilidade", &[Setting::TextScale, Setting::HighContrast]),
@@ -64,6 +66,7 @@ impl Setting {
             Setting::VideoFilter => "Filtro de vídeo",
             Setting::RegionSetting => "Região",
             Setting::Palette => "Paleta",
+            Setting::SpriteLimit => "Limite de 8 sprites",
             Setting::IntegerScale => "Escala inteira (pixels quadrados)",
             Setting::Volume => "Volume",
             Setting::Overscan => "Cortar bordas (overscan)",
@@ -79,6 +82,7 @@ impl Setting {
                 | Setting::Zapper
                 | Setting::IntegerScale
                 | Setting::Overscan
+                | Setting::SpriteLimit
         )
     }
 
@@ -109,6 +113,7 @@ impl Setting {
             Setting::VideoFilter => c.video_filter,
             Setting::RegionSetting => c.region,
             Setting::Palette => c.palette,
+            Setting::SpriteLimit => c.sprite_limit as u8 as f32,
             Setting::IntegerScale => c.integer_scale as u8 as f32,
             Setting::Overscan => c.overscan as u8 as f32,
         }
@@ -143,6 +148,7 @@ impl Setting {
                 _ => "Automática".into(),
             },
             Setting::Palette => crate::palettes::name(c.palette as usize).into(),
+            Setting::SpriteLimit => on(c.sprite_limit),
             Setting::IntegerScale => on(c.integer_scale),
             Setting::Volume => pct(c.volume),
             Setting::Overscan => on(c.overscan),
@@ -166,6 +172,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::VideoFilter => c.video_filter = v.clamp(0.0, 2.0).round(),
         Setting::RegionSetting => c.region = v.clamp(0.0, 2.0).round(),
         Setting::Palette => c.palette = v.clamp(0.0, (crate::palettes::COUNT - 1) as f32).round(),
+        Setting::SpriteLimit => c.sprite_limit = v >= 0.5,
         Setting::IntegerScale => c.integer_scale = v >= 0.5,
         Setting::Overscan => c.overscan = v >= 0.5,
     }

@@ -107,6 +107,10 @@ pub fn default_base() -> [[u8; 3]; 64] {
     out
 }
 
+fn sprite_limit_default() -> bool {
+    true
+}
+
 const fn build_palette() -> [[u8; 4]; 512] {
     let mut out = [[0u8; 4]; 512];
     let mut i = 0;
@@ -176,6 +180,15 @@ pub struct Ppu {
     overflow_dot: Option<i16>,
     /// "OAM secundário": sprites avaliados para a linha seguinte, copiados no dot 257.
     next_sprites: [ObjectAttributeEntry; 8],
+    /// Limite de 8 sprites por linha (desligar tira o piscar, mas não é o hardware).
+    #[cfg_attr(feature = "serde", serde(skip, default = "sprite_limit_default"))]
+    sprite_limit: bool,
+    /// Sprites além do 8º, quando o limite está desligado (fora do save state: são
+    /// transitórios da scanline e o formato não muda).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    extra_next: Vec<ObjectAttributeEntry>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    extra_cur: Vec<ObjectAttributeEntry>,
     next_sprite_count: usize,
     next_sprite_zero: bool,
 
@@ -265,6 +278,9 @@ impl Ppu {
             sprite_zero_hit_possible: false,
             overflow_dot: None,
             next_sprites: [ObjectAttributeEntry { y: 0xFF, id: 0xFF, attribute: 0xFF, x: 0xFF }; 8],
+            sprite_limit: true,
+            extra_next: Vec::new(),
+            extra_cur: Vec::new(),
             next_sprite_count: 0,
             next_sprite_zero: false,
             screen: blank_screen(),
@@ -334,6 +350,11 @@ impl Ppu {
                 }
             }
         }
+    }
+
+    /// Liga/desliga o limite de 8 sprites por linha (desligado = sem piscar).
+    pub fn set_sprite_limit(&mut self, on: bool) {
+        self.sprite_limit = on;
     }
 
     /// Troca a temporização (NTSC/PAL): muda a última linha e a linha do vblank.
@@ -566,11 +587,16 @@ impl Ppu {
     /// Escreve os 8 pixels do sprite do `slot` no buffer da linha (o primeiro opaco vence).
     fn draw_sprite_slot(&mut self, slot: usize, lo: u8, hi: u8) {
         let sp = self.sprites_scanline[slot];
+        self.draw_entry(&sp, slot == 0, lo, hi);
+    }
+
+    /// Desenha um sprite na linha atual. `zero` marca o sprite 0 (para o hit).
+    fn draw_entry(&mut self, sp: &ObjectAttributeEntry, zero: bool, lo: u8, hi: u8) {
         let (lo, hi) =
             if sp.attribute & 0x40 != 0 { (lo.reverse_bits(), hi.reverse_bits()) } else { (lo, hi) };
         let tag = ((sp.attribute & 0x03) << 2)
             | if sp.attribute & 0x20 != 0 { 0x10 } else { 0 }
-            | if slot == 0 { 0x20 } else { 0 };
+            | if zero { 0x20 } else { 0 };
         for px in 0..8usize {
             let x = sp.x as usize + px;
             if x >= 256 {
@@ -592,6 +618,12 @@ impl Ppu {
             return if tall { 0x1FE0 } else { ((self.control as u16 & 0x08) << 9) | 0x0FF0 };
         }
         let sp = self.sprites_scanline[slot];
+        self.pattern_addr_for(&sp)
+    }
+
+    /// Endereço do padrão de um sprite na linha atual.
+    fn pattern_addr_for(&self, sp: &ObjectAttributeEntry) -> u16 {
+        let tall = (self.control & 0x20) != 0;
         let last = if tall { 15u16 } else { 7 };
         let mut row = (self.scanline - sp.y as i16) as u16 & last;
         if sp.attribute & 0x80 != 0 {
@@ -672,6 +704,7 @@ impl Ppu {
                         cart.data.ppu_sprite_fetch = true;
                         self.sprite_line = [0; 256];
                         self.sprites_scanline = self.next_sprites;
+                        std::mem::swap(&mut self.extra_cur, &mut self.extra_next);
                         self.sprite_count = self.next_sprite_count;
                         self.sprite_zero_hit_possible = self.next_sprite_zero;
                         if self.rendering {
@@ -704,6 +737,19 @@ impl Ppu {
                                 }
                             }
                             _ => {}
+                        }
+                        // Sprites além do 8º (limite desligado pelo jogador): não existem no
+                        // hardware, então buscamos direto no cartucho, sem mexer no padrão de
+                        // A12 que o MMC3 usa para contar scanlines.
+                        if c == 320 && !self.extra_cur.is_empty() && self.scanline >= 0 {
+                            let extras = std::mem::take(&mut self.extra_cur);
+                            for sp in &extras {
+                                let addr = self.pattern_addr_for(sp);
+                                let lo = cart.chr_read(addr);
+                                let hi = cart.chr_read(addr + 8);
+                                self.draw_entry(sp, false, lo, hi);
+                            }
+                            self.extra_cur = extras;
                         }
                     }
                 }
@@ -792,6 +838,25 @@ impl Ppu {
                 self.next_sprite_count += 1;
             }
             n += 1;
+        }
+        // Sem o limite de 8 (opção do jogador): recolhe o resto da OAM em slots extras. A flag
+        // de overflow e os 8 primeiros continuam idênticos ao hardware — só o desenho muda.
+        self.extra_next.clear();
+        if !self.sprite_limit {
+            let mut extra = n;
+            while extra < 64 {
+                let base = (start + extra * 4) & 0xFF;
+                let y = self.oam[base];
+                if in_range(y) {
+                    self.extra_next.push(ObjectAttributeEntry {
+                        y,
+                        id: self.oam[(base + 1) & 0xFF],
+                        attribute: self.oam[(base + 2) & 0xFF],
+                        x: self.oam[(base + 3) & 0xFF],
+                    });
+                }
+                extra += 1;
+            }
         }
         // fase 2 (bug): lê OAM[n][m] como Y, incrementando m sem carry a cada erro
         if self.next_sprite_count == 8 {

@@ -47,28 +47,32 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 
 @group(0) @binding(0) var tex: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
-@group(0) @binding(3) var samp_linear: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let mode = xform.params.x;
-    if mode < 0.5 {
-        return textureSample(tex, samp, in.uv);
-    }
-    // "sharp bilinear": interpola só na borda entre dois texels, na largura de um pixel de
-    // tela. Em escala não inteira (4,2× num celular de 1080) tira o serrilhado sem borrar.
-    let size = xform.params.zw;
+    // Um sampler só (Nearest) e nenhum ramo em volta da amostragem: `textureSample` exige fluxo
+    // uniforme e drivers móveis recusam o shader inteiro quando desconfiam — a tela fica preta.
+    // A interpolação do modo "suave" é feita à mão com quatro leituras.
+    let size = max(xform.params.zw, vec2(1.0, 1.0));
     let scale = max(xform.params.y, 1.0);
     let texel = in.uv * size;
-    let f = fract(texel);
-    let edge = clamp((f - 0.5) * scale + 0.5, vec2(0.0), vec2(1.0));
-    let uv = (floor(texel) + edge) / size;
-    var c = textureSample(tex, samp_linear, uv);
-    if mode > 1.5 {
-        // scanlines: escurece a metade de baixo de cada linha do NES
-        let line = fract(in.uv.y * size.y);
-        c = c * (1.0 - 0.28 * smoothstep(0.45, 1.0, line));
-    }
+    // sharp bilinear: a mistura acontece só na largura de um pixel de tela, na borda do texel
+    let edge = clamp((fract(texel) - 0.5) * scale + 0.5, vec2(0.0), vec2(1.0));
+    let p = floor(texel) + edge - 0.5;
+    let b = floor(p);
+    let f = p - b;
+    let uv00 = (b + vec2(0.5, 0.5)) / size;
+    let uv10 = (b + vec2(1.5, 0.5)) / size;
+    let uv01 = (b + vec2(0.5, 1.5)) / size;
+    let uv11 = (b + vec2(1.5, 1.5)) / size;
+    let top = mix(textureSampleLevel(tex, samp, uv00, 0.0), textureSampleLevel(tex, samp, uv10, 0.0), f.x);
+    let bot = mix(textureSampleLevel(tex, samp, uv01, 0.0), textureSampleLevel(tex, samp, uv11, 0.0), f.x);
+    let soft = mix(top, bot, f.y);
+    let nearest = textureSampleLevel(tex, samp, in.uv, 0.0);
+    var c = select(soft, nearest, xform.params.x < 0.5);
+    // scanlines: escurece a metade de baixo de cada linha do NES
+    let line = fract(in.uv.y * size.y);
+    c = select(c, c * (1.0 - 0.28 * smoothstep(0.45, 1.0, line)), xform.params.x > 1.5);
     return c;
 }
 "#;
@@ -90,7 +94,6 @@ pub struct GpuState {
     overlay_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    sampler_linear: wgpu::Sampler,
     nes: Layer,
     overlay: Layer,
     /// Onde a imagem do NES ficou na janela (px): x, y, w, h — para o layout de toque.
@@ -170,12 +173,6 @@ impl GpuState {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        // usado pelos filtros suave/scanlines (o nítido continua no `Nearest`)
-        let sampler_linear = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[
@@ -191,12 +188,6 @@ impl GpuState {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -257,7 +248,6 @@ impl GpuState {
             &device,
             &bind_group_layout,
             &sampler,
-            &sampler_linear,
             tex_format,
             NES_WIDTH,
             NES_HEIGHT,
@@ -268,7 +258,6 @@ impl GpuState {
             &device,
             &bind_group_layout,
             &sampler,
-            &sampler_linear,
             tex_format,
             config.width,
             config.height,
@@ -290,7 +279,6 @@ impl GpuState {
             overlay_pipeline,
             bind_group_layout,
             sampler,
-            sampler_linear,
             nes,
             overlay,
             viewport,
@@ -302,7 +290,6 @@ impl GpuState {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
-        sampler_linear: &wgpu::Sampler,
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
@@ -332,7 +319,6 @@ impl GpuState {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 2, resource: scale_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler_linear) },
             ],
         });
         Layer { texture, bind_group, scale_buffer, width, height }
@@ -419,7 +405,6 @@ impl GpuState {
             &self.device,
             &self.bind_group_layout,
             &self.sampler,
-            &self.sampler_linear,
             self.tex_format,
             width,
             height,
