@@ -489,17 +489,6 @@ impl App {
         }
     }
 
-    /// Diz qual GPU/API entrou. É o único sinal que aparece quando a tela fica preta.
-    fn announce_gpu(&self, g: &GpuState) {
-        let (w, h) = g.size();
-        let msg = format!("RNFE vídeo: {} — {w}x{h}", g.adapter_info());
-        log::info!("{msg}");
-        eprintln!("{msg}");
-        if let Some(n) = &self.notify {
-            n(&msg);
-        }
-    }
-
     /// Sem GPU não há como desenhar nem a mensagem de erro: avisa por fora (Toast no Android,
     /// diálogo no desktop) para o app não ficar preto e calado.
     fn fail_gpu(&mut self, msg: String) {
@@ -1769,7 +1758,6 @@ impl ApplicationHandler<UserEvent> for App {
                         self.config.overscan,
                         self.config.video_filter as u8,
                     );
-                    self.announce_gpu(&g);
                     self.gpu = Some(g);
                 }
                 Err(e) => {
@@ -1801,7 +1789,6 @@ impl ApplicationHandler<UserEvent> for App {
                         self.config.overscan,
                         self.config.video_filter as u8,
                     );
-                    self.announce_gpu(&g);
                     self.gpu = Some(g);
                     if let Some(w) = &self.window {
                         let s = w.inner_size();

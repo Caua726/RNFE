@@ -127,8 +127,6 @@ pub struct GpuState {
     overlay: Layer,
     /// Onde a imagem do NES ficou na janela (px): x, y, w, h — para o layout de toque.
     pub viewport: (f32, f32, f32, f32),
-    /// Nome e API do adaptador (diagnóstico).
-    adapter_info: String,
     /// Múltiplos inteiros de 256×240 (pixels quadrados) em vez de preencher com aspecto 8:7.
     integer_scale: bool,
     /// 0 = nítido, 1 = suave, 2 = scanlines.
@@ -154,11 +152,6 @@ impl GpuState {
         let Err(e) = first else { return first };
         log::warn!("vídeo no padrão falhou ({e}); tentando OpenGL ES");
         Self::with_backends(window, wgpu::Backends::GL).await.map_err(|gl| format!("{e}; GLES: {gl}"))
-    }
-
-    /// Nome e API do adaptador em uso (para o aviso de diagnóstico).
-    pub fn adapter_info(&self) -> String {
-        self.adapter_info.clone()
     }
 
     async fn with_backends(window: Arc<Window>, backends: wgpu::Backends) -> Result<GpuState, String> {
@@ -194,8 +187,7 @@ impl GpuState {
         // Erro de validação (ex.: swapchain na rotação) vira log, não panic
         device.on_uncaptured_error(Box::new(|e| log::error!("wgpu: {e}")));
         let info = adapter.get_info();
-        let adapter_info = format!("{} · {:?}", info.name, info.backend);
-        log::info!("GPU: {adapter_info}");
+        log::info!("GPU: {} · {:?}", info.name, info.backend);
 
         let caps = surface.get_capabilities(&adapter);
         // A paleta do NES e o overlay já são bytes sRGB compostos em gamma (ui::blend): sem sRGB
@@ -300,7 +292,6 @@ impl GpuState {
         );
         let viewport = Self::calc_viewport(config.width, config.height, false, false);
         Ok(GpuState {
-            adapter_info,
             integer_scale: false,
             filter: 0,
             overscan: false,
