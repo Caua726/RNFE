@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Caua726/RNFE/actions/workflows/ci.yml/badge.svg)](https://github.com/Caua726/RNFE/actions/workflows/ci.yml)
 
-Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 39 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
+Emulador de NES/Famicom escrito em Rust, do zero: CPU 6502, PPU e APU exatas ao ciclo, 40 mappers com áudio de expansão (VRC6, N163, MMC5, 5B),
 save states e rewind, com um núcleo **sem dependências** que roda em qualquer lugar — navegador,
 desktop, Android e terminal.
 
@@ -131,6 +131,7 @@ de ROMs recentes (reabrem sem o seletor).
 | 64 | RAMBO-1 | Klax, Skull & Crossbones |
 | 65 | Irem H3001 | Daiku no Gen-san 2, Spartan X 2 |
 | 66 | GxROM | Dragon Ball, Doraemon |
+| 67 | Sunsoft-3 | Mickey Mousecapade, Fantasy Zone II |
 | 68 | Sunsoft-4 | After Burner, Maharaja |
 | 69 | FME-7 / Sunsoft 5B (+ áudio) | Batman: Return of the Joker, Gimmick! |
 | 71 | Camerica | Micro Machines |

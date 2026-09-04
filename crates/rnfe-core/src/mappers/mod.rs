@@ -34,7 +34,8 @@ pub mod nrom;
 pub mod nwc;
 pub mod rambo1;
 pub mod simple;
-pub mod sunsoft4;
+pub mod sunsoft3;
+mod sunsoft4;
 pub mod uxrom;
 pub mod vrc4;
 pub mod vrc6;
@@ -299,6 +300,7 @@ pub enum MapperKind {
     Nina(simple::Nina),
     Nina001(simple::Nina001),
     Ffe(ffe::Ffe),
+    Sunsoft3(sunsoft3::Sunsoft3),
     Cprom(simple::Cprom),
     Quattro(simple::Quattro),
     Rambo1(rambo1::Rambo1),
@@ -311,8 +313,8 @@ pub enum MapperKind {
 }
 
 pub const SUPPORTED_MAPPERS: &[u16] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 17, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 68, 69,
-    71, 79, 105, 113, 118, 119, 206, 227, 232,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 17, 19, 21, 22, 23, 24, 25, 26, 28, 30, 34, 64, 65, 66, 67, 68,
+    69, 71, 79, 105, 113, 118, 119, 206, 227, 232,
 ];
 
 impl MapperKind {
@@ -348,6 +350,7 @@ impl MapperKind {
             118 | 119 => MapperKind::Mmc3(mmc3::Mmc3::new(data)),
             64 => MapperKind::Rambo1(rambo1::Rambo1::new(data)),
             65 => MapperKind::H3001(h3001::H3001::new(data)),
+            67 => MapperKind::Sunsoft3(sunsoft3::Sunsoft3::new()),
             68 => MapperKind::Sunsoft4(sunsoft4::Sunsoft4::new(data)),
             105 => MapperKind::Nwc(nwc::Nwc::new(data)),
             30 => MapperKind::Unrom512(homebrew::Unrom512::new(data)),
@@ -385,6 +388,7 @@ impl MapperKind {
             MapperKind::Nina(_) => "NINA-03/06",
             MapperKind::Nina001(_) => "NINA-001",
             MapperKind::Ffe(m) => m.name(),
+            MapperKind::Sunsoft3(_) => "Sunsoft-3",
             MapperKind::Cprom(_) => "CPROM",
             MapperKind::Quattro(_) => "Camerica Quattro",
             MapperKind::Rambo1(_) => "Tengen RAMBO-1",
@@ -427,6 +431,7 @@ macro_rules! dispatch {
             MapperKind::Nina($m) => $e,
             MapperKind::Nina001($m) => $e,
             MapperKind::Ffe($m) => $e,
+            MapperKind::Sunsoft3($m) => $e,
             MapperKind::Cprom($m) => $e,
             MapperKind::Quattro($m) => $e,
             MapperKind::Rambo1($m) => $e,
