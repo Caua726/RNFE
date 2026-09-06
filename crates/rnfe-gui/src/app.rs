@@ -428,7 +428,7 @@ impl App {
         let get = |k: &str| -> Option<u64> {
             text.lines().find_map(|l| l.strip_prefix(k)?.trim().parse::<u64>().ok())
         };
-        let mins = get("frames=").map(|f| f / (rnfe_core::NTSC_FPS as u64 * 60)).unwrap_or(0);
+        let mins = get("frames=").map(|f| f / (self.fps() as u64 * 60)).unwrap_or(0);
         let now = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -587,14 +587,11 @@ impl App {
         if let Some(nes) = self.nes.as_mut() {
             nes.set_sprite_limit(self.config.sprite_limit);
         }
-        // região manual muda na hora (o "Automática" só vale ao abrir a ROM)
-        if let Some(nes) = self.nes.as_mut() {
-            let region = match self.config.region as u8 {
-                1 => Some(rnfe_core::Region::Ntsc),
-                2 => Some(rnfe_core::Region::Pal),
-                _ => None,
-            };
-            if let Some(r) = region {
+        // Região muda na hora, inclusive de volta para "Automática": antes o ramo automático não
+        // fazia nada e o console ficava preso no NTSC/PAL escolhido à mão.
+        if let Some(nes) = self.nes.as_ref() {
+            let r = self.pick_region(nes, &self.rom_name.clone());
+            if let Some(nes) = self.nes.as_mut() {
                 if nes.region() != r {
                     nes.set_region(r);
                     self.pacer.set_fps(r.fps());
@@ -688,12 +685,20 @@ impl App {
 
     /// Região a usar: o ajuste manual manda; em "Automática" vale o header e, como a maioria
     /// das ROMs europeias não marca nada, o nome do arquivo ((E), (Europe), PAL).
+    /// Quadros por segundo do console agora (PAL roda a ~50): dividir tudo por NTSC inflava o
+    /// tempo de jogo em 20 % e mentia no "Voltou X s".
+    fn fps(&self) -> f64 {
+        self.nes.as_ref().map_or(NTSC_FPS, |n| n.region().fps())
+    }
+
     fn pick_region(&self, nes: &Nes, name: &str) -> rnfe_core::Region {
         match self.config.region as u8 {
             1 => rnfe_core::Region::Ntsc,
             2 => rnfe_core::Region::Pal,
             _ => {
-                if nes.region() == rnfe_core::Region::Pal {
+                // `nes.region()` é o valor corrente — se alguém já forçou PAL à mão, o
+                // "automático" nunca mais sairia de lá. O cabeçalho é a fonte da verdade.
+                if nes.cartridge().region() == rnfe_core::Region::Pal {
                     return rnfe_core::Region::Pal;
                 }
                 let n = name.to_ascii_uppercase();
@@ -921,7 +926,7 @@ impl App {
         self.toast(if steps == 0 {
             "Sem histórico".to_string()
         } else {
-            format!("Voltou {:.1} s", steps as f32 * Rewind::EVERY as f32 / NTSC_FPS as f32)
+            format!("Voltou {:.1} s", steps as f32 * Rewind::EVERY as f32 / self.fps() as f32)
         });
     }
 
@@ -931,6 +936,9 @@ impl App {
         }
         self.turbo = on;
         self.pacer.set_speed(if on { TURBO } else { 1.0 });
+        // sem folga no teto de recuperação, o 4º frame de cada tique era descartado e o "TURBO
+        // 4x" andava a 3x
+        self.pacer.set_max_catchup(if on { TURBO.ceil() as u32 + 1 } else { 3 });
     }
 
     fn menu_state(&self) -> MenuState {
@@ -946,7 +954,7 @@ impl App {
             confirm_reset: self.confirm_reset,
             states_load: self.states_load,
             slots: self.slots,
-            play_seconds: (self.play_frames as f64 / NTSC_FPS) as u64,
+            play_seconds: (self.play_frames as f64 / self.fps()) as u64,
             loading: self.loading,
             confirm_remove: self.confirm_remove,
             touch_platform: cfg!(any(target_os = "android", target_arch = "wasm32")) || self.touch.seen,
@@ -1086,6 +1094,17 @@ impl App {
         }
     }
 
+    /// Há gamepad ligado (só o gilrs, do desktop/web; no Android os botões chegam por evento).
+    #[cfg(feature = "gamepad")]
+    fn gamepad_connected(&self) -> bool {
+        self.gilrs.as_ref().is_some_and(|g| g.gamepads().any(|(_, p)| p.is_connected()))
+    }
+
+    #[cfg(not(feature = "gamepad"))]
+    fn gamepad_connected(&self) -> bool {
+        false
+    }
+
     #[cfg(feature = "gamepad")]
     fn poll_gamepad(&mut self) {
         use gilrs::{Axis, Button, EventType};
@@ -1127,7 +1146,8 @@ impl App {
                     EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
                     _ => {}
                 }
-                continue;
+                // sem `continue`: o soltar do botão precisa chegar em `pad` mesmo com o menu
+                // aberto, senão o NES volta do menu com o botão apertado para sempre
             }
             match ev.event {
                 EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
@@ -1140,6 +1160,13 @@ impl App {
                         _ => continue,
                     };
                     stick[port] = stick[port].with(neg, v < -0.5).with(pos, v > 0.5);
+                }
+                // Desconectar segurando um botão nunca manda `ButtonReleased`: sem isto o
+                // estado ficava preso e o próximo controle entrava como jogador 2.
+                EventType::Disconnected => {
+                    pad[port] = Buttons::NONE;
+                    stick[port] = Buttons::NONE;
+                    ports.retain(|&p| p != id);
                 }
                 _ => {}
             }
@@ -1492,10 +1519,14 @@ impl App {
                 }
             }
             if show_toast {
-                // o toast jogando sai logo abaixo do botão MENU, não no rodapé
-                let y = self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s;
-                spans.push((y - 24.0 * s, y + 80.0 * s));
-                spans.push((h as f32 - 90.0 * s, h as f32));
+                // o toast jogando sai logo abaixo do botão MENU (retrato) ou no rodapé; a faixa
+                // a limpar é a que o próprio desenho vai ocupar, não uma constante parecida
+                let msg = self.toast_msg.clone();
+                let y = self
+                    .touch_layout
+                    .portrait
+                    .then(|| self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s);
+                spans.push(self.ui.toast_span(w, h, &msg, 16.0 * s, y));
             }
             if self.debug_overlay {
                 spans.push((0.0, 130.0 * s));
@@ -2279,6 +2310,8 @@ impl ApplicationHandler<UserEvent> for App {
         self.audio = None; // em background o stream pode ser desconectado; volta no próximo gesto
         self.overlay_key = None;
         self.pressed = None;
+        self.pad = [Buttons::NONE; 2];
+        self.pad_stick = [Buttons::NONE; 2];
         self.confirm_reset = false;
         self.confirm_esc = false;
         self.confirm_until = Instant::now();
@@ -2303,6 +2336,10 @@ impl ApplicationHandler<UserEvent> for App {
         } else if Instant::now() < self.toast_until {
             // toast num menu: acorda na hora de apagá-lo
             el.set_control_flow(ControlFlow::WaitUntil(self.toast_until));
+        } else if self.gamepad_connected() {
+            // Fora do jogo o gilrs só é lido aqui dentro, e nada dele acorda o winit: dormindo
+            // em `Wait`, apertar um botão do controle não fazia nada até mexer no mouse.
+            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));
         } else {
             if self.overlay_key.as_ref().is_some_and(|k| k.toast.is_some()) {
                 self.redraw(); // o último overlay ainda tem o toast

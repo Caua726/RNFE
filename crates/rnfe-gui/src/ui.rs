@@ -222,8 +222,20 @@ impl Ui {
         self.draw_text(fb, w, h, &s, size, x, y, color);
     }
 
-    /// Caixa de mensagem temporária: no rodapé, ou em `y` (px) se dado. Quebra em até 3 linhas.
-    pub fn draw_toast(&mut self, fb: &mut [u8], w: u32, h: u32, msg: &str, size: f32, y: Option<f32>) {
+    /// Faixa vertical (topo, base) que [`draw_toast`](Self::draw_toast) vai ocupar. O limpador
+    /// parcial do jogo usava constantes que não batiam com o desenho, e a borda de cima da caixa
+    /// ficava grudada na tela depois que o aviso sumia.
+    pub fn toast_span(&mut self, w: u32, h: u32, msg: &str, size: f32, y: Option<f32>) -> (f32, f32) {
+        let (r, lines) = self.toast_box(w, h, msg, size, y);
+        if lines.is_empty() {
+            return (0.0, 0.0);
+        }
+        (r.y - size * 0.5, r.y + r.h + size * 0.5)
+    }
+
+    /// Onde a caixa do toast fica e o que cabe nela (linhas já quebradas). Usado pelo desenho
+    /// e pelo limpador de faixa, para os dois falarem do mesmo retângulo.
+    fn toast_box(&mut self, w: u32, h: u32, msg: &str, size: f32, y: Option<f32>) -> (Rect, Vec<String>) {
         let max_w = w as f32 * 0.9 - size * 1.4;
         let mut lines: Vec<String> = Vec::new();
         let mut cur = String::new();
@@ -243,7 +255,7 @@ impl Ui {
             lines.push(cur);
         }
         if lines.is_empty() {
-            return;
+            return (Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }, lines);
         }
         let pad = (size * 0.7) as i32;
         let lh = size * 1.3;
@@ -256,12 +268,25 @@ impl Ui {
             w: (tw + pad * 2) as f32,
             h: box_h,
         };
+        (r, lines)
+    }
+
+    /// Caixa de mensagem temporária: no rodapé, ou em `y` (px) se dado. Quebra em até 3 linhas.
+    pub fn draw_toast(&mut self, fb: &mut [u8], w: u32, h: u32, msg: &str, size: f32, y: Option<f32>) {
+        let (r, lines) = self.toast_box(w, h, msg, size, y);
+        if lines.is_empty() {
+            return;
+        }
+        let pad = (size * 0.7) as i32;
+        let lh = size * 1.3;
+        let tw = (r.w - (pad * 2) as f32) as i32;
+        let ty = (r.y + (pad / 2) as f32) as i32;
         fill_round_rect(fb, w, h, &r, size * 0.4, [0, 0, 0, 210]);
         for (i, line) in lines.iter().enumerate() {
             let lw = self.text_width(line, size).min(tw);
             let lx = (w as i32 - lw) / 2;
             let ly = ty + (i as f32 * lh) as i32;
-            self.draw_text_clipped(fb, w, h, line, size, lx, ly, tw, [255, 255, 255, 255]);
+            self.draw_text(fb, w, h, line, size, lx, ly, [235, 235, 240, 255]);
         }
     }
 

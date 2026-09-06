@@ -23,6 +23,12 @@ impl FramePacer {
         self.period = Duration::from_secs_f64(1.0 / fps.max(1.0));
     }
 
+    /// Teto de frames recuperados por tique. Com turbo de 4×, um teto de 3 descarta um frame
+    /// em cada tique e a velocidade real fica em 3×.
+    pub fn set_max_catchup(&mut self, n: u32) {
+        self.max_catchup = n.max(1);
+    }
+
     pub fn set_speed(&mut self, speed: f64) {
         self.speed = speed.max(0.01);
     }

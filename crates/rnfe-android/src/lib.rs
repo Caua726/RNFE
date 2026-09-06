@@ -99,11 +99,26 @@ pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomPicked<'l>(
 ) {
     let bytes = env.convert_byte_array(&data).unwrap_or_default();
     let name: String = env.get_string(&name).map(|s| s.into()).unwrap_or_default();
+    // "vazio" já significou "cancelou": um .nes legítimo de 0 byte sumia sem aviso nenhum.
+    // Cancelar agora tem função própria (`onRomCancelled`).
     deliver(if bytes.is_empty() {
-        UserEvent::RomLoadFailed("cancelado".into())
+        UserEvent::RomLoadFailed(if name.is_empty() {
+            "o arquivo escolhido está vazio".into()
+        } else {
+            format!("{name} está vazio")
+        })
     } else {
         UserEvent::RomLoaded { name, bytes }
     });
+}
+
+/// Chamado pelo Java quando o usuário fechou o seletor sem escolher nada.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onRomCancelled<'l>(
+    _env: JNIEnv<'l>,
+    _this: JObject<'l>,
+) {
+    deliver(UserEvent::RomLoadFailed("cancelado".into()));
 }
 
 /// Chamado pelo Java quando a ROM não pôde ser lida (motivo legível para o aviso).

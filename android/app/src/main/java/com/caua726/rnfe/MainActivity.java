@@ -43,6 +43,8 @@ public class MainActivity extends NativeActivity {
     public native void onRomPicked(byte[] data, String name);
     /** Motivo legível quando a ROM não pôde ser lida (o Rust mostra num aviso). */
     public native void onRomFailed(String why);
+    /** O seletor foi fechado sem escolher nada (diferente de um arquivo ilegível). */
+    public native void onRomCancelled();
 
     /** Eixos do gamepad (d-pad como hat, analógico esquerdo), -1..1. Implementado em Rust. */
     public native void onPadAxes(float x, float y);
@@ -82,6 +84,9 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        // sem isto, `getIntent()` continua devolvendo a intent do primeiro lançamento pelo resto
+        // da vida do processo, e uma recriação da Activity reabre a ROM errada
+        setIntent(intent);
         handleViewIntent(intent);
     }
 
@@ -289,7 +294,20 @@ public class MainActivity extends NativeActivity {
         if (hasFocus) hideSystemUi();
     }
 
+    @SuppressWarnings("deprecation")
     private void hideSystemUi() {
+        // Os SYSTEM_UI_FLAG_* estão depreciados desde a API 30 e viram no-op sob a borda-a-borda
+        // obrigatória do Android 15: o caminho novo é o WindowInsetsController.
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+            android.view.WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+            return;
+        }
         getWindow().getDecorView().setSystemUiVisibility(
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
@@ -315,7 +333,7 @@ public class MainActivity extends NativeActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != PICK_ROM) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            onRomPicked(new byte[0], "");
+            onRomCancelled();
             return;
         }
         readRom(data.getData());
@@ -350,6 +368,10 @@ public class MainActivity extends NativeActivity {
                     out.write(buf, 0, n);
                 }
                 bytes = out.toByteArray();
+                if (bytes.length == 0) {
+                    onRomFailed(name + " está vazio");
+                    return;
+                }
             } catch (Exception e) {
                 onRomFailed("não consegui ler " + name + " (" + e.getClass().getSimpleName() + ")");
                 return;
