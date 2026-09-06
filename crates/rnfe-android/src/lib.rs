@@ -146,6 +146,58 @@ fn call_gesture_exclusion(app: &AndroidApp, rects: [[i32; 4]; 2]) -> Result<(), 
     Ok(())
 }
 
+/// Publica os itens do menu na `MainActivity` para o leitor de tela: um vetor de rótulos e um
+/// de retângulos (l, t, r, b por item, achatados).
+fn call_a11y(app: &AndroidApp, nodes: Vec<(String, [i32; 4])>) -> Result<(), String> {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) }
+        .map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let vazio = env.new_string("").map_err(|e| e.to_string())?;
+    let labels =
+        env.new_object_array(nodes.len() as i32, "java/lang/String", &vazio).map_err(|e| e.to_string())?;
+    let mut rects: Vec<i32> = Vec::with_capacity(nodes.len() * 4);
+    for (i, (label, r)) in nodes.iter().enumerate() {
+        let s = env.new_string(label).map_err(|e| e.to_string())?;
+        env.set_object_array_element(&labels, i as i32, &s).map_err(|e| e.to_string())?;
+        rects.extend_from_slice(r);
+    }
+    let arr = env.new_int_array(rects.len() as i32).map_err(|e| e.to_string())?;
+    env.set_int_array_region(&arr, 0, &rects).map_err(|e| e.to_string())?;
+    let args = [jni::objects::JValue::Object(&labels), jni::objects::JValue::Object(&arr)];
+    if let Err(e) = env.call_method(&activity, "setA11yNodes", "([Ljava/lang/String;[I)V", &args) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// O leitor de tela ativou um item do menu (índice na lista publicada por `setA11yNodes`).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onA11yClick<'l>(
+    _env: JNIEnv<'l>,
+    _this: JObject<'l>,
+    index: i32,
+) {
+    if index >= 0 {
+        deliver(UserEvent::A11yActivate(index as u32));
+    }
+}
+
+/// Área segura da janela em px (recorte da câmera, barras, faixa de gesto), vinda do Java.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onInsets<'l>(
+    _env: JNIEnv<'l>,
+    _this: JObject<'l>,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) {
+    deliver(UserEvent::SafeInsets { left, top, right, bottom });
+}
+
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
     // `panic = "abort"` (perfil release): sem hook, a mensagem do panic vai para o stderr, que
@@ -160,7 +212,8 @@ fn android_main(app: AndroidApp) {
         app.internal_data_path().unwrap_or_else(|| std::path::PathBuf::from("/data/local/tmp")).join("rnfe");
     log::info!("dados em {}", data_dir.display());
     let picker_app = app.clone();
-    let mut launch = Launch::new(Box::new(FsStorage::new(data_dir)));
+    let mut launch = Launch::new(Box::new(FsStorage::new(data_dir.clone())));
+    launch.data_dir = Some(data_dir.display().to_string());
     launch.picker = Some(Box::new(move |proxy| {
         if let Err(e) = call_pick_rom(&picker_app) {
             log::error!("pickRom: {e}");
@@ -171,6 +224,12 @@ fn android_main(app: AndroidApp) {
     launch.gesture_exclusion = Some(Box::new(move |rects| {
         if let Err(e) = call_gesture_exclusion(&gesture_app, rects) {
             log::debug!("gesture exclusion: {e}");
+        }
+    }));
+    let a11y_app = app.clone();
+    launch.a11y = Some(Box::new(move |nodes| {
+        if let Err(e) = call_a11y(&a11y_app, nodes) {
+            log::debug!("a11y: {e}");
         }
     }));
     let notify_app = app.clone();

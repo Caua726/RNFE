@@ -59,6 +59,20 @@ impl TouchLayout {
         Self::for_size_scaled(w, h, 1.0)
     }
 
+    /// Espelha o layout na horizontal: d-pad à direita, A/B à esquerda (mão canhota).
+    pub fn mirrored(mut self) -> TouchLayout {
+        let w = self.width;
+        let flip_c = |c: &mut Circle| c.cx = w - c.cx;
+        let flip_r = |r: &mut Rect| r.x = w - r.x - r.w;
+        flip_c(&mut self.dpad);
+        flip_c(&mut self.a);
+        flip_c(&mut self.b);
+        flip_r(&mut self.start);
+        flip_r(&mut self.select);
+        flip_r(&mut self.menu);
+        self
+    }
+
     /// Como `for_size`, com os botões multiplicados por `scale` (0,6–1,6).
     pub fn for_size_scaled(w: f32, h: f32, scale: f32) -> TouchLayout {
         Self::for_viewport(w, h, w * 240.0 / 256.0, scale)
@@ -67,12 +81,19 @@ impl TouchLayout {
     /// Layout sabendo onde a imagem do NES termina em retrato (`img_bottom`, px): os controles
     /// começam logo abaixo dela. Em paisagem `img_bottom` é ignorado.
     pub fn for_viewport(w: f32, h: f32, img_bottom: f32, scale: f32) -> TouchLayout {
+        Self::for_viewport_safe(w, h, img_bottom, scale, [0.0; 4])
+    }
+
+    /// Como [`for_viewport`](Self::for_viewport), com a área segura do sistema em px
+    /// (l, t, r, b): recorte da câmera, barras e faixa de gesto, medidos pela plataforma.
+    /// Sem eles as margens são chute em porcentagem e o furo da câmera cai dentro do d-pad.
+    pub fn for_viewport_safe(w: f32, h: f32, img_bottom: f32, scale: f32, safe: [f32; 4]) -> TouchLayout {
         let portrait = h > w;
         let unit = if portrait { w } else { h }; // lado menor
         let scale = scale.clamp(0.5, 2.0);
-        let m = unit * 0.05; // margem
+        let m = (unit * 0.05).max(safe[0].max(safe[2])); // margem (respeita o recorte lateral)
         // Faixa de gesto do sistema na borda inferior (Android): nada de botão ali
-        let inset = (unit * 0.06).max(24.0);
+        let inset = (unit * 0.06).max(24.0).max(safe[3]);
         // Telas "quadradas" (tablets 4:3) deixam pouca altura sob a imagem: encolhe tudo junto
         // em vez de deixar o d-pad passar por cima do START/SELECT ou sair da tela.
         let mut fit = 1.0f32;
@@ -102,7 +123,10 @@ impl TouchLayout {
             start = Rect { x: w * 0.5 + m * 0.5, y: py, w: pill_w, h: pill_h };
             let top = menu.y + menu.h + m;
             let bottom = py - m;
-            let cy = (top + (bottom - top) * 0.55).clamp(top + dpad_r, (bottom - dpad_r).max(top + dpad_r));
+            // o alcance do d-pad é 1,6× o raio (`hit`): é ele que não pode passar por cima das
+            // pílulas, não o círculo desenhado
+            let reach = dpad_r * 1.6;
+            let cy = (top + (bottom - top) * 0.55).clamp(top + dpad_r, (bottom - reach).max(top + dpad_r));
             // nunca abaixo da borda da tela (mesmo se a zona era pequena demais)
             let cy = cy.min(h - inset - dpad_r).max(dpad_r);
             dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
@@ -138,11 +162,15 @@ impl TouchLayout {
     /// ainda responde até 1,6× o raio, para o dedo poder deslizar).
     pub fn hit(&self, x: f32, y: f32) -> Buttons {
         let mut b = Buttons::NONE;
+        // START/SELECT ganham do d-pad: com os botões grandes o alcance do d-pad chega na fileira
+        // de baixo e um dedo no SELECT mandava SELECT|DOWN para o jogo.
+        let on_pill = self.start.contains_pad(x, y, self.start.w * 0.1, self.start.h * 0.5)
+            || self.select.contains_pad(x, y, self.select.w * 0.1, self.select.h * 0.5);
         let dx = x - self.dpad.cx;
         let dy = y - self.dpad.cy;
         let d2 = dx * dx + dy * dy;
         let reach = self.dpad.r * 1.6;
-        if d2 <= reach * reach && d2 >= self.dpad_dead * self.dpad_dead {
+        if !on_pill && d2 <= reach * reach && d2 >= self.dpad_dead * self.dpad_dead {
             // ângulo em graus, 0 = direita, 90 = cima (y cresce para baixo)
             let ang = (-dy).atan2(dx).to_degrees();
             let ang = if ang < 0.0 { ang + 360.0 } else { ang };

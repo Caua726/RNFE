@@ -58,6 +58,30 @@ impl Storage for FsStorage {
         std::fs::rename(&tmp, &path).map_err(err)
     }
 
+    fn list(&self, prefix: &str) -> Vec<(String, u64)> {
+        fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            for e in rd.flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    walk(&path, base, out);
+                } else if let Ok(rel) = path.strip_prefix(base) {
+                    let key = rel.to_string_lossy().replace('\\', "/");
+                    if key.ends_with(".tmp") {
+                        continue;
+                    }
+                    let size = e.metadata().map(|m| m.len()).unwrap_or(0);
+                    out.push((key, size));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.dir, &self.dir, &mut out);
+        out.retain(|(k, _)| k.starts_with(prefix));
+        out.sort();
+        out
+    }
+
     fn remove(&mut self, key: &str) -> Result<(), StorageError> {
         let path = self.path(key)?;
         match std::fs::remove_file(&path) {

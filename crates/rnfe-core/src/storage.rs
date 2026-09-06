@@ -22,6 +22,12 @@ pub trait Storage {
     fn read(&self, key: &str) -> Option<Vec<u8>>;
     fn write(&mut self, key: &str, data: &[u8]) -> Result<(), StorageError>;
     fn remove(&mut self, key: &str) -> Result<(), StorageError>;
+    /// Chaves guardadas que começam com `prefix`, com o tamanho de cada uma em bytes.
+    /// O padrão é vazio: quem não sabe listar (localStorage antigo) segue funcionando, só não
+    /// oferece a limpeza de dados órfãos.
+    fn list(&self, _prefix: &str) -> Vec<(String, u64)> {
+        Vec::new()
+    }
 }
 
 /// Armazenamento em memória: testes e fallback quando não há onde gravar.
@@ -57,6 +63,17 @@ impl Storage for MemoryStorage {
     fn remove(&mut self, key: &str) -> Result<(), StorageError> {
         self.items.remove(key);
         Ok(())
+    }
+
+    fn list(&self, prefix: &str) -> Vec<(String, u64)> {
+        let mut v: Vec<(String, u64)> = self
+            .items
+            .iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(k, d)| (k.clone(), d.len() as u64))
+            .collect();
+        v.sort();
+        v
     }
 }
 

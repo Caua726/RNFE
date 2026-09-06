@@ -19,6 +19,8 @@ pub struct Config {
     pub high_contrast: bool,
     /// Vibração ao apertar um botão de toque (onde a plataforma suporta).
     pub haptics: bool,
+    /// Controles de toque espelhados: d-pad à direita, A/B à esquerda.
+    pub left_handed: bool,
     /// Imagem em múltiplos inteiros do tamanho do NES (senão preenche a janela mantendo o aspecto).
     pub integer_scale: bool,
     /// Volume (0,0–1,0).
@@ -47,6 +49,7 @@ impl Default for Config {
             text_scale: 1.0,
             high_contrast: false,
             haptics: true,
+            left_handed: false,
             integer_scale: false,
             volume: 1.0,
             overscan: false,
@@ -82,6 +85,7 @@ touch_always={}
 text_scale={}
 high_contrast={}
 haptics={}
+left_handed={}
 integer_scale={}
 volume={}
 overscan={}
@@ -97,6 +101,7 @@ sprite_limit={}
             self.text_scale,
             self.high_contrast,
             self.haptics,
+            self.left_handed,
             self.integer_scale,
             self.volume,
             self.overscan,
@@ -129,6 +134,7 @@ sprite_limit={}
                 "text_scale" => c.text_scale = f(c.text_scale, 0.8, 1.6),
                 "high_contrast" => c.high_contrast = b(c.high_contrast),
                 "haptics" => c.haptics = b(c.haptics),
+                "left_handed" => c.left_handed = b(c.left_handed),
                 "integer_scale" => c.integer_scale = b(c.integer_scale),
                 "volume" => c.volume = f(c.volume, 0.0, 1.0),
                 "overscan" => c.overscan = b(c.overscan),
@@ -147,7 +153,7 @@ sprite_limit={}
 /// Lista de ROMs recentes: `hash\tnome` por linha, a mais recente primeiro; os bytes ficam
 /// em `roms/<hash>.nes` para reabrir sem o seletor de arquivos.
 pub const RECENT_KEY: &str = "recent";
-pub const RECENT_MAX: usize = 8;
+pub const RECENT_MAX: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentRom {
@@ -236,13 +242,15 @@ mod tests {
     fn recent_list_orders_and_caps() {
         let mut st = MemoryStorage::new();
         assert!(load_recent(&st).is_empty());
-        for i in 0..10u64 {
+        let n = RECENT_MAX as u64 + 2;
+        for i in 0..n {
             push_recent(&mut st, i, &format!("jogo {i}"), Some(&[i as u8; 16]));
         }
         let l = load_recent(&st);
-        assert_eq!(l.len(), RECENT_MAX);
-        assert_eq!(l[0].hash, 9);
-        assert_eq!(st.read(&RecentRom::rom_key(9)).unwrap(), vec![9u8; 16]);
+        assert_eq!(l.len(), RECENT_MAX, "a lista para no teto");
+        assert_eq!(l[0].hash, n - 1);
+        assert_eq!(st.read(&RecentRom::rom_key(n - 1)).unwrap(), vec![(n - 1) as u8; 16]);
+        assert!(st.read(&RecentRom::rom_key(0)).is_none(), "a mais antiga saiu com os bytes");
         push_recent(&mut st, 5, "jogo 5", None);
         assert_eq!(load_recent(&st)[0].hash, 5, "reabrir sobe para o topo (sem regravar)");
         assert_eq!(st.read(&RecentRom::rom_key(5)).unwrap(), vec![5u8; 16]);

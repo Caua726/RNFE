@@ -34,6 +34,8 @@ pub enum Setting {
     TouchScale,
     TouchOpacity,
     TouchAlways,
+    /// Controles espelhados (d-pad à direita).
+    LeftHanded,
     TextScale,
     HighContrast,
     Haptics,
@@ -49,7 +51,16 @@ pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Vídeo", &[Setting::VideoFilter, Setting::Palette, Setting::IntegerScale, Setting::Overscan]),
     ("Sistema", &[Setting::RegionSetting, Setting::SpriteLimit]),
     ("Controles", &[Setting::Zapper]),
-    ("Toque", &[Setting::TouchScale, Setting::TouchOpacity, Setting::TouchAlways, Setting::Haptics]),
+    (
+        "Toque",
+        &[
+            Setting::TouchScale,
+            Setting::TouchOpacity,
+            Setting::TouchAlways,
+            Setting::LeftHanded,
+            Setting::Haptics,
+        ],
+    ),
     ("Acessibilidade", &[Setting::TextScale, Setting::HighContrast]),
 ];
 
@@ -62,6 +73,7 @@ impl Setting {
             Setting::TextScale => "Tamanho do texto",
             Setting::HighContrast => "Alto contraste",
             Setting::Haptics => "Vibrar ao tocar",
+            Setting::LeftHanded => "Mão canhota (espelhar)",
             Setting::Zapper => "Zapper (mira com o toque)",
             Setting::VideoFilter => "Filtro de vídeo",
             Setting::RegionSetting => "Região",
@@ -77,6 +89,7 @@ impl Setting {
         matches!(
             self,
             Setting::TouchAlways
+                | Setting::LeftHanded
                 | Setting::HighContrast
                 | Setting::Haptics
                 | Setting::Zapper
@@ -109,6 +122,7 @@ impl Setting {
             Setting::TouchAlways => c.touch_always as u8 as f32,
             Setting::HighContrast => c.high_contrast as u8 as f32,
             Setting::Haptics => c.haptics as u8 as f32,
+            Setting::LeftHanded => c.left_handed as u8 as f32,
             Setting::Zapper => c.zapper as u8 as f32,
             Setting::VideoFilter => c.video_filter,
             Setting::RegionSetting => c.region,
@@ -136,6 +150,7 @@ impl Setting {
             Setting::TextScale => pct(c.text_scale),
             Setting::HighContrast => on(c.high_contrast),
             Setting::Haptics => on(c.haptics),
+            Setting::LeftHanded => on(c.left_handed),
             Setting::Zapper => on(c.zapper),
             Setting::VideoFilter => match c.video_filter as u8 {
                 1 => "Suave".into(),
@@ -168,6 +183,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::TouchAlways => c.touch_always = v >= 0.5,
         Setting::HighContrast => c.high_contrast = v >= 0.5,
         Setting::Haptics => c.haptics = v >= 0.5,
+        Setting::LeftHanded => c.left_handed = v >= 0.5,
         Setting::Zapper => c.zapper = v >= 0.5,
         Setting::VideoFilter => c.video_filter = v.clamp(0.0, 2.0).round(),
         Setting::RegionSetting => c.region = v.clamp(0.0, 2.0).round(),
@@ -217,6 +233,9 @@ pub enum Action {
     /// Grava o frame atual em PNG no Storage (`shots/`).
     Screenshot,
     Settings,
+    /// Apaga cópias de ROM, states e capturas de jogos que saíram da lista de recentes.
+    /// Saves de bateria (`sav/`) nunca são tocados: são o progresso real.
+    CleanStorage,
     Back,
     Quit,
     Adjust(Setting, i8),
@@ -258,6 +277,9 @@ pub struct Item {
     pub kind: ItemKind,
     /// Destaque (ex.: turbo ligado).
     pub active: bool,
+    /// Multiplicador da fonte deste item (≤ 1): rótulo que não caberia é encolhido até 0,7×
+    /// em vez de sair cortado com "…" — quem aumenta o texto é justamente quem não vê bem.
+    pub font_scale: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -286,6 +308,9 @@ pub struct Layout {
 #[derive(Debug, Clone, Default)]
 pub struct MenuState {
     pub rom_name: String,
+    /// Largura média de um caractere, em frações do tamanho da fonte (medida na fonte real).
+    /// 0 = desconhecida (nada é encolhido).
+    pub avg_char: f32,
     pub turbo: bool,
     /// Há um botão "Sair" (desktop; web/Android não fecham por menu).
     pub can_quit: bool,
@@ -296,6 +321,10 @@ pub struct MenuState {
     /// Tela de states: carregar (true) ou salvar (false); e quais slots têm conteúdo.
     pub states_load: bool,
     pub slots: [bool; 3],
+    /// Descrição de cada slot ("12 min de jogo · há 3 h"); vazio quando não há informação.
+    pub slot_info: [String; 3],
+    /// "12,4 MB guardados · 3 órfãos" (vazio quando a plataforma não sabe listar).
+    pub storage_info: String,
     /// Tempo de jogo nesta ROM, em segundos (mostrado na pausa).
     pub play_seconds: u64,
     /// O seletor de ROM está aberto (o item "Abrir ROM" vira "Abrindo…").
@@ -324,7 +353,7 @@ pub fn ui_scale(w: f32, h: f32, config: &Config, dpi: f32) -> f32 {
 }
 
 fn item(rect: Rect, label: impl Into<String>, action: Action, kind: ItemKind) -> Item {
-    Item { rect, label: label.into(), value: String::new(), action, kind, active: false }
+    Item { rect, label: label.into(), value: String::new(), action, kind, active: false, font_scale: 1.0 }
 }
 
 /// Monta os itens de uma coluna: encolhe as linhas para caber em `h` se precisar.
@@ -356,10 +385,16 @@ impl Column {
         items.len() - 1
     }
 
-    /// Uma linha com `n` botões lado a lado.
-    fn row(&mut self, items: &mut Vec<Item>, cells: Vec<(String, Action, ItemKind)>) {
+    /// Uma linha com `n` botões lado a lado — ou um por linha, quando não cabem.
+    fn row(&mut self, items: &mut Vec<Item>, cells: Vec<(String, Action, ItemKind)>, min_cell: f32) {
         let n = cells.len() as f32;
         let cw = (self.w - self.gap * (n - 1.0)) / n;
+        if cw < min_cell {
+            for (label, action, kind) in cells {
+                self.push(items, label, action, kind);
+            }
+            return;
+        }
         for (i, (label, action, kind)) in cells.into_iter().enumerate() {
             let x = self.x + i as f32 * (cw + self.gap);
             items.push(item(Rect { x, y: self.y, w: cw, h: self.row_h }, label, action, kind));
@@ -444,6 +479,8 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             let rows = 7.0 + st.can_quit as u8 as f32 + st.can_screenshot as u8 as f32;
             col.fit(rows, h, min_row);
             col.push(&mut items, "Continuar", Action::Resume, ItemKind::Primary);
+            // largura mínima da célula: o maior rótulo da linha na fonte corrente
+            let min_cell = if st.avg_char > 0.0 { 10.0 * st.avg_char * font + 24.0 * s } else { 0.0 };
             col.row(
                 &mut items,
                 vec![
@@ -451,6 +488,7 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                     ("Carregar".into(), Action::States { load: true }, ItemKind::Button),
                     ("Voltar 5 s".into(), Action::Rewind, ItemKind::Button),
                 ],
+                min_cell,
             );
             let i = col.push(
                 &mut items,
@@ -519,6 +557,23 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
                     };
                     items[i].value = value;
                 }
+                col.y += gap;
+            }
+            if !st.storage_info.is_empty() {
+                items.push(item(
+                    Rect { x, y: col.y, w: bw, h: 30.0 * s },
+                    "Armazenamento",
+                    Action::None,
+                    ItemKind::Header,
+                ));
+                col.y += 30.0 * s + gap * 0.5;
+                let i = col.push(
+                    &mut items,
+                    "Limpar cópias e states órfãos",
+                    Action::CleanStorage,
+                    ItemKind::Button,
+                );
+                items[i].value = st.storage_info.clone();
                 col.y += gap;
             }
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
@@ -599,7 +654,14 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             col.fit(4.0, h, min_row);
             for (i, filled) in st.slots.iter().enumerate() {
                 let n = i as u8 + 1;
-                let label = format!("Slot {n} — {}", if *filled { "salvo" } else { "vazio" });
+                // "salvo" não dizia qual dos três é o mais recente — a miniatura de muitos jogos
+                // é igual entre slots.
+                let info = st.slot_info.get(i).map(String::as_str).unwrap_or("");
+                let label = match (*filled, info.is_empty()) {
+                    (false, _) => format!("Slot {n} — vazio"),
+                    (true, true) => format!("Slot {n} — salvo"),
+                    (true, false) => format!("Slot {n} — {info}"),
+                };
                 let action = if st.states_load { Action::LoadSlot(n) } else { Action::SaveSlot(n) };
                 let idx = col.push(&mut items, label, action, ItemKind::Slot { filled: *filled });
                 if st.states_load && !filled {
@@ -609,7 +671,26 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
             col.push(&mut items, "Voltar", Action::Back, ItemKind::Button);
         }
     }
-    let content_h = items.iter().map(|i| i.rect.y + i.rect.h).fold(0.0, f32::max) + gap;
+    // Rótulo maior que a linha: encolhe a fonte do item (até 0,7×) em vez de deixar o desenho
+    // cortar com "…". `avg_char` vem medido na fonte de verdade; 0 desliga o ajuste.
+    if st.avg_char > 0.0 {
+        let pad = 12.0 * s;
+        for it in &mut items {
+            let chars = it.label.chars().count() as f32 + it.value.chars().count() as f32;
+            if chars == 0.0 {
+                continue;
+            }
+            let need = chars * st.avg_char * font + pad * 3.0;
+            let have = it.rect.w;
+            if need > have {
+                it.font_scale = (have / need).clamp(0.7, 1.0);
+            }
+        }
+    }
+    // Rodapé reservado: a dica da tela inicial e a caixa do toast são desenhadas em coordenadas
+    // fixas no pé da tela, e sem esta folga o último item da lista fica embaixo delas.
+    let footer = 46.0 * s;
+    let content_h = items.iter().map(|i| i.rect.y + i.rect.h).fold(0.0, f32::max) + gap + footer;
     Layout {
         title,
         subtitle,
@@ -675,14 +756,13 @@ pub fn activate(layout: &Layout, index: usize, dir: i32) -> Option<Action> {
 pub fn hit(layout: &Layout, x: f32, y: f32) -> Option<Action> {
     let it = layout.items.iter().find(|i| i.rect.contains(x, y))?;
     Some(match (&it.kind, &it.action) {
-        (ItemKind::Slider { .. }, Action::Slide(s, _)) => {
-            // só a trilha (com a folga do knob) muda o valor; o resto da linha é área de rolagem
-            let t = slider_track(&it.rect, layout);
-            let grab = Rect { x: t.x - t.h, y: t.y - t.h * 1.6, w: t.w + t.h * 2.0, h: t.h * 4.2 };
-            if !grab.contains(x, y) {
-                return Some(Action::None);
-            }
-            Action::Slide(*s, slider_fraction(&it.rect, x, layout))
+        (ItemKind::Slider { fraction }, Action::Slide(s, _)) => {
+            // Toque simples (sem arrasto) anda **um passo** para o lado em que o dedo caiu, em
+            // qualquer ponto da linha: pular para a fração absoluta zerava o volume num toque
+            // acidental, e o terço de cima (rótulo e valor) não respondia a nada.
+            let f = slider_fraction(&it.rect, x, layout);
+            let dir: i8 = if f >= *fraction { 1 } else { -1 };
+            Action::Adjust(*s, dir)
         }
         (ItemKind::Header, _) => Action::None,
         _ => it.action.clone(),
@@ -798,9 +878,11 @@ mod tests {
         }
     }
 
-    /// Tocar no rótulo de um slider não muda o valor: só a trilha responde (o resto rola).
+    /// Toque simples num slider anda **um passo** para o lado do dedo, em qualquer ponto da
+    /// linha — inclusive no rótulo, que antes não respondia a nada. O salto para a posição
+    /// absoluta ficou só para o arrasto (`slide`), senão um toque acidental zerava o volume.
     #[test]
-    fn slider_only_reacts_on_its_track() {
+    fn slider_tap_steps_and_drag_jumps() {
         let c = Config::default();
         let l = layout(Screen::Settings, 1080.0, 2340.0, &c, 2.6, &state());
         let (i, item) = l
@@ -810,9 +892,11 @@ mod tests {
             .find(|(_, it)| matches!(it.kind, ItemKind::Slider { .. }))
             .expect("um slider");
         let t = slider_track(&item.rect, &l);
-        assert!(hit(&l, t.x + t.w * 0.5, t.y + t.h * 0.5).is_some());
-        assert!(matches!(hit(&l, item.rect.x + 4.0, item.rect.y + 4.0), Some(Action::None)));
-        // arrastar continua funcionando pelo índice do item
+        // no rótulo (canto superior esquerdo da linha): passo para baixo, não "nada"
+        assert!(matches!(hit(&l, item.rect.x + 4.0, item.rect.y + 4.0), Some(Action::Adjust(_, -1))));
+        // à direita do valor corrente: passo para cima
+        assert!(matches!(hit(&l, t.x + t.w, t.y + t.h * 0.5), Some(Action::Adjust(_, 1))));
+        // arrastar continua saltando para a posição absoluta
         assert!(matches!(slide(&l, i, t.x + t.w), Some(Action::Slide(..))));
     }
 
@@ -844,8 +928,8 @@ mod tests {
         let vol = l.items.iter().position(|i| matches!(i.action, Action::Slide(Setting::Volume, _))).unwrap();
         let r = l.items[vol].rect;
         let t = slider_track(&r, &l);
-        // toque no meio da trilha → 50 %
-        match hit(&l, t.x + t.w / 2.0, r.y + r.h / 2.0) {
+        // arrasto até o meio da trilha → 50 %
+        match slide(&l, vol, t.x + t.w / 2.0) {
             Some(Action::Slide(Setting::Volume, f)) => {
                 assert!((f - 0.5).abs() < 0.02, "{f}");
                 set_fraction(&mut c, Setting::Volume, f);

@@ -12,6 +12,13 @@ import android.provider.OpenableColumns;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityNodeProvider;
+import android.widget.Button;
+import java.util.Collections;
 import android.widget.Toast;
 import android.view.WindowManager;
 import java.util.ArrayList;
@@ -40,12 +47,32 @@ public class MainActivity extends NativeActivity {
     /** Eixos do gamepad (d-pad como hat, analógico esquerdo), -1..1. Implementado em Rust. */
     public native void onPadAxes(float x, float y);
 
+    /** O leitor de tela ativou o item de índice `i` da lista publicada. Implementado em Rust. */
+    public native void onA11yClick(int index);
+
+    /** Área segura da janela em px (recorte da câmera, barras, gestos). Implementado em Rust. */
+    public native void onInsets(float left, float top, float right, float bottom);
+
+    private A11yOverlay a11y;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // A tela fica ligada só enquanto joga (setKeepScreenOn, chamado pelo Rust)
         vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
         hideSystemUi();
+        // O jogo é uma superfície desenhada por nós: para o TalkBack, o app inteiro era um
+        // retângulo mudo. Esta camada transparente publica os itens do menu como nós virtuais.
+        a11y = new A11yOverlay(this);
+        addContentView(
+                a11y,
+                new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Área segura real, em vez de margens chutadas em porcentagem no Rust.
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((v, insets) -> {
+            reportInsets(insets);
+            return insets;
+        });
         // Reaberto pelo Recents depois de o sistema matar o processo: o VIEW original não vale mais
         if ((getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
             handleViewIntent(getIntent());
@@ -101,6 +128,128 @@ public class MainActivity extends NativeActivity {
         // save/config já foram gravados em `suspended`.
         super.onDestroy();
         android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    /** Manda ao Rust a área segura da janela (recorte da câmera, barras e faixa de gesto). */
+    private void reportInsets(WindowInsets insets) {
+        if (insets == null) return;
+        int l, t, r, b;
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.graphics.Insets i = insets.getInsets(
+                    WindowInsets.Type.systemBars()
+                            | WindowInsets.Type.displayCutout()
+                            | WindowInsets.Type.systemGestures());
+            l = i.left;
+            t = i.top;
+            r = i.right;
+            b = i.bottom;
+        } else {
+            l = insets.getSystemWindowInsetLeft();
+            t = insets.getSystemWindowInsetTop();
+            r = insets.getSystemWindowInsetRight();
+            b = insets.getSystemWindowInsetBottom();
+            android.view.DisplayCutout cut =
+                    android.os.Build.VERSION.SDK_INT >= 28 ? insets.getDisplayCutout() : null;
+            if (cut != null) {
+                l = Math.max(l, cut.getSafeInsetLeft());
+                t = Math.max(t, cut.getSafeInsetTop());
+                r = Math.max(r, cut.getSafeInsetRight());
+                b = Math.max(b, cut.getSafeInsetBottom());
+            }
+        }
+        try {
+            onInsets(l, t, r, b);
+        } catch (Throwable ignored) { // o laço nativo pode ainda não existir
+        }
+    }
+
+    /** Itens do menu para o leitor de tela (chamada pelo Rust, de outra thread). */
+    public void setA11yNodes(String[] labels, int[] rects) {
+        final A11yOverlay view = a11y;
+        if (view == null) return;
+        mainHandler.post(() -> view.setNodes(labels, rects));
+    }
+
+    /** Camada transparente que existe só para o leitor de tela: não desenha e não pega toque. */
+    private final class A11yOverlay extends View {
+        private String[] labels = new String[0];
+        private int[] rects = new int[0];
+
+        A11yOverlay(android.content.Context ctx) {
+            super(ctx);
+            setWillNotDraw(true);
+            setClickable(false);
+            setFocusable(false);
+            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        }
+
+        void setNodes(String[] newLabels, int[] newRects) {
+            if (newLabels == null || newRects == null || newRects.length < newLabels.length * 4) {
+                labels = new String[0];
+                rects = new int[0];
+            } else {
+                labels = newLabels;
+                rects = newRects;
+            }
+            sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent ev) {
+            return false; // o toque é do jogo, sempre
+        }
+
+        @Override
+        public AccessibilityNodeProvider getAccessibilityNodeProvider() {
+            return provider;
+        }
+
+        private final AccessibilityNodeProvider provider = new AccessibilityNodeProvider() {
+            @Override
+            public AccessibilityNodeInfo createAccessibilityNodeInfo(int id) {
+                if (id == View.NO_ID) {
+                    AccessibilityNodeInfo host = AccessibilityNodeInfo.obtain(A11yOverlay.this);
+                    onInitializeAccessibilityNodeInfo(host);
+                    for (int i = 0; i < labels.length; i++) {
+                        host.addChild(A11yOverlay.this, i);
+                    }
+                    return host;
+                }
+                if (id < 0 || id >= labels.length) return null;
+                AccessibilityNodeInfo info = AccessibilityNodeInfo.obtain(A11yOverlay.this, id);
+                info.setPackageName(getContext().getPackageName());
+                info.setClassName(Button.class.getName());
+                info.setContentDescription(labels[id]);
+                info.setParent(A11yOverlay.this);
+                info.setSource(A11yOverlay.this, id);
+                info.setVisibleToUser(true);
+                info.setEnabled(true);
+                info.setClickable(true);
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK);
+                int[] loc = new int[2];
+                getLocationOnScreen(loc);
+                int i4 = id * 4;
+                Rect screen = new Rect(rects[i4], rects[i4 + 1], rects[i4 + 2], rects[i4 + 3]);
+                screen.offset(loc[0], loc[1]);
+                info.setBoundsInScreen(screen);
+                return info;
+            }
+
+            @Override
+            public boolean performAction(int id, int action, Bundle args) {
+                if (id >= 0 && id < labels.length && action == AccessibilityNodeInfo.ACTION_CLICK) {
+                    onA11yClick(id);
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public java.util.List<AccessibilityNodeInfo> findAccessibilityNodeInfosByText(
+                    String text, int id) {
+                return Collections.emptyList();
+            }
+        };
     }
 
     /** Mantém a tela ligada enquanto há jogo rodando (chamada pelo Rust via JNI). */

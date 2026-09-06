@@ -26,6 +26,9 @@ pub type KeepScreenOn = Box<dyn Fn(bool) + Send + Sync>;
 pub type Notify = Box<dyn Fn(&str) + Send + Sync>;
 /// Retângulos (l, t, r, b em px) onde o sistema não deve capturar gestos de borda (Android).
 pub type GestureExclusion = Box<dyn Fn([[i32; 4]; 2]) + Send + Sync>;
+/// Itens do menu atual entregues ao leitor de tela do sistema: rótulo e retângulo (l, t, r, b).
+/// Sem isto, um app que desenha a própria interface é um retângulo mudo para o TalkBack.
+pub type A11yNodes = Box<dyn Fn(Vec<(String, [i32; 4])>) + Send + Sync>;
 
 /// O que o binário entrega ao frontend para começar.
 pub struct Launch {
@@ -34,12 +37,16 @@ pub struct Launch {
     pub rom_name: String,
     /// Onde ficam `.sav`, save states, ajustes e ROMs recentes.
     pub storage: Box<dyn Storage>,
+    /// Caminho dessa pasta no disco, quando faz sentido mostrar (desktop, Android).
+    pub data_dir: Option<String>,
     /// Seletor de ROM próprio (Android usa o SAF por JNI).
     pub picker: Option<RomPicker>,
     pub haptic: Option<Haptic>,
     pub gesture_exclusion: Option<GestureExclusion>,
     pub keep_screen_on: Option<KeepScreenOn>,
     pub notify: Option<Notify>,
+    /// Publica os itens do menu para o leitor de tela (Android).
+    pub a11y: Option<A11yNodes>,
 }
 
 impl Launch {
@@ -48,10 +55,12 @@ impl Launch {
             nes: None,
             rom_name: String::new(),
             storage,
+            data_dir: None,
             picker: None,
             haptic: None,
             keep_screen_on: None,
             notify: None,
+            a11y: None,
             gesture_exclusion: None,
         }
     }

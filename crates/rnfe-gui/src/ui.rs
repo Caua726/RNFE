@@ -112,6 +112,9 @@ impl Ui {
     }
 
     fn glyph(&mut self, ch: char, size: f32) -> &Glyph {
+        // A fonte embutida é latina: kana, kanji e setas viram o `.notdef` (um retângulo vazado)
+        // e um nome de ROM japonês vira uma fileira de quadrados. Melhor um '?' honesto.
+        let ch = if ch == ' ' || self.font.lookup_glyph_index(ch) != 0 { ch } else { '?' };
         let key = (ch, (size * 4.0) as u32);
         self.cache.entry(key).or_insert_with(|| {
             let (metrics, bitmap) = self.font.rasterize(ch, size);
@@ -501,7 +504,7 @@ impl Ui {
         use rnfe_frontend::menu::ItemKind;
         let r = it.rect;
         let rad = layout.radius;
-        let font = layout.font;
+        let font = layout.font * it.font_scale.clamp(0.5, 1.0);
         let pad = rad;
         if matches!(it.kind, ItemKind::Header) {
             let size = font * 0.78;
