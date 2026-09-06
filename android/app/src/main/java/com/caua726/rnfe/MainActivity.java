@@ -179,6 +179,8 @@ public class MainActivity extends NativeActivity {
     private final class A11yOverlay extends View {
         private String[] labels = new String[0];
         private int[] rects = new int[0];
+        /** Nó virtual com o foco do leitor de tela (-1 = nenhum). */
+        private int focused = -1;
 
         A11yOverlay(android.content.Context ctx) {
             super(ctx);
@@ -196,12 +198,25 @@ public class MainActivity extends NativeActivity {
                 labels = newLabels;
                 rects = newRects;
             }
+            if (focused >= labels.length) focused = -1;
             sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent ev) {
             return false; // o toque é do jogo, sempre
+        }
+
+        /** Evento de acessibilidade vindo de um nó virtual (foco entrando ou saindo). */
+        private void sendVirtualEvent(int id, int type) {
+            ViewGroup parent = (ViewGroup) getParent();
+            if (parent == null || id < 0 || id >= labels.length) return;
+            AccessibilityEvent ev = AccessibilityEvent.obtain(type);
+            ev.setPackageName(getContext().getPackageName());
+            ev.setClassName(Button.class.getName());
+            ev.getText().add(labels[id]);
+            ev.setSource(A11yOverlay.this, id);
+            parent.requestSendAccessibilityEvent(A11yOverlay.this, ev);
         }
 
         @Override
@@ -230,7 +245,17 @@ public class MainActivity extends NativeActivity {
                 info.setVisibleToUser(true);
                 info.setEnabled(true);
                 info.setClickable(true);
+                // Sem foco de acessibilidade o TalkBack não consegue pousar em nó virtual
+                // nenhum: explorar por toque não encontrava nada.
+                info.setFocusable(true);
+                info.setAccessibilityFocused(focused == id);
                 info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK);
+                if (focused == id) {
+                    info.addAction(
+                            AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+                } else {
+                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS);
+                }
                 int[] loc = new int[2];
                 getLocationOnScreen(loc);
                 int i4 = id * 4;
@@ -242,11 +267,27 @@ public class MainActivity extends NativeActivity {
 
             @Override
             public boolean performAction(int id, int action, Bundle args) {
-                if (id >= 0 && id < labels.length && action == AccessibilityNodeInfo.ACTION_CLICK) {
-                    onA11yClick(id);
-                    return true;
+                if (id < 0 || id >= labels.length) return false;
+                switch (action) {
+                    case AccessibilityNodeInfo.ACTION_CLICK:
+                        onA11yClick(id);
+                        return true;
+                    case AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS:
+                        focused = id;
+                        sendVirtualEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED);
+                        return true;
+                    case AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS:
+                        if (focused == id) focused = -1;
+                        sendVirtualEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED);
+                        return true;
+                    default:
+                        return false;
                 }
-                return false;
+            }
+
+            @Override
+            public AccessibilityNodeInfo findFocus(int focus) {
+                return focused >= 0 ? createAccessibilityNodeInfo(focused) : null;
             }
 
             @Override

@@ -168,6 +168,8 @@ fn call_a11y(app: &AndroidApp, nodes: Vec<(String, [i32; 4])>) -> Result<(), Str
         .map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    // sem quadro local próprio, N referências de String por publicação vazam até o retorno
+    env.push_local_frame(nodes.len() as i32 * 2 + 16).map_err(|e| e.to_string())?;
     let vazio = env.new_string("").map_err(|e| e.to_string())?;
     let labels =
         env.new_object_array(nodes.len() as i32, "java/lang/String", &vazio).map_err(|e| e.to_string())?;
@@ -180,11 +182,16 @@ fn call_a11y(app: &AndroidApp, nodes: Vec<(String, [i32; 4])>) -> Result<(), Str
     let arr = env.new_int_array(rects.len() as i32).map_err(|e| e.to_string())?;
     env.set_int_array_region(&arr, 0, &rects).map_err(|e| e.to_string())?;
     let args = [jni::objects::JValue::Object(&labels), jni::objects::JValue::Object(&arr)];
-    if let Err(e) = env.call_method(&activity, "setA11yNodes", "([Ljava/lang/String;[I)V", &args) {
+    let r = env.call_method(&activity, "setA11yNodes", "([Ljava/lang/String;[I)V", &args);
+    if let Err(e) = r {
         let _ = env.exception_describe();
         let _ = env.exception_clear();
+        // SAFETY: o quadro foi empilhado logo acima, nesta mesma thread anexada.
+        let _ = unsafe { env.pop_local_frame(&JObject::null()) };
         return Err(e.to_string());
     }
+    // SAFETY: idem.
+    let _ = unsafe { env.pop_local_frame(&JObject::null()) };
     Ok(())
 }
 
@@ -210,7 +217,11 @@ pub extern "system" fn Java_com_caua726_rnfe_MainActivity_onInsets<'l>(
     right: f32,
     bottom: f32,
 ) {
-    deliver(UserEvent::SafeInsets { left, top, right, bottom });
+    // Não passa por `PENDING`: ele tem uma vaga só, e um inset chegando no arranque frio
+    // sobrescrevia a ROM que o "Abrir com" tinha acabado de guardar lá.
+    if let Some(p) = PROXY.lock().ok().and_then(|g| g.clone()) {
+        let _ = p.send_event(UserEvent::SafeInsets { left, top, right, bottom });
+    }
 }
 
 #[unsafe(no_mangle)]

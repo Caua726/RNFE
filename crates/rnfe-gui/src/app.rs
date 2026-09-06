@@ -135,6 +135,12 @@ pub struct App {
     a11y: Option<crate::A11yNodes>,
     /// Última lista publicada ao leitor de tela (não republicar a cada frame).
     a11y_key: Option<(u64, usize, i32)>,
+    /// Ação de cada nó publicado, na mesma ordem (o índice do clique vem do sistema).
+    a11y_actions: Vec<menu::Action>,
+    /// Descrição dos slots e uso do armazenamento, lidos ao **entrar** nas telas que os mostram:
+    /// calcular no `menu_state` fazia varredura de disco a cada quadro de arrasto de slider.
+    slot_info_cache: [String; 3],
+    storage_info_cache: String,
     /// Área segura do sistema (l, t, r, b em px): recorte da câmera e barras. Android.
     safe_insets: [f32; 4],
     /// Item de menu pressionado: índice, dedo (ou `MOUSE_ID`) e onde começou; a ação vale ao soltar.
@@ -145,6 +151,11 @@ pub struct App {
     states_load: bool,
     slots: [bool; 3],
     confirm_reset: bool,
+    /// Limpeza do armazenamento aguardando o segundo toque.
+    confirm_clean: bool,
+    /// Até quando a prévia dos controles de toque continua na tela depois de mexer no ajuste
+    /// (o toggle só muda ao soltar: sem isso a prévia sumia mostrando o valor velho).
+    touch_preview_until: Instant,
     /// Frames emulados nesta ROM (tempo de jogo).
     play_frames: u64,
     save: SaveManager,
@@ -271,12 +282,17 @@ impl App {
             gesture_exclusion,
             a11y,
             a11y_key: None,
+            a11y_actions: Vec::new(),
+            slot_info_cache: [const { String::new() }; 3],
+            storage_info_cache: String::new(),
             safe_insets: [0.0; 4],
             pressed: None,
             config_dirty: false,
             states_load: false,
             slots: [false; 3],
             confirm_reset: false,
+            confirm_clean: false,
+            touch_preview_until: now,
             play_frames: 0,
             save,
             rewind: Rewind::new(Rewind::DEFAULT_CAP),
@@ -348,27 +364,46 @@ impl App {
         if self.a11y.is_none() {
             return;
         }
-        let key = Some((self.layout_gen, self.screen as usize, self.scroll as i32));
+        // Jogando não há menu: publicar lista vazia, senão o leitor de tela continua anunciando
+        // (e ativando) os botões da tela anterior por cima do jogo.
+        if self.screen == Screen::Playing {
+            if self.a11y_key.is_some() {
+                self.a11y_key = None;
+                self.a11y_actions.clear();
+                if let Some(f) = &self.a11y {
+                    f(Vec::new());
+                }
+            }
+            return;
+        }
+        // o scroll entra quantizado: republicar a cada pixel arrastado era um array de String
+        // e um Handler.post por quadro
+        let key = Some((self.layout_gen, self.screen as usize, (self.scroll / 16.0) as i32));
         if key == self.a11y_key {
             return;
         }
         self.a11y_key = key;
         let scroll = self.scroll;
         let layout = self.layout();
-        let nodes: Vec<(String, [i32; 4])> = layout
-            .items
-            .iter()
-            .filter(|it| it.action != menu::Action::None)
-            .map(|it| {
-                let label = if it.value.is_empty() {
-                    it.label.clone()
-                } else {
-                    format!("{}, {}", it.label, it.value)
-                };
-                let r = &it.rect;
-                (label, [r.x as i32, (r.y - scroll) as i32, (r.x + r.w) as i32, (r.y - scroll + r.h) as i32])
-            })
-            .collect();
+        let mut nodes = Vec::with_capacity(layout.items.len());
+        let mut acoes = Vec::with_capacity(layout.items.len());
+        for it in &layout.items {
+            let label =
+                if it.value.is_empty() { it.label.clone() } else { format!("{}, {}", it.label, it.value) };
+            let r = &it.rect;
+            nodes.push((
+                label,
+                [r.x as i32, (r.y - scroll) as i32, (r.x + r.w) as i32, (r.y - scroll + r.h) as i32],
+            ));
+            // Ativar um slider pelo leitor de tela tem que **mudar** o valor: publicar
+            // `Slide(valor atual)` regravava o mesmo número e deixava volume, texto e paleta
+            // inalcançáveis por TalkBack.
+            acoes.push(match &it.action {
+                menu::Action::Slide(set, _) => menu::Action::Adjust(*set, 1),
+                outra => outra.clone(),
+            });
+        }
+        self.a11y_actions = acoes;
         if let Some(f) = &self.a11y {
             f(nodes);
         }
@@ -386,20 +421,30 @@ impl App {
         self.scroll = self.scroll.clamp(0.0, max.max(0.0));
     }
 
-    /// Chaves guardadas que não pertencem a nenhuma ROM da lista de recentes (cópias da ROM,
-    /// states e capturas). `sav/` fica de fora de propósito: é o progresso do jogador.
+    /// Chaves guardadas que não pertencem a nenhuma ROM viva (nem nos recentes, nem com cópia
+    /// da ROM guardada, nem com save de bateria). `sav/` nunca é apagado: é o progresso.
     fn orphans(&self) -> (u64, Vec<String>) {
         let mut total = 0u64;
         let mut orphans = Vec::new();
-        let known: Vec<String> = self.recent.iter().map(|r| format!("{:016x}", r.hash)).collect();
-        for prefix in ["roms/", "state/", "shots/", "sav/", "config", "recent"] {
+        // "vivo" = está nos recentes, ou ainda tem a ROM guardada, ou tem save de bateria.
+        // Sem isso, a limpeza comia os states de quem só saiu da lista.
+        let mut vivos: Vec<String> = self.recent.iter().map(|r| format!("{:016x}", r.hash)).collect();
+        for prefix in ["roms/", "sav/"] {
+            for (key, _) in self.storage.list(prefix) {
+                if let Some(h) = key.rsplit('/').next().and_then(|f| f.split('.').next()) {
+                    if !vivos.iter().any(|v| v == h) {
+                        vivos.push(h.to_string());
+                    }
+                }
+            }
+        }
+        for prefix in ["roms/", "state/", "shots/", "sav/"] {
             for (key, size) in self.storage.list(prefix) {
                 total += size;
                 if prefix == "sav/" || !key.contains('/') {
                     continue;
                 }
-                let orphan = !known.iter().any(|h| key.contains(h.as_str()));
-                if orphan {
+                if !vivos.iter().any(|h| key.contains(h.as_str())) {
                     orphans.push(key);
                 }
             }
@@ -530,6 +575,10 @@ impl App {
         }
         if s == Screen::States {
             self.refresh_slots();
+            self.slot_info_cache = [self.slot_info(1), self.slot_info(2), self.slot_info(3)];
+        }
+        if s == Screen::Settings {
+            self.storage_info_cache = self.storage_info();
         }
         self.confirm_reset = false;
         self.confirm_remove = None;
@@ -540,6 +589,9 @@ impl App {
         self.input.clear();
         self.input2.clear();
         self.touch.clear();
+        // o A que escolheu "Continuar" não pode chegar ao console junto com o jogo de volta
+        self.pad = [Buttons::NONE; 2];
+        self.pad_stick = [Buttons::NONE; 2];
         self.rewinding = false;
         self.save_config();
         if self.screen == Screen::Playing {
@@ -602,7 +654,11 @@ impl App {
             g.set_video(self.config.integer_scale, self.config.overscan, self.config.video_filter as u8);
         }
         self.refresh_touch_layout();
-        self.invalidate_layout();
+        // arrastando um slider, refazer o layout muda a linha de baixo do dedo (o "Tamanho do
+        // texto" muda a própria altura): a reconstrução espera o dedo sair
+        if self.drag != Drag::Slider {
+            self.invalidate_layout();
+        }
         self.config_dirty = true;
     }
 
@@ -638,6 +694,14 @@ impl App {
         #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
         {
             rfd::MessageDialog::new().set_title("RNFE").set_description(&text).show();
+        }
+        // Na web não há `notify` nem diálogo do sistema: sem isto a falha de vídeo virava um
+        // canvas em branco com uma linha no console que ninguém abre.
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(w) = web_sys::window() {
+                let _ = w.alert_with_message(&text);
+            }
         }
     }
 
@@ -879,6 +943,7 @@ impl App {
         let meta = format!("epoch={secs}\nframes={}\n", self.play_frames);
         let _ = self.storage.write(&format!("{key}.meta"), meta.as_bytes());
         self.refresh_slots();
+        self.slot_info_cache = [self.slot_info(1), self.slot_info(2), self.slot_info(3)];
     }
 
     /// Miniatura de um slot, em RGBA já pronto para desenhar.
@@ -944,8 +1009,8 @@ impl App {
     fn menu_state(&self) -> MenuState {
         MenuState {
             avg_char: self.avg_char,
-            slot_info: [self.slot_info(1), self.slot_info(2), self.slot_info(3)],
-            storage_info: self.storage_info(),
+            slot_info: self.slot_info_cache.clone(),
+            storage_info: self.storage_info_cache.clone(),
             rom_name: self.rom_name.clone(),
             turbo: self.turbo,
             can_quit: cfg!(not(any(target_arch = "wasm32", target_os = "android"))),
@@ -963,12 +1028,27 @@ impl App {
         }
     }
 
+    /// Ajusta a escala de fonte de cada item medindo o texto na fonte de verdade: a estimativa
+    /// por `avg_char` do modelo de menu erra em rótulo com acento, número e valor à direita.
+    fn fit_item_fonts(&mut self, layout: &mut Layout) {
+        let font = layout.font;
+        let pad = 12.0 * layout.ui_scale;
+        for it in &mut layout.items {
+            let precisa = self.ui.text_width(&it.label, font) as f32
+                + if it.value.is_empty() { 0.0 } else { self.ui.text_width(&it.value, font) as f32 }
+                + pad * 3.0;
+            let cabe = it.rect.w;
+            it.font_scale = if precisa > cabe { (cabe / precisa).clamp(0.6, 1.0) } else { 1.0 };
+        }
+    }
+
     fn layout(&mut self) -> Layout {
         if let Some(l) = &self.layout_cache {
             return l.clone();
         }
         let (w, h) = self.size();
-        let l = menu::layout(self.screen, w as f32, h as f32, &self.config, self.dpi, &self.menu_state());
+        let mut l = menu::layout(self.screen, w as f32, h as f32, &self.config, self.dpi, &self.menu_state());
+        self.fit_item_fonts(&mut l);
         self.layout_cache = Some(l.clone());
         l
     }
@@ -1053,7 +1133,13 @@ impl App {
                 let (_, orphans) = self.orphans();
                 if orphans.is_empty() {
                     self.toast("Nada a limpar");
+                } else if !self.confirm_clean || Instant::now() >= self.confirm_until {
+                    // apagar arquivo de uma vez só, num toque, é jeito de perder save state
+                    self.confirm_clean = true;
+                    self.confirm_until = Instant::now() + Duration::from_secs(4);
+                    self.toast(format!("Apagar {} arquivos órfãos? Toque de novo", orphans.len()));
                 } else {
+                    self.confirm_clean = false;
                     let n = orphans.len();
                     let mut erros = 0;
                     for key in orphans {
@@ -1077,6 +1163,15 @@ impl App {
                 el.exit();
             }
             Action::Adjust(setting, delta) => {
+                if matches!(
+                    setting,
+                    menu::Setting::TouchScale
+                        | menu::Setting::TouchOpacity
+                        | menu::Setting::TouchAlways
+                        | menu::Setting::LeftHanded
+                ) {
+                    self.touch_preview_until = Instant::now() + Duration::from_millis(1500);
+                }
                 menu::adjust(&mut self.config, setting, delta);
                 self.apply_config();
             }
@@ -1105,6 +1200,16 @@ impl App {
         false
     }
 
+    /// Vale a pena acordar o laço para ler o gilrs (há backend de gamepad nesta plataforma).
+    fn gamepad_polling(&self) -> bool {
+        #[cfg(feature = "gamepad")]
+        {
+            self.gilrs.is_some()
+        }
+        #[cfg(not(feature = "gamepad"))]
+        false
+    }
+
     #[cfg(feature = "gamepad")]
     fn poll_gamepad(&mut self) {
         use gilrs::{Axis, Button, EventType};
@@ -1118,11 +1223,18 @@ impl App {
             let id: usize = ev.id.into();
             let port = match ports.iter().position(|&p| p == id) {
                 Some(p) => p,
-                None if ports.len() < 2 => {
-                    ports.push(id);
-                    ports.len() - 1
-                }
-                None => continue,
+                // porta vaga (nunca usada, ou liberada por um Disconnected)
+                None => match ports.iter().position(|&p| p == usize::MAX) {
+                    Some(p) => {
+                        ports[p] = id;
+                        p
+                    }
+                    None if ports.len() < 2 => {
+                        ports.push(id);
+                        ports.len() - 1
+                    }
+                    None => continue,
+                },
             };
             let map = |b: Button| match b {
                 Button::South | Button::East => Buttons::A,
@@ -1143,7 +1255,8 @@ impl App {
                     EventType::ButtonPressed(Button::DPadRight, _) => nav.push(2),
                     EventType::ButtonPressed(Button::South | Button::Start, _) => nav.push(0),
                     EventType::ButtonPressed(Button::East | Button::Select, _) => nav.push(3),
-                    EventType::ButtonPressed(Button::Mode, _) => nav.push(4),
+                    // Mode/Guia é tratado no `match` geral abaixo: empilhar aqui também abria e
+                    // fechava o menu no mesmo toque
                     _ => {}
                 }
                 // sem `continue`: o soltar do botão precisa chegar em `pad` mesmo com o menu
@@ -1164,9 +1277,11 @@ impl App {
                 // Desconectar segurando um botão nunca manda `ButtonReleased`: sem isto o
                 // estado ficava preso e o próximo controle entrava como jogador 2.
                 EventType::Disconnected => {
+                    // libera a porta sem mexer nas outras: `retain` renumerava o vizinho e o
+                    // estado dele ficava preso na porta errada
                     pad[port] = Buttons::NONE;
                     stick[port] = Buttons::NONE;
-                    ports.retain(|&p| p != id);
+                    ports[port] = usize::MAX;
                 }
                 _ => {}
             }
@@ -1223,7 +1338,7 @@ impl App {
         // START+SELECT juntos abrem o menu, mas só depois de ~1 s apertados: vários jogos usam a
         // combinação (soft reset, seleção de fase) e o polegar escorrega entre as duas pílulas.
         let combo = Buttons::START.0 | Buttons::SELECT.0;
-        if buttons.0 & combo == combo {
+        if self.config.combo_menu && buttons.0 & combo == combo {
             let since = *self.combo_since.get_or_insert(now);
             if now.saturating_sub(since) >= Duration::from_millis(900) {
                 self.combo_since = None;
@@ -1436,6 +1551,9 @@ impl App {
                     )
                 });
             if touched {
+                self.touch_preview_until = Instant::now() + Duration::from_millis(1500);
+            }
+            if touched || Instant::now() < self.touch_preview_until {
                 let tl = self.touch_layout.clone();
                 let (op, hc) = (self.config.touch_opacity, self.config.high_contrast);
                 self.ui.draw_touch_controls(&mut fb, w, h, &tl, Buttons::NONE, op, &theme, hc);
@@ -1928,7 +2046,8 @@ impl App {
         let drag = std::mem::replace(&mut self.drag, Drag::Undecided);
         self.drag_layout = None;
         if matches!(layout.items.get(i).map(|it| &it.kind), Some(ItemKind::Slider { .. })) {
-            // toque sem arrasto: só vale se caiu na trilha (menu::hit devolve None fora dela)
+            // toque sem arrasto: `menu::hit` anda um passo para o lado do dedo, em qualquer
+            // ponto da linha (o salto para a posição absoluta é só do arrasto)
             if drag == Drag::Undecided {
                 if let Some(a) = menu::hit(&layout, x, y) {
                     self.act(a, el);
@@ -2070,16 +2189,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw();
             }
             UserEvent::A11yActivate(i) => {
-                let layout = self.layout();
-                let acionaveis: Vec<menu::Action> = layout
-                    .items
-                    .iter()
-                    .filter(|it| it.action != menu::Action::None)
-                    .map(|it| it.action.clone())
-                    .collect();
-                if let Some(a) = acionaveis.get(i as usize).cloned() {
-                    self.act(a, _el);
-                    self.redraw();
+                // a lista que o leitor de tela vê é a publicada, não o layout de agora: reindexar
+                // podia disparar outra ação (Reset em vez de Continuar) depois de uma troca de tela
+                match self.a11y_actions.get(i as usize).cloned() {
+                    Some(menu::Action::None) | None => {}
+                    Some(a) => {
+                        self.act(a, _el);
+                        self.redraw();
+                    }
                 }
             }
             UserEvent::SafeInsets { left, top, right, bottom } => {
@@ -2336,10 +2453,14 @@ impl ApplicationHandler<UserEvent> for App {
         } else if Instant::now() < self.toast_until {
             // toast num menu: acorda na hora de apagá-lo
             el.set_control_flow(ControlFlow::WaitUntil(self.toast_until));
-        } else if self.gamepad_connected() {
+        } else if self.gamepad_polling() {
             // Fora do jogo o gilrs só é lido aqui dentro, e nada dele acorda o winit: dormindo
             // em `Wait`, apertar um botão do controle não fazia nada até mexer no mouse.
-            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));
+            // Sem controle ligado a espera é longa — a lista do gilrs só se atualiza quando
+            // `next_event()` roda, então é preciso acordar de vez em quando para *descobrir*
+            // que alguém plugou um.
+            let passo = if self.gamepad_connected() { 16 } else { 250 };
+            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(passo)));
         } else {
             if self.overlay_key.as_ref().is_some_and(|k| k.toast.is_some()) {
                 self.redraw(); // o último overlay ainda tem o toast

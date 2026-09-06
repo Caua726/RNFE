@@ -75,9 +75,16 @@ impl Storage for FsStorage {
                 }
             }
         }
+        // varre só o galho pedido: `list("state/")` não tem por que ler `roms/` inteiro
+        let (raiz, filtra) = match prefix.split_once('/') {
+            Some((dir, resto)) if !dir.is_empty() => (self.dir.join(dir), !resto.is_empty()),
+            _ => (self.dir.clone(), !prefix.is_empty()),
+        };
         let mut out = Vec::new();
-        walk(&self.dir, &self.dir, &mut out);
-        out.retain(|(k, _)| k.starts_with(prefix));
+        walk(&raiz, &self.dir, &mut out);
+        if filtra {
+            out.retain(|(k, _)| k.starts_with(prefix));
+        }
         out.sort();
         out
     }

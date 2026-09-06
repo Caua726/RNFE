@@ -21,6 +21,8 @@ pub struct Config {
     pub haptics: bool,
     /// Controles de toque espelhados: d-pad à direita, A/B à esquerda.
     pub left_handed: bool,
+    /// START+SELECT (segurados ~1 s) abrem o menu. Jogos que usam a combinação pedem desligar.
+    pub combo_menu: bool,
     /// Imagem em múltiplos inteiros do tamanho do NES (senão preenche a janela mantendo o aspecto).
     pub integer_scale: bool,
     /// Volume (0,0–1,0).
@@ -50,6 +52,7 @@ impl Default for Config {
             high_contrast: false,
             haptics: true,
             left_handed: false,
+            combo_menu: true,
             integer_scale: false,
             volume: 1.0,
             overscan: false,
@@ -86,6 +89,7 @@ text_scale={}
 high_contrast={}
 haptics={}
 left_handed={}
+combo_menu={}
 integer_scale={}
 volume={}
 overscan={}
@@ -102,6 +106,7 @@ sprite_limit={}
             self.high_contrast,
             self.haptics,
             self.left_handed,
+            self.combo_menu,
             self.integer_scale,
             self.volume,
             self.overscan,
@@ -135,6 +140,7 @@ sprite_limit={}
                 "high_contrast" => c.high_contrast = b(c.high_contrast),
                 "haptics" => c.haptics = b(c.haptics),
                 "left_handed" => c.left_handed = b(c.left_handed),
+                "combo_menu" => c.combo_menu = b(c.combo_menu),
                 "integer_scale" => c.integer_scale = b(c.integer_scale),
                 "volume" => c.volume = f(c.volume, 0.0, 1.0),
                 "overscan" => c.overscan = b(c.overscan),

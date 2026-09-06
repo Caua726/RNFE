@@ -36,6 +36,8 @@ pub enum Setting {
     TouchAlways,
     /// Controles espelhados (d-pad à direita).
     LeftHanded,
+    /// START+SELECT abrem o menu.
+    ComboMenu,
     TextScale,
     HighContrast,
     Haptics,
@@ -50,7 +52,7 @@ pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Som", &[Setting::Volume]),
     ("Vídeo", &[Setting::VideoFilter, Setting::Palette, Setting::IntegerScale, Setting::Overscan]),
     ("Sistema", &[Setting::RegionSetting, Setting::SpriteLimit]),
-    ("Controles", &[Setting::Zapper]),
+    ("Controles", &[Setting::Zapper, Setting::ComboMenu]),
     (
         "Toque",
         &[
@@ -74,6 +76,7 @@ impl Setting {
             Setting::HighContrast => "Alto contraste",
             Setting::Haptics => "Vibrar ao tocar",
             Setting::LeftHanded => "Mão canhota (espelhar)",
+            Setting::ComboMenu => "START+SELECT abre o menu",
             Setting::Zapper => "Zapper (mira com o toque)",
             Setting::VideoFilter => "Filtro de vídeo",
             Setting::RegionSetting => "Região",
@@ -90,6 +93,7 @@ impl Setting {
             self,
             Setting::TouchAlways
                 | Setting::LeftHanded
+                | Setting::ComboMenu
                 | Setting::HighContrast
                 | Setting::Haptics
                 | Setting::Zapper
@@ -123,6 +127,7 @@ impl Setting {
             Setting::HighContrast => c.high_contrast as u8 as f32,
             Setting::Haptics => c.haptics as u8 as f32,
             Setting::LeftHanded => c.left_handed as u8 as f32,
+            Setting::ComboMenu => c.combo_menu as u8 as f32,
             Setting::Zapper => c.zapper as u8 as f32,
             Setting::VideoFilter => c.video_filter,
             Setting::RegionSetting => c.region,
@@ -151,6 +156,7 @@ impl Setting {
             Setting::HighContrast => on(c.high_contrast),
             Setting::Haptics => on(c.haptics),
             Setting::LeftHanded => on(c.left_handed),
+            Setting::ComboMenu => on(c.combo_menu),
             Setting::Zapper => on(c.zapper),
             Setting::VideoFilter => match c.video_filter as u8 {
                 1 => "Suave".into(),
@@ -184,6 +190,7 @@ fn set_value(c: &mut Config, s: Setting, v: f32) {
         Setting::HighContrast => c.high_contrast = v >= 0.5,
         Setting::Haptics => c.haptics = v >= 0.5,
         Setting::LeftHanded => c.left_handed = v >= 0.5,
+        Setting::ComboMenu => c.combo_menu = v >= 0.5,
         Setting::Zapper => c.zapper = v >= 0.5,
         Setting::VideoFilter => c.video_filter = v.clamp(0.0, 2.0).round(),
         Setting::RegionSetting => c.region = v.clamp(0.0, 2.0).round(),
@@ -689,7 +696,9 @@ pub fn layout(screen: Screen, w: f32, h: f32, config: &Config, dpi: f32, st: &Me
     }
     // Rodapé reservado: a dica da tela inicial e a caixa do toast são desenhadas em coordenadas
     // fixas no pé da tela, e sem esta folga o último item da lista fica embaixo delas.
-    let footer = 46.0 * s;
+    // 3 linhas de toast (16 px · 1,3 de entrelinha) + recuo da caixa + folga: com 46 px o
+    // aviso cobria o último botão da lista e a dica da tela inicial.
+    let footer = 96.0 * s;
     let content_h = items.iter().map(|i| i.rect.y + i.rect.h).fold(0.0, f32::max) + gap + footer;
     Layout {
         title,

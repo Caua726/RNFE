@@ -286,7 +286,8 @@ impl Ui {
             let lw = self.text_width(line, size).min(tw);
             let lx = (w as i32 - lw) / 2;
             let ly = ty + (i as f32 * lh) as i32;
-            self.draw_text(fb, w, h, line, size, lx, ly, [235, 235, 240, 255]);
+            // com recorte: uma "palavra" sem espaços (o caminho da captura) transbordava a caixa
+            self.draw_text_clipped(fb, w, h, line, size, lx, ly, tw, [235, 235, 240, 255]);
         }
     }
 

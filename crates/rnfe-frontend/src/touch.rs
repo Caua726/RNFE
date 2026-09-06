@@ -91,7 +91,10 @@ impl TouchLayout {
         let portrait = h > w;
         let unit = if portrait { w } else { h }; // lado menor
         let scale = scale.clamp(0.5, 2.0);
-        let m = (unit * 0.05).max(safe[0].max(safe[2])); // margem (respeita o recorte lateral)
+        // margem: lado esquerdo e direito têm recortes diferentes (em paisagem, só um deles)
+        let m_l = (unit * 0.05).max(safe[0]);
+        let m_r = (unit * 0.05).max(safe[2]);
+        let m = m_l.max(m_r);
         // Faixa de gesto do sistema na borda inferior (Android): nada de botão ali
         let inset = (unit * 0.06).max(24.0).max(safe[3]);
         // Telas "quadradas" (tablets 4:3) deixam pouca altura sob a imagem: encolhe tudo junto
@@ -116,7 +119,7 @@ impl TouchLayout {
             // Zona de controle: abaixo da imagem. MENU no topo da zona (fora do HUD do jogo),
             // START/SELECT logo acima da faixa de gesto, d-pad e A/B entre os dois.
             let img_h = img_bottom.clamp(0.0, h);
-            let zone_top = img_h + m * 0.6;
+            let zone_top = (img_h + m * 0.6).max(safe[1]);
             menu = Rect { x: w * 0.5 - pill_w * 0.5, y: zone_top, w: pill_w, h: pill_h };
             let py = (h - inset - pill_h).max(zone_top + pill_h * 2.0);
             select = Rect { x: w * 0.5 - pill_w - m * 0.5, y: py, w: pill_w, h: pill_h };
@@ -139,7 +142,8 @@ impl TouchLayout {
             dpad = Circle { cx: m + dpad_r, cy, r: dpad_r };
             a = Circle { cx: w - m - ab_r, cy: cy - ab_r * 0.6, r: ab_r };
             b = Circle { cx: w - m - ab_r * 3.4, cy: cy + ab_r * 0.6, r: ab_r };
-            let py = (cy + dpad_r + m * 0.6).min(h - inset - pill_h);
+            // o alcance do d-pad (1,6 r) é o que conta: com o raio, a pílula começava dentro dele
+            let py = (cy + dpad_r * 1.6 + m * 0.3).min(h - inset - pill_h);
             select = Rect { x: dpad.cx - pill_w * 0.5, y: py, w: pill_w, h: pill_h };
             start = Rect { x: (a.cx + b.cx) * 0.5 - pill_w * 0.5, y: py, w: pill_w, h: pill_h };
             menu = Rect { x: m, y: m * 0.5, w: pill_w, h: pill_h };
