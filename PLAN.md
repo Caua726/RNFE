@@ -9,9 +9,20 @@ Retomar de qualquer lugar:
 ```sh
 git status -sb && git log --oneline -5
 sed -n '/^## Onde parei
-Tarefa: tela preta no Android resolvida (uniform sem visibilidade no fragmento; erro de validação virava pipeline inválido em silêncio) + rodada grande de funcionalidades
-Estado: main verde; usuário confirmou que o app voltou a desenhar. 40 mappers, PAL, Zapper, .zip, filtros de vídeo, paletas, limite de sprites, miniaturas, 2º jogador, auto-state, captura de tela
-Próximo: usuário testar filtros/paleta/PAL/zip/Zapper no g56; backlog: VS System (57 ROMs em 10,5 %), mappers 228/47/41/234, Four Score, run-ahead, remapeamento, cheats, PWA offline, exportar saves por SAF, overlay em meia resolução
+Tarefa: rodada `/deep` na GUI e no APK — dois agentes cegos criticaram, tudo implementado, e uma
+segunda volta perguntou "resolveu ou virou remendo?" (48 achados no total, nenhum rejeitado em
+silêncio; o que não entrou está com motivo escrito)
+Estado: main verde no CI (7 jobs), APK de release do CI em 4,79 MB (meta < 5 MB, apertando).
+Acessibilidade real no Android (nós virtuais com foco para o TalkBack), texto grande que encolhe
+em vez de cortar, slider que anda um passo no toque, d-pad fora da fileira START/SELECT, recentes
+24 + limpeza de órfãos com confirmação, mão canhota, insets do sistema, START+SELECT desligável;
+do lado dos defeitos: gamepad que navega menu, botão que não fica preso, região "Automática" que
+desfaz mesmo, turbo 4x de verdade, tempo de jogo em PAL, setIntent, ROM de 0 byte.
+Próximo: usuário testar no g56 (TalkBack, mão canhota, ajustes de toque com prévia, limpeza do
+armazenamento); backlog: remapear/arrastar botões, biblioteca com busca (precisa de campo de
+texto), insets no layout de menu, AGP 8.5.2 avisa que só foi testado até compileSdk 34, fonte CJK
+para nomes japoneses (pesa contra a meta de wasm), VS System, mappers 228/47/41/234, Four Score,
+run-ahead, cheats, PWA offline, exportar saves por SAF
 
 ## Linha de base
 F0-06, 02/09/2026, moto g56 5G, rustc 1.98, release (lto thin, cgu 1 no core):
