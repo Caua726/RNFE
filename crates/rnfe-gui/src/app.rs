@@ -1643,7 +1643,7 @@ impl App {
                 let y = self
                     .touch_layout
                     .portrait
-                    .then(|| self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s);
+                    .then_some(self.touch_layout.menu.y + self.touch_layout.menu.h + 12.0 * s);
                 spans.push(self.ui.toast_span(w, h, &msg, 16.0 * s, y));
             }
             if self.debug_overlay {
